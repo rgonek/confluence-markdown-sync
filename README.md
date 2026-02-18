@@ -4,7 +4,8 @@
 
 ## Status
 - Planning and design are tracked in `agents/plans/confluence_sync_cli.md`.
-- Implementation has not started yet in this repository.
+- **PR-01 (Bootstrap)** is implemented: Go module, cobra command tree, config loading, `init` command, automation flags, and `Makefile`.
+- PR-02 through PR-07 are in progress per the delivery plan.
 
 ## Planned Commands
 - `init`
