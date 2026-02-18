@@ -231,113 +231,86 @@ Compatibility and precedence:
 
 Automation support for `pull`/`push`: `--yes`, `--non-interactive`; `push` additionally supports `--on-conflict=pull-merge|force|cancel`.
 
-## 4. Implementation Steps
+## 4. Delivery Plan (PR-by-PR)
 
-### Phase 1: Setup & Configuration
-- [ ] Initialize Go module: `go mod init github.com/rgonek/confluence-markdown-sync`.
-- [ ] Setup `cobra` for CLI commands.
-- [ ] Implement `config` package to read environment variables (`ATLASSIAN_*` as canonical, with `CONFLUENCE_*` compatibility aliases) and `.env`.
-- [ ] Implement `init` command:
-    - [ ] Git check.
-    - [ ] Repo bootstrap (new `main` or existing).
-    - [ ] Env var prompting and `.env` creation.
-    - [ ] `.gitignore` creation.
-    - [ ] `AGENTS.md` creation (AI rules).
-    - [ ] `README.md` creation (User guide + Windows env instructions).
-- [ ] Add target parser: `.md` suffix => file mode, otherwise space mode.
-- [ ] Add git capability checks: `worktree` support and tag creation permissions (local-only; no remote required).
-- [ ] Add `validate` command wiring and shared target resolution.
-- [ ] Add shared automation flags for `pull`/`push`: `--yes`, `--non-interactive`.
-- [ ] Add push conflict policy flag parsing/validation: `--on-conflict=pull-merge|force|cancel`.
-- [ ] Add top-level `Makefile` with standard developer targets (at minimum: `build`, `test`, and `lint`/`fmt`).
+### 4.0 Merge Rules (apply to every PR)
+- [ ] Keep invariants intact: `push` always gates on `validate`, immutable frontmatter keys remain enforced, and no unresolved strict conversion reaches remote writes.
+- [ ] Keep docs aligned in the same PR (`README.md`, `AGENTS.md`, and this plan when behavior changes).
+- [ ] Add or update tests for changed behavior before merge.
+- [ ] Keep each PR independently reviewable and shippable.
 
-### Phase 2: Confluence Client
-- [ ] Create `confluence` package.
-- [ ] Implement `Client` struct with `GetPage(id)`, `GetSpacePages(spaceKey)`, `UpdatePage(id, content)`.
-- [ ] Handle Confluence API V2 (if available) or V1 for content body storage format (ADF).
-- [ ] Implement `GetSpaceChanges(spaceKey, timestamp)` for incremental sync.
-- [ ] Implement page archive API (`ArchivePage`) and optional hard-delete API (`DeletePage`).
-- [ ] Implement attachment delete API (`DeleteAttachment`).
+### PR-01 - CLI Bootstrap, Init, Config, and Tooling
+Checklist:
+- [ ] Initialize module, command tree (`cobra`), and shared target parser (`.md` => file mode, else space mode).
+- [ ] Implement config loading (`ATLASSIAN_*`, compatibility `CONFLUENCE_*`, and `.env` support).
+- [ ] Implement `init` command (git checks/bootstrap, `.env`, `.gitignore`, template docs).
+- [ ] Wire shared automation flags (`--yes`, `--non-interactive`) and push conflict flag parsing (`--on-conflict`).
+- [ ] Add top-level `Makefile` (`build`, `test`, `lint`/`fmt`).
+Done criteria:
+- [ ] `cms --help` shows all planned commands and flags.
+- [ ] `init` can bootstrap a fresh repo on `main` and initialize config files.
+- [ ] Unit tests cover target parsing and config precedence.
 
-### Phase 3: Content Conversion
-- [ ] Integrate both converter packages: `github.com/rgonek/jira-adf-converter/converter` and `github.com/rgonek/jira-adf-converter/mdconverter`.
-- [ ] Implement internal conversion adapter package that centralizes converter construction and warning-to-diagnostic mapping.
-- [ ] Define forward profile (`pull`/`diff`): `converter.Config{ResolutionMode: converter.ResolutionBestEffort, LinkHook, MediaHook}`.
-- [ ] Define reverse profile (`validate`/`push`): `mdconverter.ReverseConfig{ResolutionMode: mdconverter.ResolutionStrict, LinkHook, MediaHook}`.
-- [ ] Use context-aware APIs everywhere: `ConvertWithContext(..., ConvertOptions{SourcePath: ...})` for deterministic relative resolution and cancellation.
-- [ ] Implement forward hooks using `converter.LinkRenderInput`/`MediaRenderInput` and metadata-aware mapping from Confluence attrs to local paths.
-- [ ] Implement reverse hooks using `mdconverter.LinkParseInput`/`MediaParseInput`, including `ForceLink` vs `ForceCard` behavior and media `ID`/`URL` constraints.
-- [ ] Handle `ErrUnresolved` consistently: best-effort diagnostics for pull/diff, hard failures for validate/push.
-- [ ] `ToMarkdown(ctx, adfJSON, sourcePath) -> (converter.Result, error)`
-- [ ] `ToADF(ctx, markdown, sourcePath) -> (mdconverter.Result, error)`
+### PR-02 - Confluence Client and Local Data Model Foundation
+Checklist:
+- [ ] Create `confluence` package with page/space/change APIs and archive/delete endpoints.
+- [ ] Create filesystem/state layer: frontmatter read/write, path sanitization, `.confluence-state.json` IO.
+- [ ] Implement immutable frontmatter key checks and schema validation primitives.
+Done criteria:
+- [ ] Unit tests cover frontmatter schema, immutable key protection, and state persistence.
+- [ ] Client interfaces are stable enough for `pull`/`push` orchestration.
 
-### Phase 4: File System Operations
-- [ ] Implement `filesystem` package.
-- [ ] `SavePage(pageData, path)`: Handles frontmatter injection and file writing.
-- [ ] `LoadPage(path)`: Reads file, separates frontmatter from content.
-- [ ] Implement path sanitization logic for filenames.
-- [ ] Implement frontmatter schema validation (required `confluence_page_id`, `confluence_version`, etc.).
-- [ ] Implement `State` management (read/write `.confluence-state.json`, including watermark and indexes).
-- [ ] Implement immutable frontmatter key checks (`confluence_page_id`, `confluence_space_key`).
+### PR-03 - Converter Adapter + Hook Profiles + `validate`
+Checklist:
+- [ ] Integrate `converter` and `mdconverter` with internal adapter constructors.
+- [ ] Implement forward profile (`best_effort`) for `pull`/`diff` and reverse profile (`strict`) for `validate`/`push`.
+- [ ] Pass `ConvertOptions{SourcePath: ...}` through all conversion entrypoints.
+- [ ] Implement hook adapters (link/media both directions) and warning-to-diagnostic mapping.
+- [ ] Implement `validate [TARGET]` with strict reverse conversion + hook parity with planned `push` profile.
+Done criteria:
+- [ ] `validate` fails on strict unresolved refs and immutable-key edits.
+- [ ] Unit tests cover unresolved behavior (`best_effort` vs `strict`) and hook-output validation constraints.
 
-### Phase 5: Synchronization Logic (`pull`)
-- [ ] Implement logic to build the page tree from flat API response.
-- [ ] Recursive function to traverse tree and create directory structure.
-- [ ] Handle collisions (e.g., two pages with same name).
-- [ ] Implement high-watermark fetch with overlap window and `max_remote_modified_at` tracking.
-- [ ] Build deterministic `page_path_by_id` before converting any page content.
-- [ ] Build deterministic `attachment_path_by_id` before converting media references.
-- [ ] Convert ADF -> Markdown with `converter.ConvertWithContext` + forward hooks to rewrite page/media references per current page path.
-- [ ] Preserve link anchors and normalize relative path rendering during pull rewrites.
-- [ ] Emit diagnostics for unresolved same-space links/assets in pull best-effort mode.
-- [ ] Implement CLI-managed Git Stash/Commit/Restore workflow with stash-ref tracking, conflict-safe restore, and user-facing recovery without manual Git.
-- [ ] Implement Attachment download & Link rewriting.
-- [ ] Implement remote deletion reconciliation for pages/assets and index updates.
-- [ ] Implement no-op pull detection (no commit/no tag when nothing changed in scope).
-- [ ] Implement creation of annotated pull sync tags for non-no-op pulls.
+### PR-04 - `pull` End-to-End (Best-Effort Conversion)
+Checklist:
+- [ ] Implement incremental fetch (watermark + overlap), deterministic path planning (`page_path_by_id`, `attachment_path_by_id`), and conversion flow.
+- [ ] Implement link/media rewrite behavior, anchor preservation, attachment download, and delete reconciliation.
+- [ ] Implement scoped stash/restore flow, no-op detection, scoped commit creation, and pull sync tagging.
+Done criteria:
+- [ ] Integration tests verify pull rewrites, unresolved diagnostics fallback, delete reconciliation, and watermark updates.
+- [ ] Integration tests verify stash restore behavior and tag creation only on non-no-op pulls.
 
-### Phase 6: Synchronization Logic (`push`)
-- [ ] Implement logic to detect changed files from workspace snapshot state (including staged/unstaged/untracked/deleted).
-- [ ] Implement no-op push short-circuit (no snapshot/sync-branch/worktree/tag when nothing changed in scope).
-- [ ] Implement internal workspace snapshot commit creation under hidden refs (`refs/confluence-sync/snapshots/...`).
-- [ ] Implement ephemeral sync branch lifecycle (create, per-file commit, merge-on-success, keep-on-failure).
-- [ ] Implement temporary `git worktree` lifecycle for push runs.
-- [ ] Run `validate` as mandatory pre-push gate against snapshot content.
-- [ ] Build `page_id_by_path`/`attachment_id_by_path` lookup maps before Markdown -> ADF conversion.
-- [ ] Run reverse conversion with `mdconverter.ConvertWithContext` + strict resolver hooks so unresolved relative links/assets fail before remote writes.
-- [ ] Update loop for `push` (conflict detection).
-- [ ] Implement attachment upload/link resolution from reverse hook outputs (`Destination`, `ForceLink`/`ForceCard`, `MediaType`, `ID`/`URL`).
-- [ ] Implement local deletion handling (archive/delete remote pages and attachments via indexes).
-- [ ] Implement per-file Git Commit after push.
-- [ ] Add structured commit trailers to push commits.
-- [ ] Implement out-of-scope workspace state capture/restore across successful push merge.
-- [ ] Implement snapshot/sync-branch retention on failure and cleanup on full success.
-- [ ] Implement creation of annotated push sync tags for non-no-op push runs.
-- [ ] Implement active workspace refresh to merged push result without requiring manual Git commands.
-- [ ] Implement `diff` command.
+### PR-05 - `push` v1 (Functional Sync Loop on Clean Workspace)
+Checklist:
+- [ ] Implement in-scope change detection and mandatory pre-push `validate` gate.
+- [ ] Build `page_id_by_path` / `attachment_id_by_path` lookup maps and strict reverse conversion before writes.
+- [ ] Implement conflict policy handling (`pull-merge|force|cancel`), page update/archive flow, attachment upload/delete flow.
+- [ ] Implement per-file commits with structured trailers and no-op push short-circuit.
+Done criteria:
+- [ ] Integration tests verify strict unresolved failures happen before remote writes.
+- [ ] Integration tests verify conflict-policy behavior and push commit trailer format.
 
-### Phase 7: Testing & Validation
-- [ ] Unit tests: frontmatter parsing/validation, target parsing, path collision handling.
-- [ ] Unit tests: immutable frontmatter edits are rejected.
-- [ ] Unit tests: resolver hook fallback vs strict-mode failures for unresolved links/media.
-- [ ] Unit tests: hook output validation rules (forward `Href`/`Markdown`, reverse `ForceLink` vs `ForceCard`, reverse media `ID` xor `URL`).
-- [ ] Integration tests: `init` creates new repositories on `main` (never `master`).
-- [ ] Integration tests: pull watermark correctness, delete reconciliation, stash restore, push sync-branch merge flow.
-- [ ] Integration tests: pull rewrites same-space page links to relative paths via `page_path_by_id` and preserves anchors.
-- [ ] Integration tests: pull unresolved same-space references emit diagnostics and keep fallback links.
-- [ ] Integration tests: converter hooks receive `SourcePath` and produce deterministic relative path mappings in both directions.
-- [ ] Integration tests: worktree creation/cleanup and failure-path branch retention.
-- [ ] Integration tests: sync tag creation only on non-no-op runs and trailer presence/format.
-- [ ] Integration tests: `push` fails fast when `validate` reports invariant violations.
-- [ ] Integration tests: validate/push strict mode fails unresolved relative links/assets before remote writes.
-- [ ] Integration tests: `push` includes unstaged/untracked/deleted workspace changes.
-- [ ] Integration tests: hidden snapshot refs are cleaned on success and retained on failure.
-- [ ] Integration tests: push preserves out-of-scope dirty workspace state (`staged`/`unstaged`/`untracked`/deletions).
-- [ ] Integration tests: `--yes`, `--non-interactive`, and `--on-conflict` produce deterministic non-interactive behavior.
-- [ ] Integration tests: full pull/push flows succeed with no Git remote configured.
-- [ ] Integration tests: recovery paths provide CLI-only guidance (no manual Git commands required).
-- [ ] Golden tests: Markdown <-> ADF round-trip for representative Confluence content, including link/media resolver scenarios.
-- [ ] End-to-end dry-run mode (`--dry-run`) verification for destructive actions.
+### PR-06 - `push` v2 (Isolated Worktree + Snapshot/Recovery Model)
+Checklist:
+- [ ] Implement hidden snapshot refs (`refs/confluence-sync/snapshots/...`) for in-scope workspace capture.
+- [ ] Implement ephemeral sync branch + temporary worktree lifecycle.
+- [ ] Include staged/unstaged/untracked/deleted workspace changes in push snapshots.
+- [ ] Implement merge-on-success, cleanup-on-success, and retain-on-failure behavior for recovery refs.
+- [ ] Restore out-of-scope workspace state exactly after successful merge and create non-no-op push sync tags.
+Done criteria:
+- [ ] Integration tests verify snapshot/worktree lifecycle, failure retention, and success cleanup.
+- [ ] Integration tests verify out-of-scope workspace preservation and no-op push (no refs/merge/tag).
+
+### PR-07 - `diff`, Hardening, and Final Test Matrix
+Checklist:
+- [ ] Implement `diff [TARGET]` with best-effort remote conversion and scoped comparison.
+- [ ] Finalize non-interactive behavior (`--yes`, `--non-interactive`, `--on-conflict`) across pull/push.
+- [ ] Add/finish round-trip golden tests and end-to-end integration scenarios (including no-git-remote environment).
+- [ ] Refresh docs to final behavior (`README.md`, `AGENTS.md`, plan notes).
+Done criteria:
+- [ ] `diff` works in both file and space modes.
+- [ ] Full CI test matrix passes with all invariants covered.
+- [ ] Docs describe the implemented behavior without plan drift.
 
 ## 5. Directory Structure
 ```
