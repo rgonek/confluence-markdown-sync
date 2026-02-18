@@ -253,12 +253,12 @@ Done criteria:
 
 ### PR-02 - Confluence Client and Local Data Model Foundation
 Checklist:
-- [ ] Create `confluence` package with page/space/change APIs and archive/delete endpoints.
-- [ ] Create filesystem/state layer: frontmatter read/write, path sanitization, `.confluence-state.json` IO.
-- [ ] Implement immutable frontmatter key checks and schema validation primitives.
+- [x] Create `confluence` package with page/space/change APIs and archive/delete endpoints.
+- [x] Create filesystem/state layer: frontmatter read/write, path sanitization, `.confluence-state.json` IO.
+- [x] Implement immutable frontmatter key checks and schema validation primitives.
 Done criteria:
-- [ ] Unit tests cover frontmatter schema, immutable key protection, and state persistence.
-- [ ] Client interfaces are stable enough for `pull`/`push` orchestration.
+- [x] Unit tests cover frontmatter schema, immutable key protection, and state persistence.
+- [x] Client interfaces are stable enough for `pull`/`push` orchestration.
 
 ### PR-03 - Converter Adapter + Hook Profiles + `validate`
 Checklist:
