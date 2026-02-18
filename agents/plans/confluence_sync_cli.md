@@ -274,12 +274,12 @@ Done criteria:
 
 ### PR-04 - `pull` End-to-End (Best-Effort Conversion)
 Checklist:
-- [ ] Implement incremental fetch (watermark + overlap), deterministic path planning (`page_path_by_id`, `attachment_path_by_id`), and conversion flow.
-- [ ] Implement link/media rewrite behavior, anchor preservation, attachment download, and delete reconciliation.
-- [ ] Implement scoped stash/restore flow, no-op detection, scoped commit creation, and pull sync tagging.
+- [x] Implement incremental fetch (watermark + overlap), deterministic path planning (`page_path_by_id`, `attachment_path_by_id`), and conversion flow.
+- [x] Implement link/media rewrite behavior, anchor preservation, attachment download, and delete reconciliation.
+- [x] Implement scoped stash/restore flow, no-op detection, scoped commit creation, and pull sync tagging.
 Done criteria:
-- [ ] Integration tests verify pull rewrites, unresolved diagnostics fallback, delete reconciliation, and watermark updates.
-- [ ] Integration tests verify stash restore behavior and tag creation only on non-no-op pulls.
+- [x] Integration tests verify pull rewrites, unresolved diagnostics fallback, delete reconciliation, and watermark updates.
+- [x] Integration tests verify stash restore behavior and tag creation only on non-no-op pulls.
 
 ### PR-05 - `push` v1 (Functional Sync Loop on Clean Workspace)
 Checklist:

@@ -18,7 +18,7 @@ func TestForwardLinkHook(t *testing.T) {
 		"123": targetPath,
 	}
 
-	hook := NewForwardLinkHook(sourcePath, pagePathByID)
+	hook := NewForwardLinkHook(sourcePath, pagePathByID, "MYSPACE")
 	ctx := context.Background()
 
 	// Test 1: Known page ID
@@ -39,9 +39,20 @@ func TestForwardLinkHook(t *testing.T) {
 
 	// Test 2: Unknown page ID
 	in.Meta.PageID = "999"
+	in.Meta.SpaceKey = "MYSPACE"
+	_, err = hook(ctx, in)
+	if err != adfconv.ErrUnresolved {
+		t.Errorf("Expected ErrUnresolved for unknown same-space ID, got %v", err)
+	}
+
+	// Test 3: Unknown page ID in other space should fall back.
+	in.Meta.SpaceKey = "OTHER"
 	out, err = hook(ctx, in)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
 	if out.Handled {
-		t.Error("Expected Handled=false for unknown ID")
+		t.Error("Expected Handled=false for cross-space unknown ID")
 	}
 }
 
@@ -72,6 +83,13 @@ func TestForwardMediaHook(t *testing.T) {
 	expected := "![My Image](assets/image.png)"
 	if out.Markdown != expected {
 		t.Errorf("Expected markdown %q, got %q", expected, out.Markdown)
+	}
+
+	// Test 2: Unknown attachment should return unresolved.
+	in.Meta.AttachmentID = "att-999"
+	_, err = hook(ctx, in)
+	if err != adfconv.ErrUnresolved {
+		t.Errorf("Expected ErrUnresolved, got %v", err)
 	}
 }
 

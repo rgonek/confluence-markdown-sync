@@ -15,7 +15,7 @@ import (
 // It resolves Confluence page IDs to relative Markdown paths.
 // sourcePath is the absolute path of the file being generated.
 // pagePathByID maps page IDs to absolute or relative-to-root paths of target files.
-func NewForwardLinkHook(sourcePath string, pagePathByID map[string]string) adfconv.LinkRenderHook {
+func NewForwardLinkHook(sourcePath string, pagePathByID map[string]string, currentSpaceKey string) adfconv.LinkRenderHook {
 	return func(ctx context.Context, in adfconv.LinkRenderInput) (adfconv.LinkRenderOutput, error) {
 		// If page ID is present, try to resolve to local path
 		if in.Meta.PageID != "" {
@@ -43,6 +43,10 @@ func NewForwardLinkHook(sourcePath string, pagePathByID map[string]string) adfco
 					}, nil
 				}
 			}
+
+			if in.Meta.SpaceKey == "" || strings.EqualFold(in.Meta.SpaceKey, currentSpaceKey) {
+				return adfconv.LinkRenderOutput{}, adfconv.ErrUnresolved
+			}
 		}
 		// If not resolved, return unhandled (library default behavior)
 		return adfconv.LinkRenderOutput{Handled: false}, nil
@@ -66,7 +70,24 @@ func NewForwardMediaHook(sourcePath string, attachmentPathByID map[string]string
 					}, nil
 				}
 			}
+			return adfconv.MediaRenderOutput{}, adfconv.ErrUnresolved
 		}
+
+		if in.ID != "" {
+			targetPath, ok := attachmentPathByID[in.ID]
+			if ok {
+				sourceDir := filepath.Dir(sourcePath)
+				relPath, err := filepath.Rel(sourceDir, targetPath)
+				if err == nil {
+					return adfconv.MediaRenderOutput{
+						Markdown: fmt.Sprintf("![%s](%s)", in.Alt, filepath.ToSlash(relPath)),
+						Handled:  true,
+					}, nil
+				}
+			}
+			return adfconv.MediaRenderOutput{}, adfconv.ErrUnresolved
+		}
+
 		return adfconv.MediaRenderOutput{Handled: false}, nil
 	}
 }

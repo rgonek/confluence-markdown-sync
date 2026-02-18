@@ -226,6 +226,80 @@ func (c *Client) GetPage(ctx context.Context, pageID string) (Page, error) {
 	return payload.toModel(c.baseURL), nil
 }
 
+// DownloadAttachment downloads attachment bytes by attachment ID.
+func (c *Client) DownloadAttachment(ctx context.Context, attachmentID string) ([]byte, error) {
+	id := strings.TrimSpace(attachmentID)
+	if id == "" {
+		return nil, errors.New("attachment ID is required")
+	}
+
+	req, err := c.newRequest(
+		ctx,
+		http.MethodGet,
+		"/wiki/api/v2/attachments/"+url.PathEscape(id),
+		nil,
+		nil,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	var payload attachmentDTO
+	if err := c.do(req, &payload); err != nil {
+		if isHTTPStatus(err, http.StatusNotFound) {
+			return nil, ErrNotFound
+		}
+		return nil, err
+	}
+
+	downloadURL := strings.TrimSpace(payload.DownloadLink)
+	if downloadURL == "" {
+		downloadURL = strings.TrimSpace(payload.Links.Download)
+	}
+	if downloadURL == "" {
+		downloadURL = "/wiki/api/v2/attachments/" + url.PathEscape(id) + "/download"
+	}
+
+	resolvedDownloadURL := resolveWebURL(c.baseURL, downloadURL)
+	if strings.TrimSpace(resolvedDownloadURL) == "" {
+		return nil, fmt.Errorf("attachment %s download URL is empty", id)
+	}
+
+	downloadReq, err := http.NewRequestWithContext(ctx, http.MethodGet, resolvedDownloadURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	downloadReq.SetBasicAuth(c.email, c.apiToken)
+	downloadReq.Header.Set("Accept", "*/*")
+	downloadReq.Header.Set("User-Agent", c.userAgent)
+
+	resp, err := c.httpClient.Do(downloadReq)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	bodyBytes, err := io.ReadAll(io.LimitReader(resp.Body, maxErrorBodyBytes))
+	if err != nil {
+		return nil, fmt.Errorf("read attachment response body: %w", err)
+	}
+
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		if resp.StatusCode == http.StatusNotFound {
+			return nil, ErrNotFound
+		}
+		return nil, &APIError{
+			StatusCode: resp.StatusCode,
+			Method:     downloadReq.Method,
+			URL:        downloadReq.URL.String(),
+			Message:    decodeAPIErrorMessage(bodyBytes),
+			Body:       string(bodyBytes),
+		}
+	}
+
+	return bodyBytes, nil
+}
+
 // CreatePage creates a page.
 func (c *Client) CreatePage(ctx context.Context, input PageUpsertInput) (Page, error) {
 	if strings.TrimSpace(input.SpaceID) == "" {
@@ -564,7 +638,7 @@ func defaultPageStatus(v string) string {
 }
 
 type v2ListResponse[T any] struct {
-	Results []T `json:"results"`
+	Results []T    `json:"results"`
 	Cursor  string `json:"cursor"`
 	Meta    struct {
 		Cursor string `json:"cursor"`
@@ -686,18 +760,18 @@ func parseRemoteTime(candidates ...string) time.Time {
 
 type changeSearchResponse struct {
 	Results []changeResultDTO `json:"results"`
-	Start   int `json:"start"`
-	Limit   int `json:"limit"`
-	Size    int `json:"size"`
+	Start   int               `json:"start"`
+	Limit   int               `json:"limit"`
+	Size    int               `json:"size"`
 	Links   struct {
 		Next string `json:"next"`
 	} `json:"_links"`
 }
 
 type changeResultDTO struct {
-	ID      string `json:"id"`
-	Title   string `json:"title"`
-	Space   struct {
+	ID    string `json:"id"`
+	Title string `json:"title"`
+	Space struct {
 		Key string `json:"key"`
 	} `json:"space"`
 	Version struct {
@@ -733,3 +807,10 @@ type archiveResponse struct {
 	ID string `json:"id"`
 }
 
+type attachmentDTO struct {
+	ID           string `json:"id"`
+	DownloadLink string `json:"downloadLink"`
+	Links        struct {
+		Download string `json:"download"`
+	} `json:"_links"`
+}

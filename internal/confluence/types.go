@@ -12,6 +12,7 @@ type Service interface {
 	GetSpace(ctx context.Context, spaceKey string) (Space, error)
 	ListPages(ctx context.Context, opts PageListOptions) (PageListResult, error)
 	GetPage(ctx context.Context, pageID string) (Page, error)
+	DownloadAttachment(ctx context.Context, attachmentID string) ([]byte, error)
 	CreatePage(ctx context.Context, input PageUpsertInput) (Page, error)
 	UpdatePage(ctx context.Context, pageID string, input PageUpsertInput) (Page, error)
 	ListChanges(ctx context.Context, opts ChangeListOptions) (ChangeListResult, error)
@@ -55,11 +56,11 @@ type Page struct {
 
 // PageListOptions configures page listing.
 type PageListOptions struct {
-	SpaceID string
+	SpaceID  string
 	SpaceKey string
-	Status  string
-	Limit   int
-	Cursor  string
+	Status   string
+	Limit    int
+	Cursor   string
 }
 
 // PageListResult is a page of page list results.
@@ -106,4 +107,3 @@ type ChangeListResult struct {
 type ArchiveResult struct {
 	TaskID string
 }
-
