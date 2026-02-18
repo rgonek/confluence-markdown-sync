@@ -3,16 +3,24 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
+	"sort"
+	"strings"
 
 	"github.com/rgonek/confluence-markdown-sync/internal/config"
 	"github.com/rgonek/confluence-markdown-sync/internal/converter"
 	"github.com/rgonek/confluence-markdown-sync/internal/fs"
-	"github.com/rgonek/confluence-markdown-sync/internal/sync"
+	syncflow "github.com/rgonek/confluence-markdown-sync/internal/sync"
 	"github.com/rgonek/jira-adf-converter/mdconverter"
 	"github.com/spf13/cobra"
 )
+
+type validateTargetContext struct {
+	spaceDir string
+	files    []string
+}
 
 func newValidateCmd() *cobra.Command {
 	return &cobra.Command{
@@ -30,125 +38,121 @@ If omitted, the space is inferred from the current directory name.`,
 				raw = args[0]
 			}
 			target := config.ParseTarget(raw)
-
-			cwd, err := os.Getwd()
-			if err != nil {
-				return err
-			}
-
-			// Resolve target to list of files and space directory
-			var spaceDir string
-			var files []string
-
-			if target.IsFile() {
-				files = []string{target.Value}
-				abs, err := filepath.Abs(target.Value)
-				if err != nil {
-					return err
-				}
-				// Attempt to find space root by looking up for .confluence-state.json
-				dir := filepath.Dir(abs)
-				found := false
-				for {
-					if _, err := os.Stat(filepath.Join(dir, ".confluence-state.json")); err == nil {
-						spaceDir = dir
-						found = true
-						break
-					}
-					parent := filepath.Dir(dir)
-					if parent == dir {
-						break
-					}
-					dir = parent
-				}
-				if !found {
-					// Fallback: assume parent of file is space dir
-					spaceDir = filepath.Dir(abs)
-				}
-			} else {
-				// Space mode
-				if target.Value == "" {
-					// Infer from CWD
-					spaceDir = cwd
-				} else {
-					// Check if directory exists
-					if info, err := os.Stat(target.Value); err == nil && info.IsDir() {
-						spaceDir = target.Value
-					} else {
-						// Assume relative to CWD
-						spaceDir = filepath.Join(cwd, target.Value)
-					}
-				}
-
-				// Walk space to find all .md files
-				err = filepath.WalkDir(spaceDir, func(path string, d os.DirEntry, err error) error {
-					if err != nil {
-						return err
-					}
-					if !d.IsDir() && filepath.Ext(path) == ".md" {
-						files = append(files, path)
-					}
-					return nil
-				})
-				if err != nil {
-					return fmt.Errorf("failed to walk space directory: %w", err)
-				}
-			}
-
-			// Find .env
-			envPath := ".env"
-			if _, err := os.Stat(filepath.Join(spaceDir, "..", ".env")); err == nil {
-				envPath = filepath.Join(spaceDir, "..", ".env")
-			} else if _, err := os.Stat(filepath.Join(spaceDir, ".env")); err == nil {
-				envPath = filepath.Join(spaceDir, ".env")
-			}
-
-			// Load config
-			cfg, err := config.Load(envPath)
-			if err != nil {
-				return fmt.Errorf("failed to load config: %w", err)
-			}
-
-			// Build Page Index
-			fmt.Fprintf(cmd.OutOrStdout(), "Building index for space: %s\n", spaceDir)
-			index, err := sync.BuildPageIndex(spaceDir)
-			if err != nil {
-				return fmt.Errorf("failed to build page index: %w", err)
-			}
-
-			// Load State for Attachment Index
-			state, err := fs.LoadState(spaceDir)
-			if err != nil {
-				return fmt.Errorf("failed to load state: %w", err)
-			}
-
-			// Create Hooks
-			linkHook := sync.NewReverseLinkHook(spaceDir, index, cfg.Domain)
-			mediaHook := sync.NewReverseMediaHook(spaceDir, state.AttachmentIndex)
-
-			// Validate each file
-			hasErrors := false
-			for _, file := range files {
-				rel, _ := filepath.Rel(spaceDir, file)
-
-				issues := validateFile(file, spaceDir, linkHook, mediaHook)
-				if len(issues) > 0 {
-					hasErrors = true
-					fmt.Fprintf(cmd.OutOrStdout(), "Validation failed for %s:\n", rel)
-					for _, issue := range issues {
-						fmt.Fprintf(cmd.OutOrStdout(), "  - [%s] %s: %s\n", issue.Code, issue.Field, issue.Message)
-					}
-				}
-			}
-
-			if hasErrors {
-				return fmt.Errorf("validation failed")
-			}
-
-			fmt.Fprintln(cmd.OutOrStdout(), "Validation successful")
-			return nil
+			return runValidateTarget(cmd.OutOrStdout(), target)
 		},
 	}
+}
+
+func runValidateTarget(out io.Writer, target config.Target) error {
+	ctx, err := resolveValidateTargetContext(target)
+	if err != nil {
+		return err
+	}
+
+	envPath := findEnvPath(ctx.spaceDir)
+	cfg, err := config.Load(envPath)
+	if err != nil {
+		return fmt.Errorf("failed to load config: %w", err)
+	}
+
+	fmt.Fprintf(out, "Building index for space: %s\n", ctx.spaceDir)
+	index, err := syncflow.BuildPageIndex(ctx.spaceDir)
+	if err != nil {
+		return fmt.Errorf("failed to build page index: %w", err)
+	}
+
+	state, err := fs.LoadState(ctx.spaceDir)
+	if err != nil {
+		return fmt.Errorf("failed to load state: %w", err)
+	}
+
+	linkHook := syncflow.NewReverseLinkHook(ctx.spaceDir, index, cfg.Domain)
+	mediaHook := syncflow.NewReverseMediaHook(ctx.spaceDir, state.AttachmentIndex)
+
+	hasErrors := false
+	for _, file := range ctx.files {
+		rel, _ := filepath.Rel(ctx.spaceDir, file)
+
+		issues := validateFile(file, ctx.spaceDir, linkHook, mediaHook)
+		if len(issues) == 0 {
+			continue
+		}
+
+		hasErrors = true
+		fmt.Fprintf(out, "Validation failed for %s:\n", filepath.ToSlash(rel))
+		for _, issue := range issues {
+			fmt.Fprintf(out, "  - [%s] %s: %s\n", issue.Code, issue.Field, issue.Message)
+		}
+	}
+
+	if hasErrors {
+		return fmt.Errorf("validation failed")
+	}
+
+	fmt.Fprintln(out, "Validation successful")
+	return nil
+}
+
+func resolveValidateTargetContext(target config.Target) (validateTargetContext, error) {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return validateTargetContext{}, err
+	}
+
+	if target.IsFile() {
+		abs, err := filepath.Abs(target.Value)
+		if err != nil {
+			return validateTargetContext{}, err
+		}
+		if _, err := os.Stat(abs); err != nil {
+			return validateTargetContext{}, fmt.Errorf("target file %s: %w", target.Value, err)
+		}
+
+		return validateTargetContext{
+			spaceDir: findSpaceDirFromFile(abs, ""),
+			files:    []string{abs},
+		}, nil
+	}
+
+	spaceDir, err := resolveSpaceDirFromTarget(cwd, target)
+	if err != nil {
+		return validateTargetContext{}, err
+	}
+
+	files := make([]string, 0)
+	err = filepath.WalkDir(spaceDir, func(path string, d os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if d.IsDir() {
+			if d.Name() == "assets" || strings.HasPrefix(d.Name(), ".") {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if filepath.Ext(path) == ".md" {
+			files = append(files, path)
+		}
+		return nil
+	})
+	if err != nil {
+		return validateTargetContext{}, fmt.Errorf("failed to walk space directory: %w", err)
+	}
+	sort.Strings(files)
+
+	return validateTargetContext{spaceDir: spaceDir, files: files}, nil
+}
+
+func resolveSpaceDirFromTarget(cwd string, target config.Target) (string, error) {
+	if target.Value == "" {
+		return filepath.Abs(cwd)
+	}
+
+	if info, err := os.Stat(target.Value); err == nil && info.IsDir() {
+		return filepath.Abs(target.Value)
+	}
+
+	return filepath.Abs(filepath.Join(cwd, target.Value))
 }
 
 func validateFile(path, spaceDir string, linkHook mdconverter.LinkParseHook, mediaHook mdconverter.MediaParseHook) []fs.ValidationIssue {

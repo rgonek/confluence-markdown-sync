@@ -283,7 +283,7 @@ Done criteria:
 
 ### PR-05 - `push` v1 (Functional Sync Loop on Clean Workspace)
 Checklist:
-- [ ] Implement in-scope change detection and mandatory pre-push `validate` gate.
+- [x] Implement in-scope change detection and mandatory pre-push `validate` gate.
 - [ ] Build `page_id_by_path` / `attachment_id_by_path` lookup maps and strict reverse conversion before writes.
 - [ ] Implement conflict policy handling (`pull-merge|force|cancel`), page update/archive flow, attachment upload/delete flow.
 - [ ] Implement per-file commits with structured trailers and no-op push short-circuit.
