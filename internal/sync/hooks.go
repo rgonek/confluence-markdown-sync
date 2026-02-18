@@ -110,9 +110,20 @@ func NewReverseLinkHook(spaceDir string, index PageIndex, domain string) mdconv.
 			return mdconv.LinkParseOutput{Handled: false}, nil
 		}
 
+		destination := in.Destination
+		anchor := ""
+		if idx := strings.Index(destination, "#"); idx >= 0 {
+			anchor = destination[idx+1:]
+			destination = destination[:idx]
+		}
+		destination = strings.TrimSpace(destination)
+		if destination == "" {
+			return mdconv.LinkParseOutput{Handled: false}, nil
+		}
+
 		// Resolve path relative to source file
 		dir := filepath.Dir(in.SourcePath)
-		destPath := filepath.Join(dir, in.Destination)
+		destPath := filepath.Join(dir, destination)
 
 		// Calculate relative path from space root to look up in index
 		relPath, err := filepath.Rel(spaceDir, destPath)
@@ -120,14 +131,7 @@ func NewReverseLinkHook(spaceDir string, index PageIndex, domain string) mdconv.
 			return mdconv.LinkParseOutput{}, mdconv.ErrUnresolved
 		}
 		relPath = filepath.ToSlash(relPath)
-
-		// Remove anchor if any
 		targetPath := relPath
-		// var anchor string // Unused for now
-		if idx := strings.LastIndex(relPath, "#"); idx != -1 {
-			targetPath = relPath[:idx]
-			// anchor = relPath[idx+1:]
-		}
 
 		// Look up in index
 		pageID, ok := index[targetPath]
@@ -138,6 +142,9 @@ func NewReverseLinkHook(spaceDir string, index PageIndex, domain string) mdconv.
 		// Construct Confluence URL
 		// We use the viewpage.action URL format which is standard for ID-based links
 		dest := strings.TrimRight(domain, "/") + "/wiki/pages/viewpage.action?pageId=" + pageID
+		if strings.TrimSpace(anchor) != "" {
+			dest += "#" + anchor
+		}
 
 		return mdconv.LinkParseOutput{
 			Destination: dest,

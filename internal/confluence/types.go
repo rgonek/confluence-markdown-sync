@@ -13,6 +13,8 @@ type Service interface {
 	ListPages(ctx context.Context, opts PageListOptions) (PageListResult, error)
 	GetPage(ctx context.Context, pageID string) (Page, error)
 	DownloadAttachment(ctx context.Context, attachmentID string) ([]byte, error)
+	UploadAttachment(ctx context.Context, input AttachmentUploadInput) (Attachment, error)
+	DeleteAttachment(ctx context.Context, attachmentID string) error
 	CreatePage(ctx context.Context, input PageUpsertInput) (Page, error)
 	UpdatePage(ctx context.Context, pageID string, input PageUpsertInput) (Page, error)
 	ListChanges(ctx context.Context, opts ChangeListOptions) (ChangeListResult, error)
@@ -106,4 +108,21 @@ type ChangeListResult struct {
 // ArchiveResult captures archive task metadata returned by Confluence.
 type ArchiveResult struct {
 	TaskID string
+}
+
+// Attachment represents a Confluence attachment.
+type Attachment struct {
+	ID        string
+	PageID    string
+	Filename  string
+	MediaType string
+	WebURL    string
+}
+
+// AttachmentUploadInput is used to upload an attachment to a page.
+type AttachmentUploadInput struct {
+	PageID      string
+	Filename    string
+	ContentType string
+	Data        []byte
 }

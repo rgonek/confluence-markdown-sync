@@ -7,9 +7,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"net/url"
 	"path"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -298,6 +300,102 @@ func (c *Client) DownloadAttachment(ctx context.Context, attachmentID string) ([
 	}
 
 	return bodyBytes, nil
+}
+
+// UploadAttachment uploads an attachment to a page.
+func (c *Client) UploadAttachment(ctx context.Context, input AttachmentUploadInput) (Attachment, error) {
+	pageID := strings.TrimSpace(input.PageID)
+	if pageID == "" {
+		return Attachment{}, errors.New("page ID is required")
+	}
+	filename := strings.TrimSpace(input.Filename)
+	if filename == "" {
+		return Attachment{}, errors.New("filename is required")
+	}
+
+	body := &bytes.Buffer{}
+	writer := multipart.NewWriter(body)
+	filePart, err := writer.CreateFormFile("file", filepath.Base(filename))
+	if err != nil {
+		return Attachment{}, fmt.Errorf("create multipart file part: %w", err)
+	}
+	if _, err := filePart.Write(input.Data); err != nil {
+		return Attachment{}, fmt.Errorf("write multipart payload: %w", err)
+	}
+	if err := writer.Close(); err != nil {
+		return Attachment{}, fmt.Errorf("close multipart payload: %w", err)
+	}
+
+	u, err := url.Parse(c.baseURL)
+	if err != nil {
+		return Attachment{}, err
+	}
+	u.Path = path.Join(u.Path, "/wiki/rest/api/content", url.PathEscape(pageID), "child", "attachment")
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u.String(), body)
+	if err != nil {
+		return Attachment{}, err
+	}
+	req.SetBasicAuth(c.email, c.apiToken)
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("User-Agent", c.userAgent)
+	req.Header.Set("X-Atlassian-Token", "no-check")
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+
+	var payload attachmentUploadResponse
+	if err := c.do(req, &payload); err != nil {
+		if isHTTPStatus(err, http.StatusNotFound) {
+			return Attachment{}, ErrNotFound
+		}
+		return Attachment{}, err
+	}
+	if len(payload.Results) == 0 {
+		return Attachment{}, errors.New("upload attachment response missing results")
+	}
+
+	item := payload.Results[0]
+	if strings.TrimSpace(item.ID) == "" {
+		return Attachment{}, errors.New("upload attachment response missing id")
+	}
+
+	resolvedWebURL := resolveWebURL(c.baseURL, item.Links.WebUI)
+	if strings.TrimSpace(resolvedWebURL) == "" {
+		resolvedWebURL = resolveWebURL(c.baseURL, item.Links.Download)
+	}
+
+	return Attachment{
+		ID:        item.ID,
+		PageID:    pageID,
+		Filename:  firstNonEmpty(item.Title, item.Filename, filepath.Base(filename)),
+		MediaType: item.MediaType,
+		WebURL:    resolvedWebURL,
+	}, nil
+}
+
+// DeleteAttachment deletes a Confluence attachment.
+func (c *Client) DeleteAttachment(ctx context.Context, attachmentID string) error {
+	id := strings.TrimSpace(attachmentID)
+	if id == "" {
+		return errors.New("attachment ID is required")
+	}
+
+	req, err := c.newRequest(
+		ctx,
+		http.MethodDelete,
+		"/wiki/api/v2/attachments/"+url.PathEscape(id),
+		nil,
+		nil,
+	)
+	if err != nil {
+		return err
+	}
+	if err := c.do(req, nil); err != nil {
+		if isHTTPStatus(err, http.StatusNotFound) {
+			return ErrNotFound
+		}
+		return err
+	}
+	return nil
 }
 
 // CreatePage creates a page.
@@ -813,4 +911,29 @@ type attachmentDTO struct {
 	Links        struct {
 		Download string `json:"download"`
 	} `json:"_links"`
+}
+
+type attachmentUploadResponse struct {
+	Results []attachmentUploadResultDTO `json:"results"`
+}
+
+type attachmentUploadResultDTO struct {
+	ID        string `json:"id"`
+	Title     string `json:"title"`
+	Filename  string `json:"filename"`
+	MediaType string `json:"mediaType"`
+	Links     struct {
+		WebUI    string `json:"webui"`
+		Download string `json:"download"`
+	} `json:"_links"`
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value != "" {
+			return value
+		}
+	}
+	return ""
 }

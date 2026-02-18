@@ -8,7 +8,8 @@
 - **PR-02 (Client + Local Data Model Foundation)** is implemented: Confluence client package (`spaces/pages/changes`, archive/delete endpoints), frontmatter read/write and validation primitives, path sanitization, and `.confluence-state.json` persistence.
 - **PR-03 (Converter + Validate)** is implemented: strict/best-effort converter profiles, link/media hooks, and `validate [TARGET]`.
 - **PR-04 (`pull` End-to-End)** is implemented: incremental pull orchestration, best-effort conversion with diagnostics, attachment download/delete reconciliation, scoped stash/restore, scoped commit/no-op detection, and pull sync tags.
-- PR-05 through PR-07 are in progress per the delivery plan.
+- **PR-05 (`push` v1)** is implemented: validate-first push gating, in-scope git change detection, strict reverse conversion with page/attachment maps, conflict policies (`pull-merge|force|cancel`), page update/archive + attachment upload/delete flow, and per-file push commits with structured trailers.
+- PR-06 and PR-07 are in progress per the delivery plan.
 
 ## Planned Commands
 - `init`
@@ -66,12 +67,16 @@ Compatibility and precedence (planned):
   - Rewrites/downloads referenced attachments to `assets/<page-id>/<attachment-id>-<filename>`.
   - Reconciles remote deletions by hard-deleting local markdown/files and attachment assets.
   - Uses scoped `git stash` restore and creates scoped commits + pull sync tag only for non-no-op runs.
-- `push` (planned):
+- `push` (implemented v1):
   - Always runs `validate` before any remote writes.
-  - Converts Markdown -> ADF with strict link/media hooks; unresolved references fail before remote writes.
+  - Detects in-scope markdown changes from the latest sync baseline and exits as a no-op when none exist.
+  - Builds `page_id_by_path` / `attachment_id_by_path` maps and runs strict Markdown -> ADF conversion before page writes.
+  - Handles remote-ahead conflicts via `--on-conflict=pull-merge|force|cancel`.
+  - Updates or archives pages, uploads missing referenced attachments, and deletes stale page attachments.
+  - Writes per-file commits with structured Confluence trailers.
+- `push` (planned v2):
   - Captures an internal snapshot under `refs/confluence-sync/snapshots/<SpaceKey>/<UTC timestamp>`.
   - Uses an ephemeral sync branch and isolated `git worktree`.
-  - Creates per-file commits and merges on full success.
   - Restores out-of-scope local workspace state exactly after successful merge.
   - Keeps sync branch and snapshot refs on failure for CLI-guided recovery.
   - Creates push sync tag only for successful non-no-op runs.
