@@ -212,3 +212,41 @@ func TestArchiveAndDeleteEndpoints(t *testing.T) {
 	}
 }
 
+func TestDownloadAttachment_ResolvesAndDownloadsBytes(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/wiki/api/v2/attachments/att-1":
+			if r.Method != http.MethodGet {
+				t.Fatalf("method = %s, want GET", r.Method)
+			}
+			w.Header().Set("Content-Type", "application/json")
+			io.WriteString(w, `{"id":"att-1","downloadLink":"/download/attachments/1/diagram.png"}`)
+		case "/download/attachments/1/diagram.png":
+			if r.Method != http.MethodGet {
+				t.Fatalf("download method = %s, want GET", r.Method)
+			}
+			w.WriteHeader(http.StatusOK)
+			io.WriteString(w, "binary-data")
+		default:
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	client, err := NewClient(ClientConfig{
+		BaseURL:  server.URL,
+		Email:    "user@example.com",
+		APIToken: "token-123",
+	})
+	if err != nil {
+		t.Fatalf("NewClient() unexpected error: %v", err)
+	}
+
+	raw, err := client.DownloadAttachment(context.Background(), "att-1")
+	if err != nil {
+		t.Fatalf("DownloadAttachment() unexpected error: %v", err)
+	}
+	if string(raw) != "binary-data" {
+		t.Fatalf("attachment bytes = %q, want %q", string(raw), "binary-data")
+	}
+}
