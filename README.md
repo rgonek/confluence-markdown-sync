@@ -5,7 +5,8 @@
 ## Status
 - Planning and design are tracked in `agents/plans/confluence_sync_cli.md`.
 - **PR-01 (Bootstrap)** is implemented: Go module, cobra command tree, config loading, `init` command, automation flags, and `Makefile`.
-- PR-02 through PR-07 are in progress per the delivery plan.
+- **PR-02 (Client + Local Data Model Foundation)** is implemented: Confluence client package (`spaces/pages/changes`, archive/delete endpoints), frontmatter read/write and validation primitives, path sanitization, and `.confluence-state.json` persistence.
+- PR-03 through PR-07 are in progress per the delivery plan.
 
 ## Planned Commands
 - `init`
