@@ -6,7 +6,9 @@
 - Planning and design are tracked in `agents/plans/confluence_sync_cli.md`.
 - **PR-01 (Bootstrap)** is implemented: Go module, cobra command tree, config loading, `init` command, automation flags, and `Makefile`.
 - **PR-02 (Client + Local Data Model Foundation)** is implemented: Confluence client package (`spaces/pages/changes`, archive/delete endpoints), frontmatter read/write and validation primitives, path sanitization, and `.confluence-state.json` persistence.
-- PR-03 through PR-07 are in progress per the delivery plan.
+- **PR-03 (Converter + Validate)** is implemented: strict/best-effort converter profiles, link/media hooks, and `validate [TARGET]`.
+- **PR-04 (`pull` End-to-End)** is implemented: incremental pull orchestration, best-effort conversion with diagnostics, attachment download/delete reconciliation, scoped stash/restore, scoped commit/no-op detection, and pull sync tags.
+- PR-05 through PR-07 are in progress per the delivery plan.
 
 ## Planned Commands
 - `init`
@@ -57,14 +59,14 @@ Compatibility and precedence (planned):
 - A top-level `Makefile` will be included for common local workflows.
 - Initial targets will cover at least `build`, `test`, and `lint`/`fmt`.
 
-## Planned Sync Behavior
-- `pull`:
-  - Fetches incremental changes using a high-watermark timestamp.
-  - Reconciles remote deletions by hard-deleting local files/assets.
-  - Converts ADF -> Markdown with best-effort link/media hooks and emits diagnostics from converter warnings.
-  - Updates local state in `<SpaceKey>/.confluence-state.json`.
-  - Creates a sync commit and pull tag only when scoped changes exist (no-op pull creates neither).
-- `push`:
+## Sync Behavior
+- `pull` (implemented):
+  - Fetches incremental changes using `last_pull_high_watermark` with an overlap window.
+  - Rewrites same-space page links to relative Markdown links (anchors preserved).
+  - Rewrites/downloads referenced attachments to `assets/<page-id>/<attachment-id>-<filename>`.
+  - Reconciles remote deletions by hard-deleting local markdown/files and attachment assets.
+  - Uses scoped `git stash` restore and creates scoped commits + pull sync tag only for non-no-op runs.
+- `push` (planned):
   - Always runs `validate` before any remote writes.
   - Converts Markdown -> ADF with strict link/media hooks; unresolved references fail before remote writes.
   - Captures an internal snapshot under `refs/confluence-sync/snapshots/<SpaceKey>/<UTC timestamp>`.
