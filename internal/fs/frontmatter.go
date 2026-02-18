@@ -3,6 +3,7 @@ package fs
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -137,6 +138,56 @@ func FormatMarkdownDocument(doc MarkdownDocument) ([]byte, error) {
 	return []byte(builder.String()), nil
 }
 
+// ReadFrontmatter reads only the frontmatter of a markdown file.
+// It reads only the beginning of the file to avoid loading large bodies.
+func ReadFrontmatter(path string) (Frontmatter, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return Frontmatter{}, err
+	}
+	defer file.Close()
+
+	// Read first 8KB (should be enough for frontmatter)
+	buf := make([]byte, 8192)
+	n, err := file.Read(buf)
+	if err != nil && err != io.EOF {
+		return Frontmatter{}, err
+	}
+	// Convert buffer to string, handling UTF-8 BOM if present at start
+	content := string(buf[:n])
+	content = strings.TrimPrefix(content, "\uFEFF")
+
+	lines := strings.SplitAfter(content, "\n")
+	if len(lines) == 0 || strings.TrimSpace(lines[0]) != frontmatterDelimiter {
+		return Frontmatter{}, ErrFrontmatterMissing
+	}
+
+	var frontmatterLines []string
+	foundEnd := false
+	for i := 1; i < len(lines); i++ {
+		line := lines[i]
+		if strings.TrimSpace(line) == frontmatterDelimiter {
+			foundEnd = true
+			break
+		}
+		frontmatterLines = append(frontmatterLines, line)
+	}
+
+	if !foundEnd {
+		return Frontmatter{}, fmt.Errorf("%w or exceeds 8KB limit", ErrFrontmatterInvalid)
+	}
+
+	fmBlock := strings.Join(frontmatterLines, "")
+	var fm Frontmatter
+	if err := yaml.Unmarshal([]byte(fmBlock), &fm); err != nil {
+		return Frontmatter{}, fmt.Errorf("%w: %v", ErrFrontmatterInvalid, err)
+	}
+	if fm.Extra == nil {
+		fm.Extra = map[string]any{}
+	}
+	return fm, nil
+}
+
 // ValidateFrontmatterSchema validates required sync metadata and field formats.
 func ValidateFrontmatterSchema(fm Frontmatter) ValidationResult {
 	result := ValidationResult{}
@@ -220,4 +271,3 @@ func splitFrontmatter(content string) (frontmatter string, body string, err erro
 	}
 	return "", "", fmt.Errorf("%w: missing closing delimiter", ErrFrontmatterInvalid)
 }
-

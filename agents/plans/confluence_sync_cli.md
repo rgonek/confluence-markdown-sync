@@ -262,14 +262,15 @@ Done criteria:
 
 ### PR-03 - Converter Adapter + Hook Profiles + `validate`
 Checklist:
-- [ ] Integrate `converter` and `mdconverter` with internal adapter constructors.
-- [ ] Implement forward profile (`best_effort`) for `pull`/`diff` and reverse profile (`strict`) for `validate`/`push`.
-- [ ] Pass `ConvertOptions{SourcePath: ...}` through all conversion entrypoints.
-- [ ] Implement hook adapters (link/media both directions) and warning-to-diagnostic mapping.
-- [ ] Implement `validate [TARGET]` with strict reverse conversion + hook parity with planned `push` profile.
+- [x] Integrate `converter` and `mdconverter` with internal adapter constructors.
+- [x] Implement forward profile (`best_effort`) for `pull`/`diff` and reverse profile (`strict`) for `validate`/`push`.
+- [x] Pass `ConvertOptions{SourcePath: ...}` through all conversion entrypoints.
+- [x] Implement hook adapters (link/media both directions) and warning-to-diagnostic mapping.
+- [x] Implement `validate [TARGET]` with strict reverse conversion + hook parity with planned `push` profile.
 Done criteria:
-- [ ] `validate` fails on strict unresolved refs and immutable-key edits.
-- [ ] Unit tests cover unresolved behavior (`best_effort` vs `strict`) and hook-output validation constraints.
+- [x] `validate` fails on strict unresolved refs and immutable-key edits.
+- [x] Unit tests cover unresolved behavior (`best_effort` vs `strict`) and hook-output validation constraints.
+
 
 ### PR-04 - `pull` End-to-End (Best-Effort Conversion)
 Checklist:
