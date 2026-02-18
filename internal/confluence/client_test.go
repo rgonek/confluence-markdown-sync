@@ -250,3 +250,87 @@ func TestDownloadAttachment_ResolvesAndDownloadsBytes(t *testing.T) {
 		t.Fatalf("attachment bytes = %q, want %q", string(raw), "binary-data")
 	}
 }
+
+func TestUploadAndDeleteAttachmentEndpoints(t *testing.T) {
+	uploadCalls := 0
+	deleteCalls := 0
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/wiki/rest/api/content/42/child/attachment":
+			uploadCalls++
+			if got := r.Header.Get("X-Atlassian-Token"); got != "no-check" {
+				t.Fatalf("X-Atlassian-Token = %q, want no-check", got)
+			}
+			if !strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/form-data;") {
+				t.Fatalf("content type = %q, want multipart/form-data", r.Header.Get("Content-Type"))
+			}
+
+			reader, err := r.MultipartReader()
+			if err != nil {
+				t.Fatalf("MultipartReader() error: %v", err)
+			}
+			part, err := reader.NextPart()
+			if err != nil {
+				t.Fatalf("NextPart() error: %v", err)
+			}
+			if part.FormName() != "file" {
+				t.Fatalf("form field = %q, want file", part.FormName())
+			}
+			if part.FileName() != "diagram.png" {
+				t.Fatalf("filename = %q, want diagram.png", part.FileName())
+			}
+			data, err := io.ReadAll(part)
+			if err != nil {
+				t.Fatalf("read multipart part: %v", err)
+			}
+			if string(data) != "asset-bytes" {
+				t.Fatalf("uploaded bytes = %q, want asset-bytes", string(data))
+			}
+
+			w.Header().Set("Content-Type", "application/json")
+			io.WriteString(w, `{"results":[{"id":"att-9","title":"diagram.png","_links":{"webui":"/wiki/pages/viewpage.action?pageId=42"}}]}`)
+		case r.Method == http.MethodDelete && r.URL.Path == "/wiki/api/v2/attachments/att-9":
+			deleteCalls++
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.String())
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	client, err := NewClient(ClientConfig{
+		BaseURL:  server.URL,
+		Email:    "user@example.com",
+		APIToken: "token-123",
+	})
+	if err != nil {
+		t.Fatalf("NewClient() unexpected error: %v", err)
+	}
+
+	attachment, err := client.UploadAttachment(context.Background(), AttachmentUploadInput{
+		PageID:   "42",
+		Filename: "diagram.png",
+		Data:     []byte("asset-bytes"),
+	})
+	if err != nil {
+		t.Fatalf("UploadAttachment() unexpected error: %v", err)
+	}
+	if attachment.ID != "att-9" {
+		t.Fatalf("attachment ID = %q, want att-9", attachment.ID)
+	}
+	if attachment.PageID != "42" {
+		t.Fatalf("page ID = %q, want 42", attachment.PageID)
+	}
+
+	if err := client.DeleteAttachment(context.Background(), "att-9"); err != nil {
+		t.Fatalf("DeleteAttachment() unexpected error: %v", err)
+	}
+
+	if uploadCalls != 1 {
+		t.Fatalf("upload calls = %d, want 1", uploadCalls)
+	}
+	if deleteCalls != 1 {
+		t.Fatalf("delete calls = %d, want 1", deleteCalls)
+	}
+}

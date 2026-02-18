@@ -288,8 +288,8 @@ Checklist:
 - [x] Implement conflict policy handling (`pull-merge|force|cancel`), page update/archive flow, attachment upload/delete flow.
 - [x] Implement per-file commits with structured trailers and no-op push short-circuit.
 Done criteria:
-- [ ] Integration tests verify strict unresolved failures happen before remote writes.
-- [ ] Integration tests verify conflict-policy behavior and push commit trailer format.
+- [x] Integration tests verify strict unresolved failures happen before remote writes.
+- [x] Integration tests verify conflict-policy behavior and push commit trailer format.
 
 ### PR-06 - `push` v2 (Isolated Worktree + Snapshot/Recovery Model)
 Checklist:
