@@ -1,12 +1,17 @@
 package cmd
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"sort"
 	"strings"
 
 	"github.com/rgonek/confluence-markdown-sync/internal/config"
+	"github.com/rgonek/confluence-markdown-sync/internal/confluence"
+	"github.com/rgonek/confluence-markdown-sync/internal/fs"
+	syncflow "github.com/rgonek/confluence-markdown-sync/internal/sync"
 	"github.com/spf13/cobra"
 )
 
@@ -16,6 +21,14 @@ const (
 	OnConflictForce     = "force"
 	OnConflictCancel    = "cancel"
 )
+
+var newPushRemote = func(cfg *config.Config) (syncflow.PushRemote, error) {
+	return confluence.NewClient(confluence.ClientConfig{
+		BaseURL:  cfg.Domain,
+		Email:    cfg.Email,
+		APIToken: cfg.APIToken,
+	})
+}
 
 func newPushCmd() *cobra.Command {
 	var onConflict string
@@ -62,11 +75,14 @@ type pushFileChange struct {
 }
 
 func runPush(cmd *cobra.Command, target config.Target, onConflict string) error {
+	ctx := context.Background()
+	out := cmd.OutOrStdout()
+
 	if err := validateOnConflict(onConflict); err != nil {
 		return err
 	}
 
-	if err := runValidateTarget(cmd.OutOrStdout(), target); err != nil {
+	if err := runValidateTarget(out, target); err != nil {
 		return fmt.Errorf("pre-push validate failed: %w", err)
 	}
 
@@ -82,7 +98,12 @@ func runPush(cmd *cobra.Command, target config.Target, onConflict string) error 
 		return err
 	}
 
-	scopePath, err := gitScopePath(repoRoot, spaceDir)
+	spaceScopePath, err := gitScopePath(repoRoot, spaceDir)
+	if err != nil {
+		return err
+	}
+
+	changeScopePath, err := resolvePushScopePath(repoRoot, spaceDir, target, targetCtx)
 	if err != nil {
 		return err
 	}
@@ -92,17 +113,202 @@ func runPush(cmd *cobra.Command, target config.Target, onConflict string) error 
 		return err
 	}
 
-	changes, err := gitChangedMarkdownSince(repoRoot, scopePath, baselineRef)
+	changes, err := gitChangedMarkdownSince(repoRoot, changeScopePath, baselineRef)
 	if err != nil {
 		return err
 	}
 	if len(changes) == 0 {
-		fmt.Fprintln(cmd.OutOrStdout(), "push completed with no in-scope markdown changes (no-op)")
+		fmt.Fprintln(out, "push completed with no in-scope markdown changes (no-op)")
 		return nil
 	}
 
-	fmt.Fprintf(cmd.OutOrStdout(), "push: %d markdown change(s) detected since %s\n", len(changes), baselineRef)
-	return fmt.Errorf("push sync loop not yet implemented")
+	envPath := findEnvPath(spaceDir)
+	cfg, err := config.Load(envPath)
+	if err != nil {
+		return fmt.Errorf("failed to load config: %w", err)
+	}
+
+	remote, err := newPushRemote(cfg)
+	if err != nil {
+		return fmt.Errorf("create confluence client: %w", err)
+	}
+
+	state, err := fs.LoadState(spaceDir)
+	if err != nil {
+		return fmt.Errorf("load state: %w", err)
+	}
+
+	syncChanges, err := toSyncPushChanges(changes, repoRoot, spaceDir)
+	if err != nil {
+		return err
+	}
+
+	result, err := syncflow.Push(ctx, remote, syncflow.PushOptions{
+		SpaceKey:       spaceKey,
+		SpaceDir:       spaceDir,
+		Domain:         cfg.Domain,
+		State:          state,
+		Changes:        syncChanges,
+		ConflictPolicy: toSyncConflictPolicy(onConflict),
+	})
+	if err != nil {
+		var conflictErr *syncflow.PushConflictError
+		if errors.As(err, &conflictErr) {
+			return formatPushConflictError(conflictErr)
+		}
+		return err
+	}
+
+	if len(result.Commits) == 0 {
+		fmt.Fprintln(out, "push completed with no pushable markdown changes (no-op)")
+		return nil
+	}
+
+	if err := fs.SaveState(spaceDir, result.State); err != nil {
+		return fmt.Errorf("save state: %w", err)
+	}
+
+	for i, commitPlan := range result.Commits {
+		repoPaths := make([]string, 0, len(commitPlan.StagedPaths)+1)
+		for _, relPath := range commitPlan.StagedPaths {
+			repoPaths = append(repoPaths, joinRepoScopePath(spaceScopePath, relPath))
+		}
+		if i == len(result.Commits)-1 {
+			repoPaths = append(repoPaths, joinRepoScopePath(spaceScopePath, fs.StateFileName))
+		}
+		repoPaths = dedupeRepoPaths(repoPaths)
+
+		addArgs := append([]string{"add", "--"}, repoPaths...)
+		if _, err := runGit(repoRoot, addArgs...); err != nil {
+			return err
+		}
+
+		hasChanges, err := gitHasScopedStagedChanges(repoRoot, spaceScopePath)
+		if err != nil {
+			return err
+		}
+		if !hasChanges {
+			continue
+		}
+
+		subject := fmt.Sprintf("Sync %q to Confluence (v%d)", commitPlan.PageTitle, commitPlan.Version)
+		body := fmt.Sprintf(
+			"Page ID: %s\nURL: %s\n\nConfluence-Page-ID: %s\nConfluence-Version: %d\nConfluence-Space-Key: %s\nConfluence-URL: %s",
+			commitPlan.PageID,
+			commitPlan.URL,
+			commitPlan.PageID,
+			commitPlan.Version,
+			commitPlan.SpaceKey,
+			commitPlan.URL,
+		)
+		if _, err := runGit(repoRoot, "commit", "-m", subject, "-m", body); err != nil {
+			return err
+		}
+
+		fmt.Fprintf(out, "pushed %s (page %s, v%d)\n", commitPlan.Path, commitPlan.PageID, commitPlan.Version)
+	}
+
+	fmt.Fprintf(out, "push completed: %d page change(s) synced\n", len(result.Commits))
+	return nil
+}
+
+func resolvePushScopePath(repoRoot, spaceDir string, target config.Target, targetCtx validateTargetContext) (string, error) {
+	if target.IsFile() {
+		if len(targetCtx.files) != 1 {
+			return "", fmt.Errorf("expected one file target, got %d", len(targetCtx.files))
+		}
+		return gitScopePath(repoRoot, targetCtx.files[0])
+	}
+	return gitScopePath(repoRoot, spaceDir)
+}
+
+func toSyncPushChanges(changes []pushFileChange, repoRoot, spaceDir string) ([]syncflow.PushFileChange, error) {
+	out := make([]syncflow.PushFileChange, 0, len(changes))
+	for _, change := range changes {
+		absPath := filepath.Join(repoRoot, filepath.FromSlash(change.Path))
+		relPath, err := filepath.Rel(spaceDir, absPath)
+		if err != nil {
+			return nil, err
+		}
+		relPath = filepath.ToSlash(relPath)
+		if relPath == "." || strings.HasPrefix(relPath, "../") {
+			continue
+		}
+
+		var changeType syncflow.PushChangeType
+		switch change.Status {
+		case "A":
+			changeType = syncflow.PushChangeAdd
+		case "M", "T":
+			changeType = syncflow.PushChangeModify
+		case "D":
+			changeType = syncflow.PushChangeDelete
+		default:
+			continue
+		}
+
+		out = append(out, syncflow.PushFileChange{Type: changeType, Path: relPath})
+	}
+	return out, nil
+}
+
+func toSyncConflictPolicy(policy string) syncflow.PushConflictPolicy {
+	switch policy {
+	case OnConflictPullMerge:
+		return syncflow.PushConflictPolicyPullMerge
+	case OnConflictForce:
+		return syncflow.PushConflictPolicyForce
+	case OnConflictCancel:
+		return syncflow.PushConflictPolicyCancel
+	default:
+		return syncflow.PushConflictPolicyCancel
+	}
+}
+
+func formatPushConflictError(conflictErr *syncflow.PushConflictError) error {
+	switch conflictErr.Policy {
+	case syncflow.PushConflictPolicyPullMerge:
+		return fmt.Errorf(
+			"conflict for %s (remote v%d > local v%d): pull-merge policy selected; run cms pull and merge local changes before retrying push",
+			conflictErr.Path,
+			conflictErr.RemoteVersion,
+			conflictErr.LocalVersion,
+		)
+	case syncflow.PushConflictPolicyForce:
+		return conflictErr
+	default:
+		return fmt.Errorf(
+			"conflict for %s (remote v%d > local v%d): rerun with --on-conflict=force to overwrite or --on-conflict=pull-merge to reconcile",
+			conflictErr.Path,
+			conflictErr.RemoteVersion,
+			conflictErr.LocalVersion,
+		)
+	}
+}
+
+func joinRepoScopePath(scopePath, relPath string) string {
+	relPath = filepath.ToSlash(filepath.Clean(filepath.FromSlash(relPath)))
+	if scopePath == "." {
+		return relPath
+	}
+	return filepath.ToSlash(filepath.Join(filepath.FromSlash(scopePath), filepath.FromSlash(relPath)))
+}
+
+func dedupeRepoPaths(paths []string) []string {
+	set := map[string]struct{}{}
+	for _, path := range paths {
+		path = filepath.ToSlash(filepath.Clean(filepath.FromSlash(path)))
+		if path == "." || path == "" {
+			continue
+		}
+		set[path] = struct{}{}
+	}
+	ordered := make([]string, 0, len(set))
+	for path := range set {
+		ordered = append(ordered, path)
+	}
+	sort.Strings(ordered)
+	return ordered
 }
 
 func gitPushBaselineRef(repoRoot, spaceKey string) (string, error) {
