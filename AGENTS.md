@@ -1,7 +1,7 @@
 # AGENTS
 
 ## Purpose
-This repository builds `confluence-sync`, a Go CLI that syncs Confluence pages with local Markdown files.
+This repository builds `cms` (`confluence-sync`), a Go CLI that syncs Confluence pages with local Markdown files.
 
 ## Source Of Truth
 - Primary plan: `agents/plans/confluence_sync_cli.md`
@@ -18,6 +18,14 @@ This repository builds `confluence-sync`, a Go CLI that syncs Confluence pages w
   - `confluence_parent_page_id`
 - Remote deletions are hard-deleted locally during `pull` (recovery is via Git history).
 - `.confluence-state.json` is local state and must stay gitignored.
+
+## Converter And Hook Requirements
+- Forward conversion for `pull`/`diff` uses `github.com/rgonek/jira-adf-converter/converter` and `ConvertWithContext(..., converter.ConvertOptions{SourcePath: ...})`.
+- Reverse conversion for `validate`/`push` uses `github.com/rgonek/jira-adf-converter/mdconverter` and `ConvertWithContext(..., mdconverter.ConvertOptions{SourcePath: ...})`.
+- `pull`/`diff` run with best-effort resolution (`ErrUnresolved` => diagnostics + fallback output).
+- `validate`/`push` run with strict resolution (`ErrUnresolved` => conversion failure).
+- `validate` must use the same strict reverse-conversion profile and hook adapters as `push`.
+- Hooks return mapping decisions only; sync orchestration owns downloads/uploads and file writes/deletes.
 
 ## Git Workflow Requirements
 - `push` uses an ephemeral sync branch: `sync/<SpaceKey>/<UTC timestamp>`.
@@ -42,6 +50,7 @@ This repository builds `confluence-sync`, a Go CLI that syncs Confluence pages w
 - Immutable key integrity.
 - Link and asset resolution.
 - Markdown to ADF conversion.
+- Strict reverse conversion behavior aligned with `push` hook/profile settings.
 
 Validation failures must stop `push` immediately.
 

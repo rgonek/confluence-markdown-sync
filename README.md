@@ -1,6 +1,6 @@
 # confluence-markdown-sync
 
-`confluence-sync` is a planned Go CLI for syncing Confluence pages and attachments with a local Markdown workspace.
+`cms` (working name: `confluence-sync`) is a planned Go CLI for syncing Confluence pages and attachments with a local Markdown workspace.
 
 ## Status
 - Planning and design are tracked in `agents/plans/confluence_sync_cli.md`.
@@ -29,7 +29,27 @@ Environment variables:
 
 Compatibility and precedence (planned):
 - `confluence-sync` will continue accepting legacy `CONFLUENCE_*` variables.
-- Resolution order: `CONFLUENCE_*` (if set) -> `ATLASSIAN_*` -> error.
+- Resolution order: `CONFLUENCE_*` (if set) -> `ATLASSIAN_*` -> `.env` file -> error.
+
+## Planned Converter Libraries and Hook System
+- Forward conversion (`pull`, `diff`) uses `github.com/rgonek/jira-adf-converter/converter`:
+  - `converter.New(converter.Config)`
+  - `ConvertWithContext(ctx, adfJSON, converter.ConvertOptions{SourcePath: ...})`
+  - `converter.Result{Markdown, Warnings}`
+- Reverse conversion (`validate`, `push`) uses `github.com/rgonek/jira-adf-converter/mdconverter`:
+  - `mdconverter.New(mdconverter.ReverseConfig)`
+  - `ConvertWithContext(ctx, markdown, mdconverter.ConvertOptions{SourcePath: ...})`
+  - `mdconverter.Result{ADF, Warnings}`
+- Runtime hook surfaces (planned):
+  - Forward: `LinkRenderHook`, `MediaRenderHook`
+  - Reverse: `LinkParseHook`, `MediaParseHook`
+- Resolution behavior (planned):
+  - `pull` and `diff` use `best_effort` (`ErrUnresolved` -> warning + fallback output).
+  - `validate` and `push` use `strict` (`ErrUnresolved` -> conversion failure).
+- Hook responsibilities:
+  - Hooks return mapping decisions only.
+  - Network and filesystem side effects (uploads, downloads, file writes/deletes) stay in sync orchestration.
+- `validate` and `push` share the same strict reverse-conversion profile and hook adapters.
 
 ## Planned Developer Tooling
 - A top-level `Makefile` will be included for common local workflows.
@@ -39,10 +59,12 @@ Compatibility and precedence (planned):
 - `pull`:
   - Fetches incremental changes using a high-watermark timestamp.
   - Reconciles remote deletions by hard-deleting local files/assets.
+  - Converts ADF -> Markdown with best-effort link/media hooks and emits diagnostics from converter warnings.
   - Updates local state in `<SpaceKey>/.confluence-state.json`.
   - Creates a sync commit and pull tag only when scoped changes exist (no-op pull creates neither).
 - `push`:
   - Always runs `validate` before any remote writes.
+  - Converts Markdown -> ADF with strict link/media hooks; unresolved references fail before remote writes.
   - Captures an internal snapshot under `refs/confluence-sync/snapshots/<SpaceKey>/<UTC timestamp>`.
   - Uses an ephemeral sync branch and isolated `git worktree`.
   - Creates per-file commits and merges on full success.
@@ -70,9 +92,10 @@ Compatibility and precedence (planned):
 
 ## Project Layout (Planned)
 ```text
-confluence-sync/
+confluence-markdown-sync/
   cmd/
   internal/
+  Makefile
   main.go
 ```
 

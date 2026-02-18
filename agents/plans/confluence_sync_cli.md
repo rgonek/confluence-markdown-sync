@@ -8,7 +8,8 @@ This design uses Git as a local history engine only (no Git remote required). Th
 **Binary Name:** `cms`
 
 **Key Libraries:**
-- `github.com/rgonek/jira-adf-converter`: Handles ADF <-> Markdown conversion.
+- `github.com/rgonek/jira-adf-converter/converter`: Forward conversion (ADF JSON -> Markdown) via `converter.New(converter.Config)` and `ConvertWithContext(...)`, returning `converter.Result{Markdown, Warnings}`.
+- `github.com/rgonek/jira-adf-converter/mdconverter`: Reverse conversion (Markdown -> ADF JSON) via `mdconverter.New(mdconverter.ReverseConfig)` and `ConvertWithContext(...)`, returning `mdconverter.Result{ADF, Warnings}`.
 - `github.com/spf13/cobra`: For CLI command structure.
 - `github.com/spf13/viper`: For configuration management (environment variables and .env support).
 - `gopkg.in/yaml.v3`: For parsing Markdown frontmatter.
@@ -78,7 +79,9 @@ Compatibility and precedence:
     -   Track `max_remote_modified_at` from fetched entities.
     -   Build a deterministic pre-conversion page path map `page_path_by_id` (page ID -> planned Markdown path) before rendering any page content.
     -   Build planned attachment path map `attachment_path_by_id` (attachment ID -> planned local asset path).
-    -   Convert page ADF to Markdown using link/media resolver hooks that receive current page context and mapping indexes.
+    -   Convert page ADF to Markdown using `converter.ConvertWithContext(ctx, adfJSON, converter.ConvertOptions{SourcePath: <planned-md-path>})`.
+    -   Use `converter.Config{ResolutionMode: converter.ResolutionBestEffort, LinkHook: ..., MediaHook: ...}` so unresolved refs degrade to fallback output with warnings instead of failing pull.
+    -   Collect `converter.Result.Warnings` (especially `unresolved_reference`) and surface them as pull diagnostics.
     -   Pull link rewrite rule: same-space page ID with known target path => rewrite to relative Markdown path from the current file (preserve `#fragment` anchors).
     -   For external/cross-space links, keep absolute links.
     -   For unresolved same-space page links, keep original absolute link and emit diagnostics.
@@ -117,6 +120,7 @@ Compatibility and precedence:
     -   Execute sync operations in that worktree to avoid touching the user's active working tree.
 6.  **Process Loop**: For each changed file:
     -   **Conflict Check**: Compare Remote Version vs Local Frontmatter.
+    -   **Convert Markdown -> ADF**: Run `mdconverter.ConvertWithContext(ctx, markdown, mdconverter.ConvertOptions{SourcePath: <md-path>})` using `mdconverter.ReverseConfig{ResolutionMode: mdconverter.ResolutionStrict, LinkHook: ..., MediaHook: ...}`. Fail file processing on unresolved refs or invalid hook output.
     -   **Upload Assets**: If new images are referenced, upload to Confluence.
     -   **Update/Delete**:
         -   Modified/Added `.md`: PUT page update to Confluence.
@@ -139,25 +143,41 @@ Compatibility and precedence:
 9.  **Note**: `push` does NOT update `last_pull_high_watermark`.
 
 #### 2.3.4 Attachment & Link Handling
-- **Converter Hook Contract (library-level, runtime callbacks)**:
-    - Conversion exposes link/media resolver hooks in both directions (ADF->Markdown and Markdown->ADF).
-    - Hooks receive current document context plus mapping metadata and may rewrite targets or defer to default behavior.
-    - Hooks do not perform network/filesystem side effects; sync orchestration owns downloads/uploads/file writes.
+- **Converter Integration (concrete API)**:
+    - `pull`/`diff` use `converter.New(converter.Config)` + `ConvertWithContext(ctx, adfJSON, converter.ConvertOptions{SourcePath: ...})`.
+    - `validate`/`push` use `mdconverter.New(mdconverter.ReverseConfig)` + `ConvertWithContext(ctx, markdown, mdconverter.ConvertOptions{SourcePath: ...})`.
+    - Both directions surface structured warnings (`converter.Result.Warnings`, `mdconverter.Result.Warnings`) that must be translated into CLI diagnostics.
+- **Hook Contract (exact signatures)**:
+    - Forward link hook: `func(context.Context, converter.LinkRenderInput) (converter.LinkRenderOutput, error)`.
+    - Forward media hook: `func(context.Context, converter.MediaRenderInput) (converter.MediaRenderOutput, error)`.
+    - Reverse link hook: `func(context.Context, mdconverter.LinkParseInput) (mdconverter.LinkParseOutput, error)`.
+    - Reverse media hook: `func(context.Context, mdconverter.MediaParseInput) (mdconverter.MediaParseOutput, error)`.
+    - Hook metadata includes typed fields (`PageID`, `SpaceKey`, `AttachmentID`, `Filename`, `Anchor`) plus raw attrs payloads for custom mapping logic.
+- **Hook Output Validation (library-enforced)**:
+    - Forward handled link output requires non-empty `Href` unless `TextOnly=true`.
+    - Forward handled media output requires non-empty `Markdown`.
+    - Reverse handled link output requires non-empty `Destination`; `ForceLink` and `ForceCard` are mutually exclusive.
+    - Reverse handled media output requires `MediaType` in `{image,file}` and exactly one of `ID` or `URL`.
+- **Invocation Notes (library behavior)**:
+    - ADF -> Markdown hooks run on link marks, inline cards, then media nodes.
+    - Markdown -> ADF detects `mention:` links before link hooks; remaining links then pass through hook/card heuristics.
 - **Attachments**:
     - **Pull Planning**: Build `attachment_path_by_id` before conversion.
     - **Download**: CLI scans ADF for media and downloads files to `assets/`.
     - **Storage Pattern**: Use `assets/<page-id>/<attachment-id>-<filename>` to avoid name collisions.
     - **Link Rewrite**: Pull media hook rewrites Markdown image/file references to local relative paths (e.g., `![Image](assets/12345/8899-diagram.png)`).
-    - **Push Mapping**: Push media hook resolves local asset paths to attachment IDs (or upload intents), then sync performs upload/delete and updates `attachment_index`.
-    - **ADF Mapping**: Push conversion emits Confluence `ri:attachment` references.
+    - **Push Mapping**: Push media hook resolves local asset paths to `MediaParseOutput{MediaType, ID|URL, Alt}`; sync uploads missing attachments, then writes resolved IDs/URLs back into the outgoing ADF payload.
+    - **ADF Mapping**: Push conversion emits ADF `mediaSingle`/`media` nodes with resolved attachment identity (`id` or `url`).
 - **Page Links**:
     - **Pull Planning**: Build `page_path_by_id` before converting page content.
-    - **Pull Rewrite**: Pull link hook resolves `ri:page` links to relative Markdown links (e.g., `[Link](./ChildPage.md)`) using `page_path_by_id` and current page path.
-    - **Push Rewrite**: Build `page_id_by_path`, then resolve local relative links to Confluence page IDs and emit `ri:page` in ADF.
+    - **Pull Rewrite**: Pull link hook resolves Confluence page links to relative Markdown links (e.g., `[Link](./ChildPage.md)`) using `page_path_by_id` and current page path.
+    - **Push Rewrite**: Build `page_id_by_path`, then reverse link hooks resolve local relative links to canonical Confluence destinations before ADF emission.
     - **Anchor Handling**: Preserve in-document fragments while rewriting links in both directions.
 - **Resolution Modes**:
-    - **Best-Effort** (`pull`, `diff`): unresolved refs fall back to original link/asset representation and emit diagnostics.
-    - **Strict** (`validate`, `push`): unresolved local/space refs fail conversion before any remote write.
+    - **Best-Effort** (`pull`, `diff`): use `ResolutionBestEffort`; `ErrUnresolved` falls back to default behavior and emits diagnostics.
+    - **Strict** (`validate`, `push`): use `ResolutionStrict`; `ErrUnresolved` fails conversion before any remote write.
+- **Side-Effect Boundary**:
+    - Hooks return mapping decisions only; sync orchestration owns network/filesystem side effects (downloads/uploads/file writes/deletes).
 
 #### 2.3.5 Git Integration Enhancements
 - **Smart .gitignore**: `init` adds `.DS_Store`, `*.tmp`, `.confluence-state.json`, `.env`, `cms.exe`, etc.
@@ -191,6 +211,7 @@ Compatibility and precedence:
 
 #### 2.3.7 Validation Gate
 - **`validate` Command**: Checks frontmatter schema, immutable key integrity, link/asset resolution, and Markdown -> ADF conversion.
+- **Converter Profile Match**: `validate` uses the same strict reverse-conversion profile as `push` (`mdconverter.ResolutionStrict` + same link/media hook adapters) so push behavior is predictable.
 - **Pre-Push Requirement**: `push` always runs `validate` first.
 - **Failure Output**: Returns machine-readable and human-readable diagnostics (file path, field/error, remediation hint).
 
@@ -239,13 +260,16 @@ Automation support for `pull`/`push`: `--yes`, `--non-interactive`; `push` addit
 - [ ] Implement attachment delete API (`DeleteAttachment`).
 
 ### Phase 3: Content Conversion
-- [ ] Integrate `github.com/rgonek/jira-adf-converter`.
-- [ ] Implement `converter` package.
-- [ ] Add converter adapter hooks for link/media resolution in both directions.
-- [ ] Define hook context payloads (current page path, space key, link/media attributes) and fallback behavior.
-- [ ] Add conversion modes (`best-effort` and `strict`) with structured unresolved-reference diagnostics.
-- [ ] `ToMarkdown(adfJSON) -> (string, error)`
-- [ ] `ToADF(markdown) -> (jsonNode, error)`
+- [ ] Integrate both converter packages: `github.com/rgonek/jira-adf-converter/converter` and `github.com/rgonek/jira-adf-converter/mdconverter`.
+- [ ] Implement internal conversion adapter package that centralizes converter construction and warning-to-diagnostic mapping.
+- [ ] Define forward profile (`pull`/`diff`): `converter.Config{ResolutionMode: converter.ResolutionBestEffort, LinkHook, MediaHook}`.
+- [ ] Define reverse profile (`validate`/`push`): `mdconverter.ReverseConfig{ResolutionMode: mdconverter.ResolutionStrict, LinkHook, MediaHook}`.
+- [ ] Use context-aware APIs everywhere: `ConvertWithContext(..., ConvertOptions{SourcePath: ...})` for deterministic relative resolution and cancellation.
+- [ ] Implement forward hooks using `converter.LinkRenderInput`/`MediaRenderInput` and metadata-aware mapping from Confluence attrs to local paths.
+- [ ] Implement reverse hooks using `mdconverter.LinkParseInput`/`MediaParseInput`, including `ForceLink` vs `ForceCard` behavior and media `ID`/`URL` constraints.
+- [ ] Handle `ErrUnresolved` consistently: best-effort diagnostics for pull/diff, hard failures for validate/push.
+- [ ] `ToMarkdown(ctx, adfJSON, sourcePath) -> (converter.Result, error)`
+- [ ] `ToADF(ctx, markdown, sourcePath) -> (mdconverter.Result, error)`
 
 ### Phase 4: File System Operations
 - [ ] Implement `filesystem` package.
@@ -263,7 +287,7 @@ Automation support for `pull`/`push`: `--yes`, `--non-interactive`; `push` addit
 - [ ] Implement high-watermark fetch with overlap window and `max_remote_modified_at` tracking.
 - [ ] Build deterministic `page_path_by_id` before converting any page content.
 - [ ] Build deterministic `attachment_path_by_id` before converting media references.
-- [ ] Convert ADF -> Markdown using resolver hooks to rewrite page/media references per current page path.
+- [ ] Convert ADF -> Markdown with `converter.ConvertWithContext` + forward hooks to rewrite page/media references per current page path.
 - [ ] Preserve link anchors and normalize relative path rendering during pull rewrites.
 - [ ] Emit diagnostics for unresolved same-space links/assets in pull best-effort mode.
 - [ ] Implement CLI-managed Git Stash/Commit/Restore workflow with stash-ref tracking, conflict-safe restore, and user-facing recovery without manual Git.
@@ -280,9 +304,9 @@ Automation support for `pull`/`push`: `--yes`, `--non-interactive`; `push` addit
 - [ ] Implement temporary `git worktree` lifecycle for push runs.
 - [ ] Run `validate` as mandatory pre-push gate against snapshot content.
 - [ ] Build `page_id_by_path`/`attachment_id_by_path` lookup maps before Markdown -> ADF conversion.
-- [ ] Run reverse conversion with strict resolver hooks so unresolved relative links/assets fail before remote writes.
+- [ ] Run reverse conversion with `mdconverter.ConvertWithContext` + strict resolver hooks so unresolved relative links/assets fail before remote writes.
 - [ ] Update loop for `push` (conflict detection).
-- [ ] Implement Attachment upload & Link resolution using reverse resolver hook outputs.
+- [ ] Implement attachment upload/link resolution from reverse hook outputs (`Destination`, `ForceLink`/`ForceCard`, `MediaType`, `ID`/`URL`).
 - [ ] Implement local deletion handling (archive/delete remote pages and attachments via indexes).
 - [ ] Implement per-file Git Commit after push.
 - [ ] Add structured commit trailers to push commits.
@@ -296,10 +320,12 @@ Automation support for `pull`/`push`: `--yes`, `--non-interactive`; `push` addit
 - [ ] Unit tests: frontmatter parsing/validation, target parsing, path collision handling.
 - [ ] Unit tests: immutable frontmatter edits are rejected.
 - [ ] Unit tests: resolver hook fallback vs strict-mode failures for unresolved links/media.
+- [ ] Unit tests: hook output validation rules (forward `Href`/`Markdown`, reverse `ForceLink` vs `ForceCard`, reverse media `ID` xor `URL`).
 - [ ] Integration tests: `init` creates new repositories on `main` (never `master`).
 - [ ] Integration tests: pull watermark correctness, delete reconciliation, stash restore, push sync-branch merge flow.
 - [ ] Integration tests: pull rewrites same-space page links to relative paths via `page_path_by_id` and preserves anchors.
 - [ ] Integration tests: pull unresolved same-space references emit diagnostics and keep fallback links.
+- [ ] Integration tests: converter hooks receive `SourcePath` and produce deterministic relative path mappings in both directions.
 - [ ] Integration tests: worktree creation/cleanup and failure-path branch retention.
 - [ ] Integration tests: sync tag creation only on non-no-op runs and trailer presence/format.
 - [ ] Integration tests: `push` fails fast when `validate` reports invariant violations.
