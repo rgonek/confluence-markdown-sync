@@ -304,12 +304,12 @@ Done criteria:
 
 ### PR-07 - `diff`, Hardening, and Final Test Matrix
 Checklist:
-- [ ] Implement `diff [TARGET]` with best-effort remote conversion and scoped comparison.
+- [x] Implement `diff [TARGET]` with best-effort remote conversion and scoped comparison.
 - [ ] Finalize non-interactive behavior (`--yes`, `--non-interactive`, `--on-conflict`) across pull/push.
 - [ ] Add/finish round-trip golden tests and end-to-end integration scenarios (including no-git-remote environment).
 - [ ] Refresh docs to final behavior (`README.md`, `AGENTS.md`, plan notes).
 Done criteria:
-- [ ] `diff` works in both file and space modes.
+- [x] `diff` works in both file and space modes.
 - [ ] Full CI test matrix passes with all invariants covered.
 - [ ] Docs describe the implemented behavior without plan drift.
 
