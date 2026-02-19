@@ -85,12 +85,15 @@ func setAutomationFlags(t *testing.T, yes, nonInteractive bool) {
 	t.Helper()
 	previousYes := flagYes
 	previousNonInteractive := flagNonInteractive
+	previousSkipMissingAssets := flagSkipMissingAssets
 
 	flagYes = yes
 	flagNonInteractive = nonInteractive
+	flagSkipMissingAssets = false
 
 	t.Cleanup(func() {
 		flagYes = previousYes
 		flagNonInteractive = previousNonInteractive
+		flagSkipMissingAssets = previousSkipMissingAssets
 	})
 }

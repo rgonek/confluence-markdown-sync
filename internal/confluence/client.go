@@ -235,6 +235,12 @@ func (c *Client) DownloadAttachment(ctx context.Context, attachmentID string) ([
 		return nil, errors.New("attachment ID is required")
 	}
 
+	if isUUID(id) {
+		if resolvedID, err := c.resolveAttachmentIDByFileID(ctx, id); err == nil {
+			id = resolvedID
+		}
+	}
+
 	req, err := c.newRequest(
 		ctx,
 		http.MethodGet,
@@ -936,4 +942,44 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func (c *Client) resolveAttachmentIDByFileID(ctx context.Context, fileID string) (string, error) {
+	query := url.Values{}
+	query.Set("file-id", fileID)
+
+	req, err := c.newRequest(ctx, http.MethodGet, "/wiki/api/v2/attachments", query, nil)
+	if err != nil {
+		return "", err
+	}
+
+	var payload v2ListResponse[attachmentDTO]
+	if err := c.do(req, &payload); err != nil {
+		return "", err
+	}
+
+	if len(payload.Results) == 0 {
+		return "", ErrNotFound
+	}
+
+	return payload.Results[0].ID, nil
+}
+
+func isUUID(s string) bool {
+	if len(s) != 36 {
+		return false
+	}
+	for i, r := range s {
+		switch i {
+		case 8, 13, 18, 23:
+			if r != '-' {
+				return false
+			}
+		default:
+			if !((r >= '0' && r <= '9') || (r >= 'a' && r <= 'f') || (r >= 'A' && r <= 'F')) {
+				return false
+			}
+		}
+	}
+	return true
 }

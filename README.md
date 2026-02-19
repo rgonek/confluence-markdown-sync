@@ -32,7 +32,7 @@ Inside the folder/repo where you want synced docs:
 cms init
 ```
 
-`cms init` prepares Git metadata, `.gitignore`, and `.env` scaffolding.
+`cms init` prepares Git metadata, `.gitignore`, and `.env` scaffolding, and creates an initial commit when it initializes a new Git repository.
 
 ## Quick flow 🔄
 

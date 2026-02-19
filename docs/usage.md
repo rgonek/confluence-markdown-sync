@@ -52,7 +52,8 @@ cms init
 - initialize Git when missing,
 - ensure `.gitignore` entries,
 - create `.env` when needed,
-- scaffold helper files.
+- scaffold helper files,
+- create an initial commit when a new Git repository is initialized.
 
 ## Target Syntax
 
@@ -85,6 +86,9 @@ Highlights:
 - best-effort conversion (unresolved references become diagnostics),
 - same-space links rewritten to relative Markdown links,
 - attachments downloaded into `assets/<page-id>/<attachment-id>-<filename>`,
+- attachment download failures include the owning page ID,
+- missing assets can be auto-skipped with `--skip-missing-assets` (`-s`),
+- without `-s`, pull asks whether to continue when an attachment download fails,
 - remote deletions are hard-deleted locally,
 - sync tag created only on non-no-op runs.
 

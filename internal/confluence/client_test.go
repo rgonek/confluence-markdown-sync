@@ -212,6 +212,43 @@ func TestArchiveAndDeleteEndpoints(t *testing.T) {
 	}
 }
 
+func TestDownloadAttachment_ResolvesUUID(t *testing.T) {
+	uuid := "e2cabb2e-4df7-49bb-84e0-c76ae83f6f9b"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/wiki/api/v2/attachments":
+			if r.URL.Query().Get("file-id") != uuid {
+				t.Fatalf("query file-id = %q, want %q", r.URL.Query().Get("file-id"), uuid)
+			}
+			w.Header().Set("Content-Type", "application/json")
+			io.WriteString(w, `{"results":[{"id":"att-uuid-123"}]}`)
+		case "/wiki/api/v2/attachments/att-uuid-123":
+			w.Header().Set("Content-Type", "application/json")
+			io.WriteString(w, `{"id":"att-uuid-123","downloadLink":"/download/uuid.png"}`)
+		case "/download/uuid.png":
+			w.WriteHeader(http.StatusOK)
+			io.WriteString(w, "uuid-data")
+		default:
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	client, _ := NewClient(ClientConfig{
+		BaseURL:  server.URL,
+		Email:    "u",
+		APIToken: "t",
+	})
+
+	raw, err := client.DownloadAttachment(context.Background(), uuid)
+	if err != nil {
+		t.Fatalf("DownloadAttachment() error: %v", err)
+	}
+	if string(raw) != "uuid-data" {
+		t.Fatalf("data = %q, want uuid-data", string(raw))
+	}
+}
+
 func TestDownloadAttachment_ResolvesAndDownloadsBytes(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {

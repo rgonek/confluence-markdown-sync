@@ -315,3 +315,57 @@ func sampleChildADF() map[string]any {
 		},
 	}
 }
+
+func TestPull_SkipsMissingAssets(t *testing.T) {
+	tmpDir := t.TempDir()
+	spaceDir := filepath.Join(tmpDir, "ENG")
+	_ = os.MkdirAll(spaceDir, 0o755)
+
+	fake := &fakePullRemote{
+		space: confluence.Space{ID: "space-1", Key: "ENG"},
+		pages: []confluence.Page{
+			{ID: "1", SpaceID: "space-1", Title: "Page 1"},
+		},
+		pagesByID: map[string]confluence.Page{
+			"1": {
+				ID:      "1",
+				Title:   "Page 1",
+				BodyADF: rawJSON(t, sampleRootADF()),
+			},
+		},
+		attachments: map[string][]byte{}, // Empty!
+	}
+
+	result, err := Pull(context.Background(), fake, PullOptions{
+		SpaceKey:          "ENG",
+		SpaceDir:          spaceDir,
+		SkipMissingAssets: true,
+	})
+	if err != nil {
+		t.Fatalf("Pull() with skip=true failed: %v", err)
+	}
+
+	foundMissing := false
+	for _, d := range result.Diagnostics {
+		if d.Code == "ATTACHMENT_DOWNLOAD_SKIPPED" && strings.Contains(d.Message, "att-1") {
+			foundMissing = true
+			break
+		}
+	}
+	if !foundMissing {
+		t.Fatalf("expected ATTACHMENT_DOWNLOAD_SKIPPED diagnostic, got %+v", result.Diagnostics)
+	}
+
+	// Now try with skip=false (default)
+	_, err = Pull(context.Background(), fake, PullOptions{
+		SpaceKey:          "ENG",
+		SpaceDir:          spaceDir,
+		SkipMissingAssets: false,
+	})
+	if err == nil {
+		t.Fatalf("Pull() with skip=false should have failed for missing attachment")
+	}
+	if !strings.Contains(err.Error(), "att-1") || !strings.Contains(err.Error(), "page 1") {
+		t.Fatalf("error message should mention attachment and page, got: %v", err)
+	}
+}

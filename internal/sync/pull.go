@@ -34,12 +34,14 @@ type PullRemote interface {
 
 // PullOptions controls pull orchestration behavior.
 type PullOptions struct {
-	SpaceKey      string
-	SpaceDir      string
-	State         fs.SpaceState
-	PullStartedAt time.Time
-	OverlapWindow time.Duration
-	TargetPageID  string
+	SpaceKey          string
+	SpaceDir          string
+	State             fs.SpaceState
+	PullStartedAt     time.Time
+	OverlapWindow     time.Duration
+	TargetPageID      string
+	SkipMissingAssets bool
+	OnDownloadError   func(attachmentID string, pageID string, err error) bool // return true to skip and continue
 }
 
 // PullDiagnostic captures non-fatal conversion diagnostics.
@@ -155,6 +157,7 @@ func Pull(ctx context.Context, remote PullRemote, opts PullOptions) (PullResult,
 
 	attachmentIndex := cloneStringMap(state.AttachmentIndex)
 	attachmentPathByID := map[string]string{}
+	attachmentPageByID := map[string]string{}
 	staleAttachmentPaths := map[string]struct{}{}
 
 	deletedPageIDs := deletedPageIDs(state.PagePathIndex, pageByID)
@@ -194,16 +197,35 @@ func Pull(ctx context.Context, remote PullRemote, opts PullOptions) (PullResult,
 
 			attachmentIndex[relAssetPath] = ref.AttachmentID
 			attachmentPathByID[ref.AttachmentID] = filepath.Join(spaceDir, filepath.FromSlash(relAssetPath))
+			attachmentPageByID[ref.AttachmentID] = ref.PageID
 		}
 	}
 
 	assetIDs := sortedStringKeys(attachmentPathByID)
 	downloadedAssets := make([]string, 0, len(assetIDs))
+	diagnostics := []PullDiagnostic{}
+
 	for _, attachmentID := range assetIDs {
 		assetPath := attachmentPathByID[attachmentID]
+		pageID := attachmentPageByID[attachmentID]
 		raw, err := remote.DownloadAttachment(ctx, attachmentID)
 		if err != nil {
-			return PullResult{}, fmt.Errorf("download attachment %s: %w", attachmentID, err)
+			skip := false
+			if errors.Is(err, confluence.ErrNotFound) && opts.SkipMissingAssets {
+				skip = true
+			} else if opts.OnDownloadError != nil && opts.OnDownloadError(attachmentID, pageID, err) {
+				skip = true
+			}
+
+			if skip {
+				diagnostics = append(diagnostics, PullDiagnostic{
+					Path:    attachmentID,
+					Code:    "ATTACHMENT_DOWNLOAD_SKIPPED",
+					Message: fmt.Sprintf("download attachment %s (page %s) failed, skipping: %v", attachmentID, pageID, err),
+				})
+				continue
+			}
+			return PullResult{}, fmt.Errorf("download attachment %s (page %s): %w", attachmentID, pageID, err)
 		}
 		if err := os.MkdirAll(filepath.Dir(assetPath), 0o755); err != nil {
 			return PullResult{}, fmt.Errorf("prepare attachment directory %s: %w", assetPath, err)
@@ -219,7 +241,6 @@ func Pull(ctx context.Context, remote PullRemote, opts PullOptions) (PullResult,
 	}
 
 	updatedMarkdown := make([]string, 0, len(changedPages))
-	diagnostics := []PullDiagnostic{}
 	changedPageIDsSorted := sortedStringKeys(changedPages)
 	for _, pageID := range changedPageIDsSorted {
 		page := changedPages[pageID]

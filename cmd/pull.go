@@ -55,6 +55,7 @@ If omitted, the space is inferred from the current directory name.`,
 	}
 	cmd.Flags().BoolVarP(&flagYes, "yes", "y", false, "Auto-approve safety confirmations")
 	cmd.Flags().BoolVar(&flagNonInteractive, "non-interactive", false, "Disable prompts; fail fast when a decision is required")
+	cmd.Flags().BoolVarP(&flagSkipMissingAssets, "skip-missing-assets", "s", false, "Continue if an attachment is missing (not found)")
 	return cmd
 }
 
@@ -66,6 +67,7 @@ func runPull(cmd *cobra.Command, target config.Target) (runErr error) {
 	if err != nil {
 		return err
 	}
+	scopeDirExisted := dirExists(pullCtx.spaceDir)
 
 	if err := os.MkdirAll(pullCtx.spaceDir, 0o755); err != nil {
 		return fmt.Errorf("prepare space directory: %w", err)
@@ -108,27 +110,35 @@ func runPull(cmd *cobra.Command, target config.Target) (runErr error) {
 	}
 
 	pullStartedAt := nowUTC()
-	stashRef, err := stashScopeIfDirty(repoRoot, scopePath, pullCtx.spaceKey, pullStartedAt)
-	if err != nil {
-		return err
-	}
-	if stashRef != "" {
-		defer func() {
-			restoreErr := applyAndDropStash(repoRoot, stashRef)
-			if restoreErr != nil {
-				runErr = errors.Join(runErr, restoreErr)
-			}
-		}()
+	stashRef := ""
+	if scopeDirExisted {
+		stashRef, err = stashScopeIfDirty(repoRoot, scopePath, pullCtx.spaceKey, pullStartedAt)
+		if err != nil {
+			return err
+		}
+		if stashRef != "" {
+			defer func() {
+				restoreErr := applyAndDropStash(repoRoot, stashRef)
+				if restoreErr != nil {
+					runErr = errors.Join(runErr, restoreErr)
+				}
+			}()
+		}
 	}
 
 	result, err := syncflow.Pull(ctx, remote, syncflow.PullOptions{
-		SpaceKey:      pullCtx.spaceKey,
-		SpaceDir:      pullCtx.spaceDir,
-		State:         state,
-		PullStartedAt: pullStartedAt,
-		OverlapWindow: syncflow.DefaultPullOverlapWindow,
-		TargetPageID:  pullCtx.targetPageID,
+		SpaceKey:          pullCtx.spaceKey,
+		SpaceDir:          pullCtx.spaceDir,
+		State:             state,
+		PullStartedAt:     pullStartedAt,
+		OverlapWindow:     syncflow.DefaultPullOverlapWindow,
+		TargetPageID:      pullCtx.targetPageID,
+		SkipMissingAssets: flagSkipMissingAssets,
+		OnDownloadError: func(attachmentID string, pageID string, err error) bool {
+			return askToContinueOnDownloadError(cmd.InOrStdin(), out, attachmentID, pageID, err)
+		},
 	})
+
 	if err != nil {
 		return err
 	}
@@ -281,7 +291,16 @@ func gitRepoRoot() (string, error) {
 }
 
 func gitScopePath(repoRoot, scopeDir string) (string, error) {
-	rel, err := filepath.Rel(repoRoot, scopeDir)
+	normalizedRepoRoot, err := normalizeRepoPath(repoRoot)
+	if err != nil {
+		return "", err
+	}
+	normalizedScopeDir, err := normalizeRepoPath(scopeDir)
+	if err != nil {
+		return "", err
+	}
+
+	rel, err := filepath.Rel(normalizedRepoRoot, normalizedScopeDir)
 	if err != nil {
 		return "", err
 	}
@@ -294,6 +313,19 @@ func gitScopePath(repoRoot, scopeDir string) (string, error) {
 		return ".", nil
 	}
 	return rel, nil
+}
+
+func normalizeRepoPath(p string) (string, error) {
+	absPath, err := filepath.Abs(p)
+	if err != nil {
+		return "", err
+	}
+	resolvedPath, err := filepath.EvalSymlinks(absPath)
+	if err == nil && strings.TrimSpace(resolvedPath) != "" {
+		absPath = resolvedPath
+	}
+	absPath = filepath.Clean(absPath)
+	return absPath, nil
 }
 
 func stashScopeIfDirty(repoRoot, scopePath, spaceKey string, ts time.Time) (string, error) {
@@ -495,4 +527,9 @@ func runGit(workdir string, args ...string) (string, error) {
 		return "", fmt.Errorf("git %s failed: %s", strings.Join(args, " "), msg)
 	}
 	return string(out), nil
+}
+
+func dirExists(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.IsDir()
 }

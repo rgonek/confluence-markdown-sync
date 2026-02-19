@@ -109,6 +109,7 @@ It will:
 
 func runInit(cmd *cobra.Command, _ []string) error {
 	out := cmd.OutOrStdout()
+	repoCreated := false
 
 	// 1. Verify git is installed.
 	if _, err := exec.LookPath("git"); err != nil {
@@ -123,6 +124,7 @@ func runInit(cmd *cobra.Command, _ []string) error {
 			return fmt.Errorf("git init failed: %s: %w", strings.TrimSpace(string(out)), err)
 		}
 		fmt.Fprintln(cmd.OutOrStdout(), "✓ git repository initialized")
+		repoCreated = true
 	} else {
 		fmt.Fprintln(out, "✓ existing git repository detected")
 	}
@@ -155,6 +157,18 @@ func runInit(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("failed to create README.md: %w", err)
 	}
 	fmt.Fprintln(out, "✓ README.md ready")
+
+	if repoCreated {
+		committed, err := createInitCommit()
+		if err != nil {
+			return err
+		}
+		if committed {
+			fmt.Fprintln(out, "✓ initial commit created")
+		} else {
+			fmt.Fprintln(out, "✓ initial commit skipped (no staged changes)")
+		}
+	}
 
 	fmt.Fprintln(out, "\ncms workspace initialized successfully.")
 	return nil
@@ -265,4 +279,72 @@ func containsLine(s, line string) bool {
 		}
 	}
 	return false
+}
+
+func createInitCommit() (bool, error) {
+	paths := []string{".gitignore", "AGENTS.md", "README.md"}
+	toStage := make([]string, 0, len(paths))
+	for _, p := range paths {
+		if _, err := os.Stat(p); err == nil {
+			ignored, err := isGitIgnored(p)
+			if err != nil {
+				return false, err
+			}
+			if ignored {
+				continue
+			}
+			toStage = append(toStage, p)
+		}
+	}
+	if len(toStage) == 0 {
+		return false, nil
+	}
+
+	addArgs := append([]string{"add", "--"}, toStage...)
+	if out, err := exec.Command("git", addArgs...).CombinedOutput(); err != nil {
+		return false, fmt.Errorf("git add failed: %s", strings.TrimSpace(string(out)))
+	}
+
+	hasStaged, err := hasStagedChanges()
+	if err != nil {
+		return false, err
+	}
+	if !hasStaged {
+		return false, nil
+	}
+
+	commitOut, err := exec.Command("git", "commit", "-m", "chore: initialize cms workspace").CombinedOutput()
+	if err != nil {
+		msg := strings.TrimSpace(string(commitOut))
+		if strings.Contains(msg, "Please tell me who you are") || strings.Contains(msg, "unable to auto-detect email address") {
+			return false, fmt.Errorf("git commit failed: missing git identity; set user.name and user.email, then rerun init")
+		}
+		return false, fmt.Errorf("git commit failed: %s", msg)
+	}
+
+	return true, nil
+}
+
+func hasStagedChanges() (bool, error) {
+	err := exec.Command("git", "diff", "--cached", "--quiet").Run()
+	if err == nil {
+		return false, nil
+	}
+	exitErr, ok := err.(*exec.ExitError)
+	if ok && exitErr.ExitCode() == 1 {
+		return true, nil
+	}
+	return false, fmt.Errorf("check staged changes: %w", err)
+}
+
+func isGitIgnored(path string) (bool, error) {
+	err := exec.Command("git", "check-ignore", "--quiet", "--", path).Run()
+	if err == nil {
+		return true, nil
+	}
+	exitErr, ok := err.(*exec.ExitError)
+	if ok && exitErr.ExitCode() == 1 {
+		return false, nil
+	}
+	return false, fmt.Errorf("check ignore status for %s: %w", path, err)
 }

@@ -345,6 +345,81 @@ func TestRunPull_WorksWithoutGitRemoteConfigured(t *testing.T) {
 	}
 }
 
+func TestRunPull_RecreatesMissingSpaceDirWithoutRestoringDeletionStash(t *testing.T) {
+	repo := t.TempDir()
+	setupGitRepo(t, repo)
+
+	spaceDir := filepath.Join(repo, "ENG")
+	if err := os.MkdirAll(spaceDir, 0o755); err != nil {
+		t.Fatalf("mkdir space: %v", err)
+	}
+	writeMarkdown(t, filepath.Join(spaceDir, "root.md"), fs.MarkdownDocument{
+		Frontmatter: fs.Frontmatter{
+			Title:                  "Root",
+			ConfluencePageID:       "1",
+			ConfluenceSpaceKey:     "ENG",
+			ConfluenceVersion:      1,
+			ConfluenceLastModified: "2026-02-01T08:00:00Z",
+		},
+		Body: "old body\n",
+	})
+	if err := os.WriteFile(filepath.Join(repo, ".gitignore"), []byte(".env\n.confluence-state.json\n"), 0o644); err != nil {
+		t.Fatalf("write .gitignore: %v", err)
+	}
+
+	runGitForTest(t, repo, "add", ".")
+	runGitForTest(t, repo, "commit", "-m", "initial")
+
+	if err := os.RemoveAll(spaceDir); err != nil {
+		t.Fatalf("remove space dir: %v", err)
+	}
+
+	fake := &cmdFakePullRemote{
+		space: confluence.Space{ID: "space-1", Key: "ENG", Name: "Engineering"},
+		pages: []confluence.Page{{
+			ID:           "1",
+			SpaceID:      "space-1",
+			Title:        "Root",
+			Version:      2,
+			LastModified: time.Date(2026, time.February, 1, 11, 0, 0, 0, time.UTC),
+		}},
+		pagesByID: map[string]confluence.Page{
+			"1": {
+				ID:           "1",
+				SpaceID:      "space-1",
+				Title:        "Root",
+				Version:      2,
+				LastModified: time.Date(2026, time.February, 1, 11, 0, 0, 0, time.UTC),
+				BodyADF:      rawJSON(t, simpleADF("new body")),
+			},
+		},
+		attachments: map[string][]byte{},
+	}
+
+	oldFactory := newPullRemote
+	newPullRemote = func(_ *config.Config) (syncflow.PullRemote, error) { return fake, nil }
+	t.Cleanup(func() { newPullRemote = oldFactory })
+
+	setupEnv(t)
+	chdirRepo(t, repo)
+
+	cmd := &cobra.Command{}
+	cmd.SetOut(&bytes.Buffer{})
+
+	if err := runPull(cmd, config.Target{Mode: config.TargetModeSpace, Value: "ENG"}); err != nil {
+		t.Fatalf("runPull() error: %v", err)
+	}
+
+	if _, err := os.Stat(filepath.Join(spaceDir, "root.md")); err != nil {
+		t.Fatalf("expected root.md to be recreated after pull: %v", err)
+	}
+
+	stashList := strings.TrimSpace(runGitForTest(t, repo, "stash", "list"))
+	if stashList != "" {
+		t.Fatalf("stash should be empty, got %q", stashList)
+	}
+}
+
 func buildBulkPullRemote(t *testing.T, pageCount int) *cmdFakePullRemote {
 	t.Helper()
 

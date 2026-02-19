@@ -12,6 +12,11 @@ Supported on `pull` and `push`:
   - disables prompts,
   - fails fast when a decision is required and not provided.
 
+Additional pull flag:
+
+- `--skip-missing-assets` (`-s`)
+  - skips missing attachment downloads (`404`/not found) and continues pull.
+
 Additional push flag:
 
 - `--on-conflict=pull-merge|force|cancel`
@@ -43,7 +48,7 @@ In non-interactive usage, set one explicitly.
 ## Recommended Non-Interactive Commands
 
 ```powershell
-cms pull ENG --yes --non-interactive
+cms pull ENG --yes --non-interactive --skip-missing-assets
 cms validate ENG
 cms push ENG --yes --non-interactive --on-conflict=cancel
 ```
@@ -76,7 +81,7 @@ jobs:
           ATLASSIAN_DOMAIN: ${{ secrets.ATLASSIAN_DOMAIN }}
           ATLASSIAN_EMAIL: ${{ secrets.ATLASSIAN_EMAIL }}
           ATLASSIAN_API_TOKEN: ${{ secrets.ATLASSIAN_API_TOKEN }}
-        run: ./cms pull ENG --yes --non-interactive
+        run: ./cms pull ENG --yes --non-interactive --skip-missing-assets
 
       - name: Validate docs
         env:
