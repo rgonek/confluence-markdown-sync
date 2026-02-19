@@ -171,10 +171,29 @@ func runPush(cmd *cobra.Command, target config.Target, onConflict string) (runEr
 		_ = gitClient.RemoveWorktree(worktreeDir)
 	}()
 
+	// Resolve HEAD from main repo to reset SyncBranch
+	currentHead, err := gitClient.ResolveRef("HEAD")
+	if err != nil {
+		if stashRef != "" {
+			_ = gitClient.StashPop(stashRef)
+		}
+		return fmt.Errorf("resolve HEAD: %w", err)
+	}
+
 	// 4. Validate (in worktree)
 	wtSpaceDir := filepath.Join(worktreeDir, spaceScopePath)
+	wtClient := &git.Client{RootDir: worktreeDir}
+
+	// Reset SyncBranch to HEAD (mixed) to ensure commits are granular and based on HEAD
+	if _, err := wtClient.Run("reset", "--mixed", currentHead); err != nil {
+		if stashRef != "" {
+			_ = gitClient.StashPop(stashRef)
+		}
+		return fmt.Errorf("reset worktree: %w", err)
+	}
 
 	var wtTarget config.Target
+
 	if target.IsFile() {
 		relFile, _ := filepath.Rel(spaceDir, targetCtx.files[0]) // Assumes single file
 		wtFile := filepath.Join(wtSpaceDir, relFile)
@@ -200,8 +219,8 @@ func runPush(cmd *cobra.Command, target config.Target, onConflict string) (runEr
 		return err
 	}
 
-	wtClient := &git.Client{RootDir: worktreeDir}
-	changes, err := wtClient.DiffNameStatus(baselineRef, "HEAD", spaceScopePath)
+	wtClient = &git.Client{RootDir: worktreeDir}
+	changes, err := wtClient.DiffNameStatus(baselineRef, snapshotCommit, spaceScopePath)
 	if err != nil {
 		if stashRef != "" {
 			_ = gitClient.StashPop(stashRef)
@@ -355,22 +374,6 @@ func runPush(cmd *cobra.Command, target config.Target, onConflict string) (runEr
 			_ = gitClient.StashPop(stashRef)
 		}
 		return fmt.Errorf("remove worktree: %w", err)
-	}
-
-	currentHead, err := gitClient.ResolveRef("HEAD")
-	if err != nil {
-		if stashRef != "" {
-			_ = gitClient.StashPop(stashRef)
-		}
-		return fmt.Errorf("resolve HEAD: %w", err)
-	}
-
-	if err := gitClient.RebaseOnto(currentHead, snapshotCommit, syncBranchName); err != nil {
-		fmt.Fprintln(out, "Rebase failed. Retaining sync branch for manual recovery.")
-		if stashRef != "" {
-			_ = gitClient.StashPop(stashRef)
-		}
-		return fmt.Errorf("rebase sync branch: %w", err)
 	}
 
 	// 9. Merge

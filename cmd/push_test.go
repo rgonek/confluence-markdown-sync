@@ -224,16 +224,22 @@ func TestRunPush_WritesStructuredCommitTrailers(t *testing.T) {
 		t.Fatal("expected push to create a commit")
 	}
 
-	message := runGitForTest(t, repo, "log", "-1", "--pretty=%B")
+	// Check logs to find the sync commit (it might be merged)
+	// We look for the subject in recent history
+	logOut := runGitForTest(t, repo, "log", "-5", "--pretty=%B")
+	if !strings.Contains(logOut, `Sync "Root" to Confluence (v2)`) {
+		t.Fatalf("commit with subject 'Sync \"Root\" to Confluence (v2)' not found in log:\n%s", logOut)
+	}
+
+	// We also verify trailers are present in that commit's message
 	for _, expected := range []string{
-		`Sync "Root" to Confluence (v2)`,
 		"Confluence-Page-ID: 1",
 		"Confluence-Version: 2",
 		"Confluence-Space-Key: ENG",
 		"Confluence-URL: https://example.atlassian.net/wiki/pages/1",
 	} {
-		if !strings.Contains(message, expected) {
-			t.Fatalf("commit message missing %q:\n%s", expected, message)
+		if !strings.Contains(logOut, expected) {
+			t.Fatalf("commit message missing %q:\n%s", expected, logOut)
 		}
 	}
 }
