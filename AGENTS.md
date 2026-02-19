@@ -70,6 +70,7 @@ Validation failures must stop `push` immediately.
 - `push` supports `--on-conflict=pull-merge|force|cancel` for non-interactive conflict policy.
 - `--yes` auto-approves safety confirmations but does not choose remote-ahead conflict strategy.
 - `--non-interactive` must fail fast when a required decision is missing.
+- Safety confirmation is required when an operation affects more than 10 markdown files or includes delete operations.
 
 ## Testing Expectations
 - Add or update tests for any changed invariant.

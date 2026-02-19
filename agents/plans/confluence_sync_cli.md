@@ -307,11 +307,11 @@ Checklist:
 - [x] Implement `diff [TARGET]` with best-effort remote conversion and scoped comparison.
 - [x] Finalize non-interactive behavior (`--yes`, `--non-interactive`, `--on-conflict`) across pull/push.
 - [x] Add/finish round-trip golden tests and end-to-end integration scenarios (including no-git-remote environment).
-- [ ] Refresh docs to final behavior (`README.md`, `AGENTS.md`, plan notes).
+- [x] Refresh docs to final behavior (`README.md`, `AGENTS.md`, plan notes).
 Done criteria:
 - [x] `diff` works in both file and space modes.
 - [x] Full CI test matrix passes with all invariants covered.
-- [ ] Docs describe the implemented behavior without plan drift.
+- [x] Docs describe the implemented behavior without plan drift.
 
 ## 5. Directory Structure
 ```

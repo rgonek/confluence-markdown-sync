@@ -1,17 +1,12 @@
 # confluence-markdown-sync
 
-`cms` (working name: `confluence-sync`) is a planned Go CLI for syncing Confluence pages and attachments with a local Markdown workspace.
+`cms` is a Go CLI that syncs Confluence pages and attachments with a local Markdown workspace.
 
 ## Status
-- Planning and design are tracked in `agents/plans/confluence_sync_cli.md`.
-- **PR-01 (Bootstrap)** is implemented: Go module, cobra command tree, config loading, `init` command, automation flags, and `Makefile`.
-- **PR-02 (Client + Local Data Model Foundation)** is implemented: Confluence client package (`spaces/pages/changes`, archive/delete endpoints), frontmatter read/write and validation primitives, path sanitization, and `.confluence-state.json` persistence.
-- **PR-03 (Converter + Validate)** is implemented: strict/best-effort converter profiles, link/media hooks, and `validate [TARGET]`.
-- **PR-04 (`pull` End-to-End)** is implemented: incremental pull orchestration, best-effort conversion with diagnostics, attachment download/delete reconciliation, scoped stash/restore, scoped commit/no-op detection, and pull sync tags.
-- **PR-05 (`push` v1)** is implemented: validate-first push gating, in-scope git change detection, strict reverse conversion with page/attachment maps, conflict policies (`pull-merge|force|cancel`), page update/archive + attachment upload/delete flow, and per-file push commits with structured trailers.
-- PR-06 and PR-07 are in progress per the delivery plan.
+- Delivery plan PR-01 through PR-07 is implemented.
+- Current source of truth: `agents/plans/confluence_sync_cli.md`.
 
-## Planned Commands
+## Commands
 - `init`
 - `pull [TARGET]`
 - `push [TARGET]`
@@ -19,95 +14,70 @@
 - `diff [TARGET]`
 
 `[TARGET]` parsing:
-- If it ends with `.md`, it is treated as a file path.
-- Otherwise, it is treated as a `SPACE_KEY`.
+- If it ends with `.md`, it is file mode.
+- Otherwise, it is space mode (`SPACE_KEY`).
 
-Automation flags (planned):
-- `pull` and `push`: `--yes`, `--non-interactive`
-- `push`: `--on-conflict=pull-merge|force|cancel`
+## Automation Flags
+- `pull` and `push`:
+  - `--yes`: auto-approves safety confirmations.
+  - `--non-interactive`: disables prompts and fails when a required decision is missing.
+- `push`:
+  - `--on-conflict=pull-merge|force|cancel` sets remote-ahead conflict policy.
+  - In `--non-interactive` mode, `--on-conflict` is required.
+
+Safety confirmations are required for high-impact operations (>10 markdown files) and delete operations.
 
 ## Authentication
-Environment variables:
+Configuration is resolved in this order:
+1. Legacy `CONFLUENCE_*`
+2. `ATLASSIAN_*`
+3. `.env`
+
+Required values:
 - `ATLASSIAN_DOMAIN`
 - `ATLASSIAN_EMAIL`
 - `ATLASSIAN_API_TOKEN`
 
-Compatibility and precedence (planned):
-- `confluence-sync` will continue accepting legacy `CONFLUENCE_*` variables.
-- Resolution order: `CONFLUENCE_*` (if set) -> `ATLASSIAN_*` -> `.env` file -> error.
-
-## Planned Converter Libraries and Hook System
-- Forward conversion (`pull`, `diff`) uses `github.com/rgonek/jira-adf-converter/converter`:
-  - `converter.New(converter.Config)`
-  - `ConvertWithContext(ctx, adfJSON, converter.ConvertOptions{SourcePath: ...})`
-  - `converter.Result{Markdown, Warnings}`
-- Reverse conversion (`validate`, `push`) uses `github.com/rgonek/jira-adf-converter/mdconverter`:
-  - `mdconverter.New(mdconverter.ReverseConfig)`
-  - `ConvertWithContext(ctx, markdown, mdconverter.ConvertOptions{SourcePath: ...})`
-  - `mdconverter.Result{ADF, Warnings}`
-- Runtime hook surfaces (planned):
-  - Forward: `LinkRenderHook`, `MediaRenderHook`
-  - Reverse: `LinkParseHook`, `MediaParseHook`
-- Resolution behavior (planned):
-  - `pull` and `diff` use `best_effort` (`ErrUnresolved` -> warning + fallback output).
-  - `validate` and `push` use `strict` (`ErrUnresolved` -> conversion failure).
-- Hook responsibilities:
-  - Hooks return mapping decisions only.
-  - Network and filesystem side effects (uploads, downloads, file writes/deletes) stay in sync orchestration.
-- `validate` and `push` share the same strict reverse-conversion profile and hook adapters.
-
-## Planned Developer Tooling
-- A top-level `Makefile` will be included for common local workflows.
-- Initial targets will cover at least `build`, `test`, and `lint`/`fmt`.
-
 ## Sync Behavior
-- `pull` (implemented):
-  - Fetches incremental changes using `last_pull_high_watermark` with an overlap window.
-  - Rewrites same-space page links to relative Markdown links (anchors preserved).
-  - Rewrites/downloads referenced attachments to `assets/<page-id>/<attachment-id>-<filename>`.
-  - Reconciles remote deletions by hard-deleting local markdown/files and attachment assets.
-  - Uses scoped `git stash` restore and creates scoped commits + pull sync tag only for non-no-op runs.
-- `push` (implemented v1):
-  - Always runs `validate` before any remote writes.
-  - Detects in-scope markdown changes from the latest sync baseline and exits as a no-op when none exist.
-  - Builds `page_id_by_path` / `attachment_id_by_path` maps and runs strict Markdown -> ADF conversion before page writes.
-  - Handles remote-ahead conflicts via `--on-conflict=pull-merge|force|cancel`.
-  - Updates or archives pages, uploads missing referenced attachments, and deletes stale page attachments.
-  - Writes per-file commits with structured Confluence trailers.
-- `push` (planned v2):
-  - Captures an internal snapshot under `refs/confluence-sync/snapshots/<SpaceKey>/<UTC timestamp>`.
-  - Uses an ephemeral sync branch and isolated `git worktree`.
-  - Restores out-of-scope local workspace state exactly after successful merge.
-  - Keeps sync branch and snapshot refs on failure for CLI-guided recovery.
-  - Creates push sync tag only for successful non-no-op runs.
+- `pull`:
+  - Uses best-effort ADF -> Markdown conversion.
+  - Rewrites same-space links to relative Markdown paths and preserves anchors.
+  - Downloads attachments to `assets/<page-id>/<attachment-id>-<filename>`.
+  - Hard-deletes local markdown/assets for remote deletions.
+  - Creates scoped commit + `confluence-sync/pull/<SpaceKey>/<UTC timestamp>` tag only on non-no-op runs.
+- `push`:
+  - Always runs `validate` before remote writes.
+  - Uses strict Markdown -> ADF conversion.
+  - Runs in an isolated worktree from snapshot refs (`refs/confluence-sync/snapshots/...`) and ephemeral `sync/<SpaceKey>/<UTC timestamp>` branch.
+  - Creates per-file commits with Confluence trailers, merges on full success, and tags non-no-op runs with `confluence-sync/push/<SpaceKey>/<UTC timestamp>`.
+  - Retains snapshot refs and sync branch on failure for recovery.
+- `validate`:
+  - Checks frontmatter schema, immutable keys, link/asset resolution, and strict reverse conversion.
+- `diff`:
+  - Fetches remote page content, converts with best-effort forward conversion, and compares against local markdown using `git diff --no-index`.
+  - Supports both file and space mode.
 
-## AI-Safe Guardrails
+## Core Invariants
 - Immutable frontmatter keys:
   - `confluence_page_id`
   - `confluence_space_key`
-- `validate` fails if immutable metadata is edited.
-- `push` aborts on validation failure.
+- Mutable-by-sync keys:
+  - `confluence_version`
+  - `confluence_last_modified`
+  - `confluence_parent_page_id`
+- `.confluence-state.json` is local state and must remain gitignored.
 
-## Git Integration
-- Annotated tags for successful non-no-op runs:
-  - `confluence-sync/pull/<SpaceKey>/<UTC timestamp>`
-  - `confluence-sync/push/<SpaceKey>/<UTC timestamp>`
-- No-op `pull`/`push` runs create no sync tag.
-- Push commit trailers include:
-  - `Confluence-Page-ID`
-  - `Confluence-Version`
-  - `Confluence-Space-Key`
-  - `Confluence-URL`
+## Developer Workflows
+Use the top-level `Makefile`:
+- `make build`
+- `make test`
+- `make fmt`
+- `make lint`
 
-## Project Layout (Planned)
-```text
-confluence-markdown-sync/
-  cmd/
-  internal/
-  Makefile
-  main.go
-```
+## Notes
+- Git is required locally.
+- A Git remote is not required.
 
 ## References
-- Implementation plan: `agents/plans/confluence_sync_cli.md`
-- Agent implementation rules: `AGENTS.md`
+- Plan: `agents/plans/confluence_sync_cli.md`
+- Agent rules: `AGENTS.md`
