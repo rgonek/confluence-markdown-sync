@@ -215,6 +215,109 @@ func TestRunPush_WritesStructuredCommitTrailers(t *testing.T) {
 	}
 }
 
+func TestRunPush_NonInteractiveRequiresOnConflict(t *testing.T) {
+	repo := t.TempDir()
+	spaceDir := preparePushRepoWithBaseline(t, repo)
+
+	writeMarkdown(t, filepath.Join(spaceDir, "root.md"), fs.MarkdownDocument{
+		Frontmatter: fs.Frontmatter{
+			Title:                  "Root",
+			ConfluencePageID:       "1",
+			ConfluenceSpaceKey:     "ENG",
+			ConfluenceVersion:      1,
+			ConfluenceLastModified: "2026-02-01T10:00:00Z",
+		},
+		Body: "Updated local content\n",
+	})
+
+	factoryCalls := 0
+	oldFactory := newPushRemote
+	newPushRemote = func(_ *config.Config) (syncflow.PushRemote, error) {
+		factoryCalls++
+		return newCmdFakePushRemote(1), nil
+	}
+	t.Cleanup(func() { newPushRemote = oldFactory })
+
+	setupEnv(t)
+	chdirRepo(t, repo)
+	setAutomationFlags(t, false, true)
+
+	cmd := &cobra.Command{}
+	cmd.SetOut(&bytes.Buffer{})
+	err := runPush(cmd, config.Target{Mode: config.TargetModeSpace, Value: "ENG"}, "")
+	if err == nil {
+		t.Fatal("runPush() expected non-interactive on-conflict error")
+	}
+	if !strings.Contains(err.Error(), "--non-interactive requires --on-conflict") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if factoryCalls != 0 {
+		t.Fatalf("expected remote factory to not be called, got %d", factoryCalls)
+	}
+}
+
+func TestRunPush_NonInteractiveRequiresYesForDeleteConfirmation(t *testing.T) {
+	repo := t.TempDir()
+	spaceDir := preparePushRepoWithBaseline(t, repo)
+
+	if err := os.Remove(filepath.Join(spaceDir, "root.md")); err != nil {
+		t.Fatalf("remove root.md: %v", err)
+	}
+
+	factoryCalls := 0
+	oldFactory := newPushRemote
+	newPushRemote = func(_ *config.Config) (syncflow.PushRemote, error) {
+		factoryCalls++
+		return newCmdFakePushRemote(1), nil
+	}
+	t.Cleanup(func() { newPushRemote = oldFactory })
+
+	setupEnv(t)
+	chdirRepo(t, repo)
+	setAutomationFlags(t, false, true)
+
+	cmd := &cobra.Command{}
+	cmd.SetOut(&bytes.Buffer{})
+	err := runPush(cmd, config.Target{Mode: config.TargetModeSpace, Value: "ENG"}, OnConflictCancel)
+	if err == nil {
+		t.Fatal("runPush() expected delete confirmation error")
+	}
+	if !strings.Contains(err.Error(), "requires confirmation") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if factoryCalls != 0 {
+		t.Fatalf("expected remote factory to not be called, got %d", factoryCalls)
+	}
+}
+
+func TestRunPush_YesBypassesDeleteConfirmation(t *testing.T) {
+	repo := t.TempDir()
+	spaceDir := preparePushRepoWithBaseline(t, repo)
+
+	if err := os.Remove(filepath.Join(spaceDir, "root.md")); err != nil {
+		t.Fatalf("remove root.md: %v", err)
+	}
+
+	fake := newCmdFakePushRemote(1)
+	oldFactory := newPushRemote
+	newPushRemote = func(_ *config.Config) (syncflow.PushRemote, error) { return fake, nil }
+	t.Cleanup(func() { newPushRemote = oldFactory })
+
+	setupEnv(t)
+	chdirRepo(t, repo)
+	setAutomationFlags(t, true, true)
+
+	cmd := &cobra.Command{}
+	cmd.SetOut(&bytes.Buffer{})
+
+	if err := runPush(cmd, config.Target{Mode: config.TargetModeSpace, Value: "ENG"}, OnConflictCancel); err != nil {
+		t.Fatalf("runPush() error: %v", err)
+	}
+	if len(fake.archiveCalls) != 1 {
+		t.Fatalf("expected archive call for deleted page, got %d", len(fake.archiveCalls))
+	}
+}
+
 func TestRunPush_FailureRetainsSnapshotAndSyncBranch(t *testing.T) {
 	repo := t.TempDir()
 	spaceDir := preparePushRepoWithBaseline(t, repo)

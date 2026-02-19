@@ -80,3 +80,17 @@ func chdirRepo(t *testing.T, repo string) {
 	}
 	t.Cleanup(func() { _ = os.Chdir(prevDir) })
 }
+
+func setAutomationFlags(t *testing.T, yes, nonInteractive bool) {
+	t.Helper()
+	previousYes := flagYes
+	previousNonInteractive := flagNonInteractive
+
+	flagYes = yes
+	flagNonInteractive = nonInteractive
+
+	t.Cleanup(func() {
+		flagYes = previousYes
+		flagNonInteractive = previousNonInteractive
+	})
+}

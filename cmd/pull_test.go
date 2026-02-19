@@ -3,6 +3,7 @@ package cmd
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -189,6 +190,126 @@ func TestRunPull_NoopDoesNotCreateTag(t *testing.T) {
 	tags := strings.TrimSpace(runGitForTest(t, repo, "tag", "--list", "confluence-sync/pull/ENG/*"))
 	if tags != "" {
 		t.Fatalf("expected no pull sync tag on noop, got %q", tags)
+	}
+}
+
+func TestRunPull_NonInteractiveRequiresYesForHighImpact(t *testing.T) {
+	repo := t.TempDir()
+	setupGitRepo(t, repo)
+
+	spaceDir := filepath.Join(repo, "ENG")
+	if err := os.MkdirAll(spaceDir, 0o755); err != nil {
+		t.Fatalf("mkdir space: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, ".gitignore"), []byte(".env\n.confluence-state.json\n"), 0o644); err != nil {
+		t.Fatalf("write .gitignore: %v", err)
+	}
+	runGitForTest(t, repo, "add", ".")
+	runGitForTest(t, repo, "commit", "-m", "initial")
+
+	fake := buildBulkPullRemote(t, 11)
+
+	oldFactory := newPullRemote
+	newPullRemote = func(_ *config.Config) (syncflow.PullRemote, error) { return fake, nil }
+	t.Cleanup(func() { newPullRemote = oldFactory })
+
+	setupEnv(t)
+	chdirRepo(t, repo)
+	setAutomationFlags(t, false, true)
+
+	cmd := &cobra.Command{}
+	cmd.SetOut(&bytes.Buffer{})
+
+	err := runPull(cmd, config.Target{Mode: config.TargetModeSpace, Value: "ENG"})
+	if err == nil {
+		t.Fatal("runPull() expected confirmation error")
+	}
+	if !strings.Contains(err.Error(), "requires confirmation") {
+		t.Fatalf("expected confirmation error, got: %v", err)
+	}
+
+	entries, err := os.ReadDir(spaceDir)
+	if err != nil {
+		t.Fatalf("read space dir: %v", err)
+	}
+	for _, entry := range entries {
+		if filepath.Ext(entry.Name()) == ".md" {
+			t.Fatalf("unexpected markdown file %s written despite missing confirmation", entry.Name())
+		}
+	}
+}
+
+func TestRunPull_YesBypassesHighImpactConfirmation(t *testing.T) {
+	repo := t.TempDir()
+	setupGitRepo(t, repo)
+
+	spaceDir := filepath.Join(repo, "ENG")
+	if err := os.MkdirAll(spaceDir, 0o755); err != nil {
+		t.Fatalf("mkdir space: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, ".gitignore"), []byte(".env\n.confluence-state.json\n"), 0o644); err != nil {
+		t.Fatalf("write .gitignore: %v", err)
+	}
+	runGitForTest(t, repo, "add", ".")
+	runGitForTest(t, repo, "commit", "-m", "initial")
+
+	fake := buildBulkPullRemote(t, 11)
+
+	oldFactory := newPullRemote
+	newPullRemote = func(_ *config.Config) (syncflow.PullRemote, error) { return fake, nil }
+	t.Cleanup(func() { newPullRemote = oldFactory })
+
+	setupEnv(t)
+	chdirRepo(t, repo)
+	setAutomationFlags(t, true, true)
+
+	cmd := &cobra.Command{}
+	cmd.SetOut(&bytes.Buffer{})
+
+	if err := runPull(cmd, config.Target{Mode: config.TargetModeSpace, Value: "ENG"}); err != nil {
+		t.Fatalf("runPull() error: %v", err)
+	}
+
+	state, err := fs.LoadState(spaceDir)
+	if err != nil {
+		t.Fatalf("load state: %v", err)
+	}
+	if got := len(state.PagePathIndex); got != 11 {
+		t.Fatalf("expected 11 synced pages, got %d", got)
+	}
+}
+
+func buildBulkPullRemote(t *testing.T, pageCount int) *cmdFakePullRemote {
+	t.Helper()
+
+	pages := make([]confluence.Page, 0, pageCount)
+	pagesByID := make(map[string]confluence.Page, pageCount)
+	for i := 1; i <= pageCount; i++ {
+		id := fmt.Sprintf("%d", i)
+		title := fmt.Sprintf("Page %d", i)
+		page := confluence.Page{
+			ID:           id,
+			SpaceID:      "space-1",
+			Title:        title,
+			Version:      1,
+			LastModified: time.Date(2026, time.February, 2, 10, i, 0, 0, time.UTC),
+			BodyADF:      rawJSON(t, simpleADF(fmt.Sprintf("Body %d", i))),
+		}
+		pages = append(pages, confluence.Page{
+			ID:           page.ID,
+			SpaceID:      page.SpaceID,
+			Title:        page.Title,
+			Version:      page.Version,
+			LastModified: page.LastModified,
+		})
+		pagesByID[id] = page
+	}
+
+	return &cmdFakePullRemote{
+		space:       confluence.Space{ID: "space-1", Key: "ENG", Name: "Engineering"},
+		pages:       pages,
+		pagesByID:   pagesByID,
+		attachments: map[string][]byte{},
 	}
 }
 

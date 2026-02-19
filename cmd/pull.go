@@ -82,6 +82,21 @@ func runPull(cmd *cobra.Command, target config.Target) (runErr error) {
 		return fmt.Errorf("create confluence client: %w", err)
 	}
 
+	state, err := fs.LoadState(pullCtx.spaceDir)
+	if err != nil {
+		return fmt.Errorf("load state: %w", err)
+	}
+
+	impact, err := estimatePullImpact(ctx, remote, pullCtx.spaceKey, pullCtx.targetPageID, state, syncflow.DefaultPullOverlapWindow)
+	if err != nil {
+		return err
+	}
+
+	affectedCount := impact.changedMarkdown + impact.deletedMarkdown
+	if err := requireSafetyConfirmation(cmd.InOrStdin(), out, "pull", affectedCount, impact.deletedMarkdown > 0); err != nil {
+		return err
+	}
+
 	repoRoot, err := gitRepoRoot()
 	if err != nil {
 		return err
@@ -104,11 +119,6 @@ func runPull(cmd *cobra.Command, target config.Target) (runErr error) {
 				runErr = errors.Join(runErr, restoreErr)
 			}
 		}()
-	}
-
-	state, err := fs.LoadState(pullCtx.spaceDir)
-	if err != nil {
-		return fmt.Errorf("load state: %w", err)
 	}
 
 	result, err := syncflow.Pull(ctx, remote, syncflow.PullOptions{
@@ -336,6 +346,139 @@ func gitHasScopedStagedChanges(repoRoot, scopePath string) (bool, error) {
 		return true, nil
 	}
 	return false, fmt.Errorf("check staged changes: %w", err)
+}
+
+type pullImpact struct {
+	changedMarkdown int
+	deletedMarkdown int
+}
+
+func estimatePullImpact(
+	ctx context.Context,
+	remote syncflow.PullRemote,
+	spaceKey string,
+	targetPageID string,
+	state fs.SpaceState,
+	overlapWindow time.Duration,
+) (pullImpact, error) {
+	space, err := remote.GetSpace(ctx, spaceKey)
+	if err != nil {
+		return pullImpact{}, fmt.Errorf("resolve space %q: %w", spaceKey, err)
+	}
+
+	pages, err := listAllPullPagesForEstimate(ctx, remote, confluence.PageListOptions{
+		SpaceID:  space.ID,
+		SpaceKey: spaceKey,
+		Status:   "current",
+		Limit:    100,
+	})
+	if err != nil {
+		return pullImpact{}, fmt.Errorf("list pages for safety check: %w", err)
+	}
+
+	pageByID := make(map[string]confluence.Page, len(pages))
+	for _, page := range pages {
+		pageByID[page.ID] = page
+	}
+
+	targetPageID = strings.TrimSpace(targetPageID)
+	if targetPageID != "" {
+		if _, exists := pageByID[targetPageID]; !exists {
+			return pullImpact{}, nil
+		}
+		return pullImpact{changedMarkdown: 1}, nil
+	}
+
+	changedIDs := map[string]struct{}{}
+	if strings.TrimSpace(state.LastPullHighWatermark) == "" {
+		for _, page := range pages {
+			changedIDs[page.ID] = struct{}{}
+		}
+	} else {
+		watermark, err := time.Parse(time.RFC3339, strings.TrimSpace(state.LastPullHighWatermark))
+		if err != nil {
+			return pullImpact{}, fmt.Errorf("parse last_pull_high_watermark: %w", err)
+		}
+
+		since := watermark.Add(-overlapWindow)
+		changes, err := listAllPullChangesForEstimate(ctx, remote, confluence.ChangeListOptions{
+			SpaceKey: spaceKey,
+			Since:    since,
+			Limit:    100,
+		})
+		if err != nil {
+			return pullImpact{}, fmt.Errorf("list incremental changes for safety check: %w", err)
+		}
+
+		for _, change := range changes {
+			if _, exists := pageByID[change.PageID]; exists {
+				changedIDs[change.PageID] = struct{}{}
+			}
+		}
+	}
+
+	deletedIDs := map[string]struct{}{}
+	for _, pageID := range state.PagePathIndex {
+		if _, exists := pageByID[pageID]; !exists {
+			deletedIDs[pageID] = struct{}{}
+		}
+	}
+
+	return pullImpact{
+		changedMarkdown: len(changedIDs),
+		deletedMarkdown: len(deletedIDs),
+	}, nil
+}
+
+func listAllPullPagesForEstimate(
+	ctx context.Context,
+	remote syncflow.PullRemote,
+	opts confluence.PageListOptions,
+) ([]confluence.Page, error) {
+	result := []confluence.Page{}
+	cursor := opts.Cursor
+	for {
+		opts.Cursor = cursor
+		pageResult, err := remote.ListPages(ctx, opts)
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, pageResult.Pages...)
+		if strings.TrimSpace(pageResult.NextCursor) == "" || pageResult.NextCursor == cursor {
+			break
+		}
+		cursor = pageResult.NextCursor
+	}
+	return result, nil
+}
+
+func listAllPullChangesForEstimate(
+	ctx context.Context,
+	remote syncflow.PullRemote,
+	opts confluence.ChangeListOptions,
+) ([]confluence.Change, error) {
+	result := []confluence.Change{}
+	start := opts.Start
+	for {
+		opts.Start = start
+		changeResult, err := remote.ListChanges(ctx, opts)
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, changeResult.Changes...)
+		if !changeResult.HasMore {
+			break
+		}
+		next := changeResult.NextStart
+		if next <= start {
+			next = start + opts.Limit
+		}
+		if next <= start {
+			break
+		}
+		start = next
+	}
+	return result, nil
 }
 
 func runGit(workdir string, args ...string) (string, error) {
