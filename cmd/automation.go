@@ -77,7 +77,27 @@ func resolvePushConflictPolicy(in io.Reader, out io.Writer, onConflict string) (
 	}
 }
 
+func askToContinueOnDownloadError(in io.Reader, out io.Writer, attachmentID string, pageID string, err error) bool {
+	if flagNonInteractive {
+		return false
+	}
+	if flagYes {
+		return true
+	}
+
+	fmt.Fprintf(out, "\nError downloading attachment %s (page %s): %v\n", attachmentID, pageID, err)
+	fmt.Fprint(out, "Continue anyway? [y/N]: ")
+
+	choice, rerr := readPromptLine(in)
+	if rerr != nil {
+		return false
+	}
+	choice = strings.ToLower(strings.TrimSpace(choice))
+	return choice == "y" || choice == "yes"
+}
+
 func readPromptLine(in io.Reader) (string, error) {
+
 	reader := bufio.NewReader(in)
 	line, err := reader.ReadString('\n')
 	if err != nil && !errors.Is(err, io.EOF) {

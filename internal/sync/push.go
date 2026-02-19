@@ -408,6 +408,7 @@ func pushUpsertPage(
 	}
 
 	title := resolveLocalTitle(doc, relPath)
+	resolvedParentID := resolveParentIDFromHierarchy(relPath, pageID, doc.Frontmatter.ConfluenceParentPageID, pageIDByPath)
 	nextVersion := localVersion + 1
 	if policy == PushConflictPolicyForce && remotePage.Version >= nextVersion {
 		nextVersion = remotePage.Version + 1
@@ -415,7 +416,7 @@ func pushUpsertPage(
 
 	updatedPage, err := remote.UpdatePage(ctx, pageID, confluence.PageUpsertInput{
 		SpaceID:      space.ID,
-		ParentPageID: doc.Frontmatter.ConfluenceParentPageID,
+		ParentPageID: resolvedParentID,
 		Title:        title,
 		Status:       "current",
 		Version:      nextVersion,
@@ -449,6 +450,36 @@ func pushUpsertPage(
 		URL:         updatedPage.WebURL,
 		StagedPaths: stagedPaths,
 	}, nil
+}
+
+func resolveParentIDFromHierarchy(relPath, pageID, fallbackParentID string, pageIDByPath PageIndex) string {
+	resolvedFallback := strings.TrimSpace(fallbackParentID)
+	resolvedPageID := strings.TrimSpace(pageID)
+
+	dirPath := normalizeRelPath(filepath.ToSlash(filepath.Dir(filepath.FromSlash(relPath))))
+	if dirPath == "" || dirPath == "." {
+		return resolvedFallback
+	}
+
+	currentDir := dirPath
+	for currentDir != "" && currentDir != "." {
+		dirBase := filepath.Base(filepath.FromSlash(currentDir))
+		if strings.TrimSpace(dirBase) != "" && dirBase != "." {
+			candidatePath := normalizeRelPath(filepath.ToSlash(filepath.Join(currentDir, dirBase+".md")))
+			candidateID := strings.TrimSpace(pageIDByPath[candidatePath])
+			if candidateID != "" && candidateID != resolvedPageID {
+				return candidateID
+			}
+		}
+
+		nextDir := normalizeRelPath(filepath.ToSlash(filepath.Dir(filepath.FromSlash(currentDir))))
+		if nextDir == "" || nextDir == "." || nextDir == currentDir {
+			break
+		}
+		currentDir = nextDir
+	}
+
+	return resolvedFallback
 }
 
 func normalizePushState(state fs.SpaceState) fs.SpaceState {

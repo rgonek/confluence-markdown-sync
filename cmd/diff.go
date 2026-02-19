@@ -94,7 +94,15 @@ func runDiff(cmd *cobra.Command, target config.Target) error {
 		return fmt.Errorf("list pages: %w", err)
 	}
 
-	pagePathByIDAbs, pagePathByIDRel := syncflow.PlanPagePaths(diffCtx.spaceDir, state.PagePathIndex, pages)
+	folderByID, folderDiags, err := resolveDiffFolderHierarchyFromPages(ctx, remote, pages)
+	if err != nil {
+		return err
+	}
+	for _, diag := range folderDiags {
+		fmt.Fprintf(out, "warning: %s [%s] %s\n", diag.Path, diag.Code, diag.Message)
+	}
+
+	pagePathByIDAbs, pagePathByIDRel := syncflow.PlanPagePaths(diffCtx.spaceDir, state.PagePathIndex, pages, folderByID)
 	attachmentPathByID := buildDiffAttachmentPathByID(diffCtx.spaceDir, state.AttachmentIndex)
 
 	tmpRoot, err := os.MkdirTemp("", "cms-diff-*")
@@ -440,6 +448,80 @@ func listAllDiffPages(ctx context.Context, remote syncflow.PullRemote, opts conf
 		cursor = pageResult.NextCursor
 	}
 	return result, nil
+}
+
+func resolveDiffFolderHierarchyFromPages(ctx context.Context, remote syncflow.PullRemote, pages []confluence.Page) (map[string]confluence.Folder, []syncflow.PullDiagnostic, error) {
+	folderByID := map[string]confluence.Folder{}
+	diagnostics := []syncflow.PullDiagnostic{}
+
+	queue := []string{}
+	enqueued := map[string]struct{}{}
+	for _, page := range pages {
+		if !strings.EqualFold(strings.TrimSpace(page.ParentType), "folder") {
+			continue
+		}
+		folderID := strings.TrimSpace(page.ParentPageID)
+		if folderID == "" {
+			continue
+		}
+		if _, exists := enqueued[folderID]; exists {
+			continue
+		}
+		queue = append(queue, folderID)
+		enqueued[folderID] = struct{}{}
+	}
+
+	visited := map[string]struct{}{}
+	for len(queue) > 0 {
+		folderID := queue[0]
+		queue = queue[1:]
+
+		if _, seen := visited[folderID]; seen {
+			continue
+		}
+		visited[folderID] = struct{}{}
+
+		folder, err := remote.GetFolder(ctx, folderID)
+		if err != nil {
+			if !shouldIgnoreFolderHierarchyError(err) {
+				return nil, nil, fmt.Errorf("get folder %s: %w", folderID, err)
+			}
+			diagnostics = append(diagnostics, syncflow.PullDiagnostic{
+				Path:    folderID,
+				Code:    "FOLDER_LOOKUP_UNAVAILABLE",
+				Message: fmt.Sprintf("folder %s unavailable, falling back to page-only hierarchy: %v", folderID, err),
+			})
+			continue
+		}
+
+		folderByID[folder.ID] = folder
+
+		if !strings.EqualFold(strings.TrimSpace(folder.ParentType), "folder") {
+			continue
+		}
+		parentID := strings.TrimSpace(folder.ParentID)
+		if parentID == "" {
+			continue
+		}
+		if _, seen := visited[parentID]; seen {
+			continue
+		}
+		if _, exists := enqueued[parentID]; exists {
+			continue
+		}
+		queue = append(queue, parentID)
+		enqueued[parentID] = struct{}{}
+	}
+
+	return folderByID, diagnostics, nil
+}
+
+func shouldIgnoreFolderHierarchyError(err error) bool {
+	if errors.Is(err, confluence.ErrNotFound) {
+		return true
+	}
+	var apiErr *confluence.APIError
+	return errors.As(err, &apiErr)
 }
 
 func diffDisplayRelPath(spaceDir, path string) string {

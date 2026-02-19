@@ -52,7 +52,8 @@ cms init
 - initialize Git when missing,
 - ensure `.gitignore` entries,
 - create `.env` when needed,
-- scaffold helper files.
+- scaffold helper files,
+- create an initial commit when a new Git repository is initialized.
 
 ## Target Syntax
 
@@ -83,8 +84,14 @@ Pulls remote Confluence content into local Markdown.
 Highlights:
 
 - best-effort conversion (unresolved references become diagnostics),
+- page files follow Confluence hierarchy (folders and parent/child pages become nested directories),
+- pages that have children are written as `<Page>/<Page>.md` so they are distinguishable from folders,
 - same-space links rewritten to relative Markdown links,
 - attachments downloaded into `assets/<page-id>/<attachment-id>-<filename>`,
+- `--force` (`-f`) forces a full-space refresh (all tracked pages are re-pulled even when incremental changes are empty),
+- attachment download failures include the owning page ID,
+- missing assets can be auto-skipped with `--skip-missing-assets` (`-s`),
+- without `-s`, pull asks whether to continue when an attachment download fails,
 - remote deletions are hard-deleted locally,
 - sync tag created only on non-no-op runs.
 

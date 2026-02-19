@@ -78,6 +78,10 @@ Compatibility and precedence:
     -   Capture `pull_started_at` (server timestamp) before processing results.
     -   Track `max_remote_modified_at` from fetched entities.
     -   Build a deterministic pre-conversion page path map `page_path_by_id` (page ID -> planned Markdown path) before rendering any page content.
+    -   For folder hierarchy, use each page's `parentType`/`parentId`; when `parentType=folder`, resolve ancestor folders via `GET /wiki/api/v2/folders/{id}` chain.
+    -   Page paths must preserve Confluence hierarchy: folder and parent/child relationships map to nested local directories (ancestors as directory segments, page as `*.md` leaf).
+    -   Pages with children are represented as `<Page>/<Page>.md` to avoid ambiguity with folder-only nodes.
+    -   If parent pages are missing, deleted, or cyclic, fall back to top-level placement for affected pages and continue pull.
     -   Build planned attachment path map `attachment_path_by_id` (attachment ID -> planned local asset path).
     -   Convert page ADF to Markdown using `converter.ConvertWithContext(ctx, adfJSON, converter.ConvertOptions{SourcePath: <planned-md-path>})`.
     -   Use `converter.Config{ResolutionMode: converter.ResolutionBestEffort, LinkHook: ..., MediaHook: ...}` so unresolved refs degrade to fallback output with warnings instead of failing pull.
@@ -206,6 +210,7 @@ Compatibility and precedence:
 - **Automation Flags**:
     - `--yes`: Auto-approve confirmation prompts (for example, bulk-change or delete confirmations). Does not auto-resolve version conflicts.
     - `--non-interactive`: Disable prompts; fail fast when a required decision is missing.
+    - `pull --force` (`-f`): Force full-space pull planning and conversion even when incremental change detection reports no changes.
     - `push --on-conflict=pull-merge|force|cancel`: Non-interactive equivalent for remote-ahead conflict decisions.
 - **Safety Confirmation**: If `pull` or `push` affects >10 files or performs remote/local deletes, prompt for confirmation `[y/N]`; `--yes` auto-approves, and `--non-interactive` without `--yes` fails.
 
@@ -229,7 +234,7 @@ Compatibility and precedence:
 | `validate` | `[TARGET]` | Validates sync invariants before push: frontmatter schema, immutable key integrity, links/assets, and Markdown->ADF conversion. |
 | `diff` | `[TARGET]` | Shows file- or space-scoped diff against Confluence. If `TARGET` ends with `.md`, treat as file path; otherwise treat as `SPACE_KEY`. |
 
-Automation support for `pull`/`push`: `--yes`, `--non-interactive`; `push` additionally supports `--on-conflict=pull-merge|force|cancel`.
+Automation support for `pull`/`push`: `--yes`, `--non-interactive`; `pull` additionally supports `--skip-missing-assets` and `--force`; `push` additionally supports `--on-conflict=pull-merge|force|cancel`.
 
 ## 4. Delivery Plan (PR-by-PR)
 

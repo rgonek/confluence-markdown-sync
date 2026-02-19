@@ -32,13 +32,18 @@ Inside the folder/repo where you want synced docs:
 cms init
 ```
 
-`cms init` prepares Git metadata, `.gitignore`, and `.env` scaffolding.
+`cms init` prepares Git metadata, `.gitignore`, and `.env` scaffolding, and creates an initial commit when it initializes a new Git repository.
+
+`cms pull` mirrors Confluence hierarchy locally by placing folders and child pages in nested directories. Pages with children use `<Page>/<Page>.md` so they are distinct from pure folders.
 
 ## Quick flow 🔄
 
 ```powershell
 # 1) Pull a Confluence space
 cms pull ENG
+
+# Force a full-space refresh (ignore incremental change detection)
+cms pull ENG --force
 
 # 2) Validate local markdown
 cms validate ENG

@@ -96,6 +96,41 @@ func TestGetPage_NotFound(t *testing.T) {
 	}
 }
 
+func TestGetFolder_ByID(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			t.Fatalf("method = %s, want GET", r.Method)
+		}
+		if r.URL.Path != "/wiki/api/v2/folders/4623368196" {
+			t.Fatalf("path = %s, want /wiki/api/v2/folders/4623368196", r.URL.Path)
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		io.WriteString(w, `{"id":"4623368196","spaceId":"space-1","title":"Policies","parentId":"","parentType":"folder"}`)
+	}))
+	t.Cleanup(server.Close)
+
+	client, err := NewClient(ClientConfig{
+		BaseURL:  server.URL,
+		Email:    "user@example.com",
+		APIToken: "token-123",
+	})
+	if err != nil {
+		t.Fatalf("NewClient() unexpected error: %v", err)
+	}
+
+	folder, err := client.GetFolder(context.Background(), "4623368196")
+	if err != nil {
+		t.Fatalf("GetFolder() unexpected error: %v", err)
+	}
+	if folder.ID != "4623368196" {
+		t.Fatalf("folder id = %q, want 4623368196", folder.ID)
+	}
+	if folder.Title != "Policies" {
+		t.Fatalf("folder title = %q, want Policies", folder.Title)
+	}
+}
+
 func TestListChanges_BuildsCQLFromSpaceAndSince(t *testing.T) {
 	since := time.Date(2026, time.January, 2, 15, 4, 0, 0, time.UTC)
 
@@ -209,6 +244,43 @@ func TestArchiveAndDeleteEndpoints(t *testing.T) {
 	}
 	if deleteCalls != 1 {
 		t.Fatalf("delete calls = %d, want 1", deleteCalls)
+	}
+}
+
+func TestDownloadAttachment_ResolvesUUID(t *testing.T) {
+	uuid := "e2cabb2e-4df7-49bb-84e0-c76ae83f6f9b"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/wiki/api/v2/attachments":
+			if r.URL.Query().Get("file-id") != uuid {
+				t.Fatalf("query file-id = %q, want %q", r.URL.Query().Get("file-id"), uuid)
+			}
+			w.Header().Set("Content-Type", "application/json")
+			io.WriteString(w, `{"results":[{"id":"att-uuid-123"}]}`)
+		case "/wiki/api/v2/attachments/att-uuid-123":
+			w.Header().Set("Content-Type", "application/json")
+			io.WriteString(w, `{"id":"att-uuid-123","downloadLink":"/download/uuid.png"}`)
+		case "/download/uuid.png":
+			w.WriteHeader(http.StatusOK)
+			io.WriteString(w, "uuid-data")
+		default:
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	client, _ := NewClient(ClientConfig{
+		BaseURL:  server.URL,
+		Email:    "u",
+		APIToken: "t",
+	})
+
+	raw, err := client.DownloadAttachment(context.Background(), uuid)
+	if err != nil {
+		t.Fatalf("DownloadAttachment() error: %v", err)
+	}
+	if string(raw) != "uuid-data" {
+		t.Fatalf("data = %q, want uuid-data", string(raw))
 	}
 }
 

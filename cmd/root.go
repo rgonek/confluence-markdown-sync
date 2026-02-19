@@ -7,8 +7,9 @@ import (
 
 // automation flags shared by pull and push.
 var (
-	flagYes            bool
-	flagNonInteractive bool
+	flagYes               bool
+	flagNonInteractive    bool
+	flagSkipMissingAssets bool
 )
 
 var rootCmd = &cobra.Command{

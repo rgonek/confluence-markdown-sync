@@ -67,6 +67,7 @@ Validation failures must stop `push` immediately.
 
 ## Interactivity And Automation Requirements
 - `pull` and `push` support `--yes` and `--non-interactive`.
+- `pull` supports `--skip-missing-assets` and `--force` (`-f`) for full-space refresh.
 - `push` supports `--on-conflict=pull-merge|force|cancel` for non-interactive conflict policy.
 - `--yes` auto-approves safety confirmations but does not choose remote-ahead conflict strategy.
 - `--non-interactive` must fail fast when a required decision is missing.
