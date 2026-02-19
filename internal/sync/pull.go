@@ -27,6 +27,7 @@ const (
 type PullRemote interface {
 	GetSpace(ctx context.Context, spaceKey string) (confluence.Space, error)
 	ListPages(ctx context.Context, opts confluence.PageListOptions) (confluence.PageListResult, error)
+	GetFolder(ctx context.Context, folderID string) (confluence.Folder, error)
 	ListChanges(ctx context.Context, opts confluence.ChangeListOptions) (confluence.ChangeListResult, error)
 	GetPage(ctx context.Context, pageID string) (confluence.Page, error)
 	DownloadAttachment(ctx context.Context, attachmentID string) ([]byte, error)
@@ -99,6 +100,7 @@ func Pull(ctx context.Context, remote PullRemote, opts PullOptions) (PullResult,
 	if overlapWindow <= 0 {
 		overlapWindow = DefaultPullOverlapWindow
 	}
+	diagnostics := []PullDiagnostic{}
 
 	space, err := remote.GetSpace(ctx, opts.SpaceKey)
 	if err != nil {
@@ -114,6 +116,12 @@ func Pull(ctx context.Context, remote PullRemote, opts PullOptions) (PullResult,
 	if err != nil {
 		return PullResult{}, fmt.Errorf("list pages: %w", err)
 	}
+
+	folderByID, folderDiags, err := resolveFolderHierarchyFromPages(ctx, remote, pages)
+	if err != nil {
+		return PullResult{}, err
+	}
+	diagnostics = append(diagnostics, folderDiags...)
 
 	pageByID := make(map[string]confluence.Page, len(pages))
 	pageIDs := make([]string, 0, len(pages))
@@ -131,7 +139,7 @@ func Pull(ctx context.Context, remote PullRemote, opts PullOptions) (PullResult,
 	}
 	sort.Strings(pageIDs)
 
-	pagePathByIDAbs, pagePathByIDRel := PlanPagePaths(spaceDir, state.PagePathIndex, pages)
+	pagePathByIDAbs, pagePathByIDRel := PlanPagePaths(spaceDir, state.PagePathIndex, pages, folderByID)
 
 	changedPageIDs, err := selectChangedPageIDs(ctx, remote, opts, overlapWindow, pageByID)
 	if err != nil {
@@ -214,7 +222,6 @@ func Pull(ctx context.Context, remote PullRemote, opts PullOptions) (PullResult,
 
 	assetIDs := sortedStringKeys(attachmentPathByID)
 	downloadedAssets := make([]string, 0, len(assetIDs))
-	diagnostics := []PullDiagnostic{}
 
 	for _, attachmentID := range assetIDs {
 		assetPath := attachmentPathByID[attachmentID]
@@ -412,6 +419,14 @@ func selectChangedPageIDs(
 	return out, nil
 }
 
+func shouldIgnoreFolderHierarchyError(err error) bool {
+	if errors.Is(err, confluence.ErrNotFound) {
+		return true
+	}
+	var apiErr *confluence.APIError
+	return errors.As(err, &apiErr)
+}
+
 func listAllPages(ctx context.Context, remote PullRemote, opts confluence.PageListOptions) ([]confluence.Page, error) {
 	result := []confluence.Page{}
 	cursor := opts.Cursor
@@ -428,6 +443,72 @@ func listAllPages(ctx context.Context, remote PullRemote, opts confluence.PageLi
 		cursor = pageResult.NextCursor
 	}
 	return result, nil
+}
+
+func resolveFolderHierarchyFromPages(ctx context.Context, remote PullRemote, pages []confluence.Page) (map[string]confluence.Folder, []PullDiagnostic, error) {
+	folderByID := map[string]confluence.Folder{}
+	diagnostics := []PullDiagnostic{}
+
+	queue := []string{}
+	enqueued := map[string]struct{}{}
+	for _, page := range pages {
+		if !strings.EqualFold(strings.TrimSpace(page.ParentType), "folder") {
+			continue
+		}
+		parentID := strings.TrimSpace(page.ParentPageID)
+		if parentID == "" {
+			continue
+		}
+		if _, exists := enqueued[parentID]; exists {
+			continue
+		}
+		queue = append(queue, parentID)
+		enqueued[parentID] = struct{}{}
+	}
+
+	visited := map[string]struct{}{}
+	for len(queue) > 0 {
+		folderID := queue[0]
+		queue = queue[1:]
+
+		if _, seen := visited[folderID]; seen {
+			continue
+		}
+		visited[folderID] = struct{}{}
+
+		folder, err := remote.GetFolder(ctx, folderID)
+		if err != nil {
+			if !shouldIgnoreFolderHierarchyError(err) {
+				return nil, nil, fmt.Errorf("get folder %s: %w", folderID, err)
+			}
+			diagnostics = append(diagnostics, PullDiagnostic{
+				Path:    folderID,
+				Code:    "FOLDER_LOOKUP_UNAVAILABLE",
+				Message: fmt.Sprintf("folder %s unavailable, falling back to page-only hierarchy: %v", folderID, err),
+			})
+			continue
+		}
+
+		folderByID[folder.ID] = folder
+
+		if !strings.EqualFold(strings.TrimSpace(folder.ParentType), "folder") {
+			continue
+		}
+		parentID := strings.TrimSpace(folder.ParentID)
+		if parentID == "" {
+			continue
+		}
+		if _, seen := visited[parentID]; seen {
+			continue
+		}
+		if _, exists := enqueued[parentID]; exists {
+			continue
+		}
+		queue = append(queue, parentID)
+		enqueued[parentID] = struct{}{}
+	}
+
+	return folderByID, diagnostics, nil
 }
 
 func listAllChanges(ctx context.Context, remote PullRemote, opts confluence.ChangeListOptions) ([]confluence.Change, error) {
@@ -463,10 +544,14 @@ func PlanPagePaths(
 	spaceDir string,
 	previousPageIndex map[string]string,
 	pages []confluence.Page,
+	folderByID map[string]confluence.Folder,
 ) (map[string]string, map[string]string) {
 	pageByID := map[string]confluence.Page{}
 	for _, page := range pages {
 		pageByID[page.ID] = page
+	}
+	if folderByID == nil {
+		folderByID = map[string]confluence.Folder{}
 	}
 
 	previousPathByID := map[string]string{}
@@ -494,7 +579,7 @@ func PlanPagePaths(
 	}
 	plans := make([]pagePathPlan, 0, len(pages))
 	for _, page := range pages {
-		baseRelPath := plannedPageRelPath(page, pageByID)
+		baseRelPath := plannedPageRelPath(page, pageByID, folderByID)
 		if previousPath := previousPathByID[page.ID]; previousPath != "" && sameParentDirectory(previousPath, baseRelPath) {
 			baseRelPath = previousPath
 		}
@@ -522,14 +607,14 @@ func PlanPagePaths(
 	return absByID, relByID
 }
 
-func plannedPageRelPath(page confluence.Page, pageByID map[string]confluence.Page) string {
+func plannedPageRelPath(page confluence.Page, pageByID map[string]confluence.Page, folderByID map[string]confluence.Folder) string {
 	title := strings.TrimSpace(page.Title)
 	if title == "" {
 		title = "page-" + page.ID
 	}
 	filename := fs.SanitizeMarkdownFilename(title)
 
-	ancestorSegments, ok := ancestorPathSegments(page.ID, pageByID)
+	ancestorSegments, ok := ancestorPathSegments(strings.TrimSpace(page.ParentPageID), strings.TrimSpace(page.ParentType), pageByID, folderByID)
 	if !ok || len(ancestorSegments) == 0 {
 		return normalizeRelPath(filename)
 	}
@@ -537,36 +622,57 @@ func plannedPageRelPath(page confluence.Page, pageByID map[string]confluence.Pag
 	return normalizeRelPath(filepath.Join(parts...))
 }
 
-func ancestorPathSegments(pageID string, pageByID map[string]confluence.Page) ([]string, bool) {
-	page, exists := pageByID[pageID]
-	if !exists {
-		return nil, false
-	}
-
-	parentID := strings.TrimSpace(page.ParentPageID)
-	if parentID == "" {
+func ancestorPathSegments(parentID string, parentType string, pageByID map[string]confluence.Page, folderByID map[string]confluence.Folder) ([]string, bool) {
+	currentID := strings.TrimSpace(parentID)
+	currentType := strings.ToLower(strings.TrimSpace(parentType))
+	if currentID == "" {
 		return nil, true
 	}
+	if currentType == "" {
+		currentType = "page"
+	}
 
-	visited := map[string]struct{}{pageID: {}}
+	visited := map[string]struct{}{}
 	segmentsReversed := []string{}
-	for parentID != "" {
-		if _, seen := visited[parentID]; seen {
+	for currentID != "" {
+		if _, seen := visited[currentID]; seen {
 			return nil, false
 		}
-		visited[parentID] = struct{}{}
+		visited[currentID] = struct{}{}
 
-		parent, ok := pageByID[parentID]
+		if currentType == "folder" {
+			folder, ok := folderByID[currentID]
+			if !ok {
+				return nil, false
+			}
+			title := strings.TrimSpace(folder.Title)
+			if title == "" {
+				title = "folder-" + folder.ID
+			}
+			segmentsReversed = append(segmentsReversed, fs.SanitizePathSegment(title))
+			currentID = strings.TrimSpace(folder.ParentID)
+			currentType = strings.ToLower(strings.TrimSpace(folder.ParentType))
+			if currentType == "" {
+				currentType = "folder"
+			}
+			continue
+		}
+
+		parentPage, ok := pageByID[currentID]
 		if !ok {
 			return nil, false
 		}
 
-		title := strings.TrimSpace(parent.Title)
+		title := strings.TrimSpace(parentPage.Title)
 		if title == "" {
-			title = "page-" + parent.ID
+			title = "page-" + parentPage.ID
 		}
 		segmentsReversed = append(segmentsReversed, fs.SanitizePathSegment(title))
-		parentID = strings.TrimSpace(parent.ParentPageID)
+		currentID = strings.TrimSpace(parentPage.ParentPageID)
+		currentType = strings.ToLower(strings.TrimSpace(parentPage.ParentType))
+		if currentType == "" {
+			currentType = "page"
+		}
 	}
 
 	segments := make([]string, 0, len(segmentsReversed))

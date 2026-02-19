@@ -78,7 +78,8 @@ Compatibility and precedence:
     -   Capture `pull_started_at` (server timestamp) before processing results.
     -   Track `max_remote_modified_at` from fetched entities.
     -   Build a deterministic pre-conversion page path map `page_path_by_id` (page ID -> planned Markdown path) before rendering any page content.
-    -   Page paths must preserve Confluence hierarchy: parent/child relationships map to nested local directories (parents as directory segments, page as `*.md` leaf).
+    -   For folder hierarchy, use each page's `parentType`/`parentId`; when `parentType=folder`, resolve ancestor folders via `GET /wiki/api/v2/folders/{id}` chain.
+    -   Page paths must preserve Confluence hierarchy: folder and parent/child relationships map to nested local directories (ancestors as directory segments, page as `*.md` leaf).
     -   If parent pages are missing, deleted, or cyclic, fall back to top-level placement for affected pages and continue pull.
     -   Build planned attachment path map `attachment_path_by_id` (attachment ID -> planned local asset path).
     -   Convert page ADF to Markdown using `converter.ConvertWithContext(ctx, adfJSON, converter.ConvertOptions{SourcePath: <planned-md-path>})`.

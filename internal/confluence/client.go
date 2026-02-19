@@ -200,6 +200,35 @@ func (c *Client) ListPages(ctx context.Context, opts PageListOptions) (PageListR
 	return out, nil
 }
 
+// GetFolder fetches a single folder by ID.
+func (c *Client) GetFolder(ctx context.Context, folderID string) (Folder, error) {
+	id := strings.TrimSpace(folderID)
+	if id == "" {
+		return Folder{}, errors.New("folder ID is required")
+	}
+
+	req, err := c.newRequest(
+		ctx,
+		http.MethodGet,
+		"/wiki/api/v2/folders/"+url.PathEscape(id),
+		nil,
+		nil,
+	)
+	if err != nil {
+		return Folder{}, err
+	}
+
+	var payload folderDTO
+	if err := c.do(req, &payload); err != nil {
+		if isHTTPStatus(err, http.StatusNotFound) {
+			return Folder{}, ErrNotFound
+		}
+		return Folder{}, err
+	}
+
+	return payload.toModel(), nil
+}
+
 // GetPage fetches a single page by ID.
 func (c *Client) GetPage(ctx context.Context, pageID string) (Page, error) {
 	id := strings.TrimSpace(pageID)
@@ -768,13 +797,32 @@ func (s spaceDTO) toModel() Space {
 	}
 }
 
+type folderDTO struct {
+	ID         string `json:"id"`
+	SpaceID    string `json:"spaceId"`
+	Title      string `json:"title"`
+	ParentID   string `json:"parentId"`
+	ParentType string `json:"parentType"`
+}
+
+func (f folderDTO) toModel() Folder {
+	return Folder{
+		ID:         f.ID,
+		SpaceID:    f.SpaceID,
+		Title:      f.Title,
+		ParentID:   f.ParentID,
+		ParentType: f.ParentType,
+	}
+}
+
 type pageDTO struct {
-	ID       string `json:"id"`
-	SpaceID  string `json:"spaceId"`
-	Status   string `json:"status"`
-	Title    string `json:"title"`
-	ParentID string `json:"parentId"`
-	Version  struct {
+	ID         string `json:"id"`
+	SpaceID    string `json:"spaceId"`
+	Status     string `json:"status"`
+	Title      string `json:"title"`
+	ParentID   string `json:"parentId"`
+	ParentType string `json:"parentType"`
+	Version    struct {
 		Number    int    `json:"number"`
 		CreatedAt string `json:"createdAt"`
 		When      string `json:"when"`
@@ -801,6 +849,7 @@ func (p pageDTO) toModel(baseURL string) Page {
 		Title:        p.Title,
 		Status:       p.Status,
 		ParentPageID: p.ParentID,
+		ParentType:   p.ParentType,
 		Version:      p.Version.Number,
 		LastModified: parseRemoteTime(p.Version.CreatedAt, p.Version.When, p.History.LastUpdated.When),
 		WebURL:       resolveWebURL(baseURL, p.Links.WebUI),

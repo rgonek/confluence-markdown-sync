@@ -208,7 +208,7 @@ func TestPlanPagePaths_MaintainsConfluenceHierarchy(t *testing.T) {
 		{ID: "3", Title: "Grand Child", ParentPageID: "2"},
 	}
 
-	_, relByID := PlanPagePaths(spaceDir, nil, pages)
+	_, relByID := PlanPagePaths(spaceDir, nil, pages, nil)
 
 	if got := relByID["1"]; got != "Root.md" {
 		t.Fatalf("root path = %q, want Root.md", got)
@@ -228,10 +228,91 @@ func TestPlanPagePaths_FallsBackToTopLevelWhenParentMissing(t *testing.T) {
 		{ID: "2", Title: "Child", ParentPageID: "missing-parent"},
 	}
 
-	_, relByID := PlanPagePaths(spaceDir, nil, pages)
+	_, relByID := PlanPagePaths(spaceDir, nil, pages, nil)
 
 	if got := relByID["2"]; got != "Child.md" {
 		t.Fatalf("fallback path = %q, want Child.md", got)
+	}
+}
+
+func TestPlanPagePaths_UsesFolderHierarchy(t *testing.T) {
+	spaceDir := t.TempDir()
+
+	pages := []confluence.Page{
+		{ID: "1", Title: "Start Here", ParentPageID: "folder-2", ParentType: "folder"},
+	}
+	folderByID := map[string]confluence.Folder{
+		"folder-1": {ID: "folder-1", Title: "Policies", ParentID: ""},
+		"folder-2": {ID: "folder-2", Title: "Onboarding", ParentID: "folder-1"},
+	}
+
+	_, relByID := PlanPagePaths(spaceDir, nil, pages, folderByID)
+
+	if got := relByID["1"]; got != "Policies/Onboarding/Start-Here.md" {
+		t.Fatalf("folder-based path = %q, want Policies/Onboarding/Start-Here.md", got)
+	}
+}
+
+func TestPull_FolderListFailureFallsBackToPageHierarchy(t *testing.T) {
+	tmpDir := t.TempDir()
+	spaceDir := filepath.Join(tmpDir, "ENG")
+	if err := os.MkdirAll(spaceDir, 0o755); err != nil {
+		t.Fatalf("mkdir space: %v", err)
+	}
+
+	fake := &fakePullRemote{
+		space: confluence.Space{ID: "space-1", Key: "ENG", Name: "Engineering"},
+		pages: []confluence.Page{{
+			ID:           "1",
+			SpaceID:      "space-1",
+			Title:        "Start Here",
+			ParentPageID: "folder-1",
+			ParentType:   "folder",
+			Version:      1,
+			LastModified: time.Date(2026, time.February, 1, 11, 0, 0, 0, time.UTC),
+		}},
+		folderErr: &confluence.APIError{
+			StatusCode: 500,
+			Method:     "GET",
+			URL:        "/wiki/api/v2/folders",
+			Message:    "Internal Server Error",
+		},
+		pagesByID: map[string]confluence.Page{
+			"1": {
+				ID:           "1",
+				SpaceID:      "space-1",
+				Title:        "Start Here",
+				ParentPageID: "folder-1",
+				ParentType:   "folder",
+				Version:      1,
+				LastModified: time.Date(2026, time.February, 1, 11, 0, 0, 0, time.UTC),
+				BodyADF:      rawJSON(t, sampleChildADF()),
+			},
+		},
+		attachments: map[string][]byte{},
+	}
+
+	result, err := Pull(context.Background(), fake, PullOptions{
+		SpaceKey: "ENG",
+		SpaceDir: spaceDir,
+	})
+	if err != nil {
+		t.Fatalf("Pull() error: %v", err)
+	}
+
+	if _, err := os.Stat(filepath.Join(spaceDir, "Start-Here.md")); err != nil {
+		t.Fatalf("expected markdown to be written at top-level fallback path: %v", err)
+	}
+
+	foundFolderWarning := false
+	for _, d := range result.Diagnostics {
+		if d.Code == "FOLDER_LOOKUP_UNAVAILABLE" {
+			foundFolderWarning = true
+			break
+		}
+	}
+	if !foundFolderWarning {
+		t.Fatalf("expected FOLDER_LOOKUP_UNAVAILABLE diagnostic, got %+v", result.Diagnostics)
 	}
 }
 
@@ -354,6 +435,8 @@ func TestPull_ForceFullPullsAllPagesWithoutIncrementalChanges(t *testing.T) {
 type fakePullRemote struct {
 	space           confluence.Space
 	pages           []confluence.Page
+	folderByID      map[string]confluence.Folder
+	folderErr       error
 	changes         []confluence.Change
 	pagesByID       map[string]confluence.Page
 	attachments     map[string][]byte
@@ -366,6 +449,17 @@ func (f *fakePullRemote) GetSpace(_ context.Context, _ string) (confluence.Space
 
 func (f *fakePullRemote) ListPages(_ context.Context, _ confluence.PageListOptions) (confluence.PageListResult, error) {
 	return confluence.PageListResult{Pages: f.pages}, nil
+}
+
+func (f *fakePullRemote) GetFolder(_ context.Context, folderID string) (confluence.Folder, error) {
+	if f.folderErr != nil {
+		return confluence.Folder{}, f.folderErr
+	}
+	folder, ok := f.folderByID[folderID]
+	if !ok {
+		return confluence.Folder{}, confluence.ErrNotFound
+	}
+	return folder, nil
 }
 
 func (f *fakePullRemote) ListChanges(_ context.Context, opts confluence.ChangeListOptions) (confluence.ChangeListResult, error) {

@@ -11,6 +11,7 @@ type Service interface {
 	ListSpaces(ctx context.Context, opts SpaceListOptions) (SpaceListResult, error)
 	GetSpace(ctx context.Context, spaceKey string) (Space, error)
 	ListPages(ctx context.Context, opts PageListOptions) (PageListResult, error)
+	GetFolder(ctx context.Context, folderID string) (Folder, error)
 	GetPage(ctx context.Context, pageID string) (Page, error)
 	DownloadAttachment(ctx context.Context, attachmentID string) ([]byte, error)
 	UploadAttachment(ctx context.Context, input AttachmentUploadInput) (Attachment, error)
@@ -50,6 +51,7 @@ type Page struct {
 	Title        string
 	Status       string
 	ParentPageID string
+	ParentType   string
 	Version      int
 	LastModified time.Time
 	WebURL       string
@@ -69,6 +71,15 @@ type PageListOptions struct {
 type PageListResult struct {
 	Pages      []Page
 	NextCursor string
+}
+
+// Folder is a Confluence folder node used in content hierarchy.
+type Folder struct {
+	ID         string
+	SpaceID    string
+	Title      string
+	ParentID   string
+	ParentType string
 }
 
 // PageUpsertInput is used for create/update operations.

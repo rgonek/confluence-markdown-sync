@@ -84,7 +84,7 @@ Pulls remote Confluence content into local Markdown.
 Highlights:
 
 - best-effort conversion (unresolved references become diagnostics),
-- page files follow Confluence hierarchy (parent/child pages become nested directories),
+- page files follow Confluence hierarchy (folders and parent/child pages become nested directories),
 - same-space links rewritten to relative Markdown links,
 - attachments downloaded into `assets/<page-id>/<attachment-id>-<filename>`,
 - `--force` (`-f`) forces a full-space refresh (all tracked pages are re-pulled even when incremental changes are empty),

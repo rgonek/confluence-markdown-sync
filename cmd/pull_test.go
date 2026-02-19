@@ -579,6 +579,8 @@ func buildBulkPullRemote(t *testing.T, pageCount int) *cmdFakePullRemote {
 type cmdFakePullRemote struct {
 	space       confluence.Space
 	pages       []confluence.Page
+	folderByID  map[string]confluence.Folder
+	folderErr   error
 	changes     []confluence.Change
 	pagesByID   map[string]confluence.Page
 	attachments map[string][]byte
@@ -590,6 +592,17 @@ func (f *cmdFakePullRemote) GetSpace(_ context.Context, _ string) (confluence.Sp
 
 func (f *cmdFakePullRemote) ListPages(_ context.Context, _ confluence.PageListOptions) (confluence.PageListResult, error) {
 	return confluence.PageListResult{Pages: f.pages}, nil
+}
+
+func (f *cmdFakePullRemote) GetFolder(_ context.Context, folderID string) (confluence.Folder, error) {
+	if f.folderErr != nil {
+		return confluence.Folder{}, f.folderErr
+	}
+	folder, ok := f.folderByID[folderID]
+	if !ok {
+		return confluence.Folder{}, confluence.ErrNotFound
+	}
+	return folder, nil
 }
 
 func (f *cmdFakePullRemote) ListChanges(_ context.Context, _ confluence.ChangeListOptions) (confluence.ChangeListResult, error) {

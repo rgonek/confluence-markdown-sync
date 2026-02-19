@@ -34,7 +34,7 @@ cms init
 
 `cms init` prepares Git metadata, `.gitignore`, and `.env` scaffolding, and creates an initial commit when it initializes a new Git repository.
 
-`cms pull` mirrors Confluence page hierarchy locally by placing child pages in nested directories under their parent pages.
+`cms pull` mirrors Confluence hierarchy locally by placing folders and child pages in nested directories.
 
 ## Quick flow 🔄
 
