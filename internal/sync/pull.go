@@ -553,6 +553,31 @@ func PlanPagePaths(
 	if folderByID == nil {
 		folderByID = map[string]confluence.Folder{}
 	}
+	pageHasChildren := map[string]bool{}
+	for _, page := range pages {
+		parentType := strings.ToLower(strings.TrimSpace(page.ParentType))
+		if parentType == "" {
+			parentType = "page"
+		}
+		if parentType != "page" {
+			continue
+		}
+		parentID := strings.TrimSpace(page.ParentPageID)
+		if parentID == "" {
+			continue
+		}
+		pageHasChildren[parentID] = true
+	}
+	for _, folder := range folderByID {
+		if !strings.EqualFold(strings.TrimSpace(folder.ParentType), "page") {
+			continue
+		}
+		parentID := strings.TrimSpace(folder.ParentID)
+		if parentID == "" {
+			continue
+		}
+		pageHasChildren[parentID] = true
+	}
 
 	previousPathByID := map[string]string{}
 	for _, previousPath := range sortedStringKeys(previousPageIndex) {
@@ -579,7 +604,7 @@ func PlanPagePaths(
 	}
 	plans := make([]pagePathPlan, 0, len(pages))
 	for _, page := range pages {
-		baseRelPath := plannedPageRelPath(page, pageByID, folderByID)
+		baseRelPath := plannedPageRelPath(page, pageByID, folderByID, pageHasChildren[page.ID])
 		if previousPath := previousPathByID[page.ID]; previousPath != "" && sameParentDirectory(previousPath, baseRelPath) {
 			baseRelPath = previousPath
 		}
@@ -607,7 +632,7 @@ func PlanPagePaths(
 	return absByID, relByID
 }
 
-func plannedPageRelPath(page confluence.Page, pageByID map[string]confluence.Page, folderByID map[string]confluence.Folder) string {
+func plannedPageRelPath(page confluence.Page, pageByID map[string]confluence.Page, folderByID map[string]confluence.Folder, hasChildren bool) string {
 	title := strings.TrimSpace(page.Title)
 	if title == "" {
 		title = "page-" + page.ID
@@ -616,7 +641,13 @@ func plannedPageRelPath(page confluence.Page, pageByID map[string]confluence.Pag
 
 	ancestorSegments, ok := ancestorPathSegments(strings.TrimSpace(page.ParentPageID), strings.TrimSpace(page.ParentType), pageByID, folderByID)
 	if !ok || len(ancestorSegments) == 0 {
+		if hasChildren {
+			return normalizeRelPath(filepath.Join(fs.SanitizePathSegment(title), filename))
+		}
 		return normalizeRelPath(filename)
+	}
+	if hasChildren {
+		ancestorSegments = append(ancestorSegments, fs.SanitizePathSegment(title))
 	}
 	parts := append(ancestorSegments, filename)
 	return normalizeRelPath(filepath.Join(parts...))
