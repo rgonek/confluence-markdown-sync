@@ -5,12 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
-	"sort"
 	"strings"
 
 	"github.com/rgonek/confluence-markdown-sync/internal/config"
 	"github.com/rgonek/confluence-markdown-sync/internal/confluence"
 	"github.com/rgonek/confluence-markdown-sync/internal/fs"
+	"github.com/rgonek/confluence-markdown-sync/internal/git"
 	syncflow "github.com/rgonek/confluence-markdown-sync/internal/sync"
 	"github.com/spf13/cobra"
 )
@@ -41,7 +41,8 @@ func newPushCmd() *cobra.Command {
 TARGET can be a SPACE_KEY (e.g. "MYSPACE") or a path to a .md file.
 If omitted, the space is inferred from the current directory name.
 
-push always runs validate before any remote write.`,
+push always runs validate before any remote write.
+It uses an isolated worktree and a temporary branch to ensure safety.`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			var raw string
@@ -69,21 +70,12 @@ func validateOnConflict(v string) error {
 	}
 }
 
-type pushFileChange struct {
-	Status string
-	Path   string
-}
-
-func runPush(cmd *cobra.Command, target config.Target, onConflict string) error {
+func runPush(cmd *cobra.Command, target config.Target, onConflict string) (runErr error) {
 	ctx := context.Background()
 	out := cmd.OutOrStdout()
 
 	if err := validateOnConflict(onConflict); err != nil {
 		return err
-	}
-
-	if err := runValidateTarget(out, target); err != nil {
-		return fmt.Errorf("pre-push validate failed: %w", err)
 	}
 
 	targetCtx, err := resolveValidateTargetContext(target)
@@ -93,65 +85,224 @@ func runPush(cmd *cobra.Command, target config.Target, onConflict string) error 
 	spaceDir := targetCtx.spaceDir
 	spaceKey := filepath.Base(spaceDir)
 
-	repoRoot, err := gitRepoRoot()
+	gitClient, err := git.NewClient()
 	if err != nil {
 		return err
 	}
 
-	spaceScopePath, err := gitScopePath(repoRoot, spaceDir)
+	spaceScopePath, err := gitClient.ScopePath(spaceDir)
 	if err != nil {
 		return err
 	}
 
-	changeScopePath, err := resolvePushScopePath(repoRoot, spaceDir, target, targetCtx)
+	changeScopePath, err := resolvePushScopePath(gitClient, spaceDir, target, targetCtx)
 	if err != nil {
 		return err
 	}
 
-	baselineRef, err := gitPushBaselineRef(repoRoot, spaceKey)
+	ts := nowUTC()
+	tsStr := ts.Format("20060102T150405Z")
+
+	// 1. Capture Snapshot
+	stashRef, err := gitClient.StashScopeIfDirty(spaceScopePath, spaceKey, ts)
 	if err != nil {
+		return fmt.Errorf("stash failed: %w", err)
+	}
+	// Note: We intentionally DO NOT defer drop/restore here immediately,
+	// because restoration logic depends on success/failure of the flow.
+
+	snapshotRef := stashRef
+	if snapshotRef == "" {
+		snapshotRef = "HEAD"
+	}
+
+	snapshotCommit, err := gitClient.ResolveRef(snapshotRef)
+	if err != nil {
+		if stashRef != "" {
+			_ = gitClient.StashPop(stashRef)
+		}
+		return fmt.Errorf("resolve snapshot ref: %w", err)
+	}
+
+	snapshotName := fmt.Sprintf("refs/confluence-sync/snapshots/%s/%s", spaceKey, tsStr)
+	if err := gitClient.UpdateRef(snapshotName, snapshotCommit, "create snapshot"); err != nil {
+		if stashRef != "" {
+			_ = gitClient.StashPop(stashRef)
+		}
+		return fmt.Errorf("create snapshot ref: %w", err)
+	}
+
+	// Keep snapshot ref only on failure, delete on success
+	defer func() {
+		if runErr == nil {
+			_ = gitClient.DeleteRef(snapshotName)
+		} else {
+			fmt.Fprintf(out, "\nSnapshot retained for recovery: %s\n", snapshotName)
+		}
+	}()
+
+	// 2. Create Sync Branch
+	syncBranchName := fmt.Sprintf("sync/%s/%s", spaceKey, tsStr)
+	if err := gitClient.CreateBranch(syncBranchName, snapshotCommit); err != nil {
+		if stashRef != "" {
+			_ = gitClient.StashPop(stashRef)
+		}
+		return fmt.Errorf("create sync branch: %w", err)
+	}
+
+	// Keep sync branch only on failure, delete on success
+	defer func() {
+		if runErr == nil {
+			_ = gitClient.DeleteBranch(syncBranchName)
+		} else {
+			fmt.Fprintf(out, "Sync branch retained for recovery: %s\n", syncBranchName)
+		}
+	}()
+
+	// 3. Create Worktree
+	worktreeDir := filepath.Join(gitClient.RootDir, ".confluence-worktrees", fmt.Sprintf("%s-%s", spaceKey, tsStr))
+	if err := gitClient.AddWorktree(worktreeDir, syncBranchName); err != nil {
+		if stashRef != "" {
+			_ = gitClient.StashPop(stashRef)
+		}
+		return fmt.Errorf("create worktree: %w", err)
+	}
+	defer func() {
+		_ = gitClient.RemoveWorktree(worktreeDir)
+	}()
+
+	// Resolve HEAD from main repo to reset SyncBranch
+	currentHead, err := gitClient.ResolveRef("HEAD")
+	if err != nil {
+		if stashRef != "" {
+			_ = gitClient.StashPop(stashRef)
+		}
+		return fmt.Errorf("resolve HEAD: %w", err)
+	}
+
+	// 4. Validate (in worktree)
+	wtSpaceDir := filepath.Join(worktreeDir, spaceScopePath)
+	wtClient := &git.Client{RootDir: worktreeDir}
+
+	// Reset SyncBranch to HEAD (mixed) to ensure commits are granular and based on HEAD
+	if _, err := wtClient.Run("reset", "--mixed", currentHead); err != nil {
+		if stashRef != "" {
+			_ = gitClient.StashPop(stashRef)
+		}
+		return fmt.Errorf("reset worktree: %w", err)
+	}
+
+	var wtTarget config.Target
+
+	if target.IsFile() {
+		relFile, _ := filepath.Rel(spaceDir, targetCtx.files[0]) // Assumes single file
+		wtFile := filepath.Join(wtSpaceDir, relFile)
+		wtTarget = config.Target{Mode: config.TargetModeFile, Value: wtFile}
+	} else {
+		wtTarget = config.Target{Mode: config.TargetModeSpace, Value: wtSpaceDir}
+	}
+
+	if err := runValidateTarget(out, wtTarget); err != nil {
+
+		if stashRef != "" {
+			_ = gitClient.StashPop(stashRef)
+		}
+		return fmt.Errorf("pre-push validate failed: %w", err)
+	}
+
+	// 5. Diff (Snapshot vs Baseline)
+	baselineRef, err := gitPushBaselineRef(gitClient, spaceKey)
+	if err != nil {
+		if stashRef != "" {
+			_ = gitClient.StashPop(stashRef)
+		}
 		return err
 	}
 
-	changes, err := gitChangedMarkdownSince(repoRoot, changeScopePath, baselineRef)
+	wtClient = &git.Client{RootDir: worktreeDir}
+	changes, err := wtClient.DiffNameStatus(baselineRef, snapshotCommit, spaceScopePath)
 	if err != nil {
+		if stashRef != "" {
+			_ = gitClient.StashPop(stashRef)
+		}
+		return fmt.Errorf("diff failed: %w", err)
+	}
+
+	syncChanges, err := toSyncPushChanges(changes, gitClient.RootDir, spaceDir)
+	if err != nil {
+		if stashRef != "" {
+			_ = gitClient.StashPop(stashRef)
+		}
 		return err
 	}
-	if len(changes) == 0 {
+
+	if target.IsFile() {
+		// Filter syncChanges for the specific file
+		// Or assume re-running diff with scoped path is better
+		// changeScopePath is absolute path in repo? No, gitClient.ScopePath returns relative to root.
+		// DiffNameStatus expects relative to root.
+		changes, err = wtClient.DiffNameStatus(baselineRef, "HEAD", changeScopePath)
+		if err != nil {
+			if stashRef != "" {
+				_ = gitClient.StashPop(stashRef)
+			}
+			return err
+		}
+		syncChanges, err = toSyncPushChanges(changes, gitClient.RootDir, spaceDir)
+		if err != nil {
+			if stashRef != "" {
+				_ = gitClient.StashPop(stashRef)
+			}
+			return err
+		}
+	}
+
+	if len(syncChanges) == 0 {
 		fmt.Fprintln(out, "push completed with no in-scope markdown changes (no-op)")
+		if stashRef != "" {
+			_ = gitClient.StashPop(stashRef)
+		}
 		return nil
 	}
 
-	envPath := findEnvPath(spaceDir)
+	// 6. Push (in worktree)
+	envPath := findEnvPath(wtSpaceDir) // Load config from worktree
 	cfg, err := config.Load(envPath)
 	if err != nil {
+		if stashRef != "" {
+			_ = gitClient.StashPop(stashRef)
+		}
 		return fmt.Errorf("failed to load config: %w", err)
 	}
 
 	remote, err := newPushRemote(cfg)
 	if err != nil {
+		if stashRef != "" {
+			_ = gitClient.StashPop(stashRef)
+		}
 		return fmt.Errorf("create confluence client: %w", err)
 	}
 
-	state, err := fs.LoadState(spaceDir)
+	state, err := fs.LoadState(wtSpaceDir)
 	if err != nil {
+		if stashRef != "" {
+			_ = gitClient.StashPop(stashRef)
+		}
 		return fmt.Errorf("load state: %w", err)
-	}
-
-	syncChanges, err := toSyncPushChanges(changes, repoRoot, spaceDir)
-	if err != nil {
-		return err
 	}
 
 	result, err := syncflow.Push(ctx, remote, syncflow.PushOptions{
 		SpaceKey:       spaceKey,
-		SpaceDir:       spaceDir,
+		SpaceDir:       wtSpaceDir, // Use worktree dir!
 		Domain:         cfg.Domain,
 		State:          state,
 		Changes:        syncChanges,
 		ConflictPolicy: toSyncConflictPolicy(onConflict),
 	})
 	if err != nil {
+		if stashRef != "" {
+			_ = gitClient.StashPop(stashRef)
+		}
 		var conflictErr *syncflow.PushConflictError
 		if errors.As(err, &conflictErr) {
 			return formatPushConflictError(conflictErr)
@@ -161,34 +312,40 @@ func runPush(cmd *cobra.Command, target config.Target, onConflict string) error 
 
 	if len(result.Commits) == 0 {
 		fmt.Fprintln(out, "push completed with no pushable markdown changes (no-op)")
+		if stashRef != "" {
+			_ = gitClient.StashPop(stashRef)
+		}
 		return nil
 	}
 
-	if err := fs.SaveState(spaceDir, result.State); err != nil {
+	// 7. Commit in Worktree
+	if err := fs.SaveState(wtSpaceDir, result.State); err != nil {
+		if stashRef != "" {
+			_ = gitClient.StashPop(stashRef)
+		}
 		return fmt.Errorf("save state: %w", err)
 	}
 
 	for i, commitPlan := range result.Commits {
-		repoPaths := make([]string, 0, len(commitPlan.StagedPaths)+1)
+		filesToAdd := make([]string, 0, len(commitPlan.StagedPaths)+1)
 		for _, relPath := range commitPlan.StagedPaths {
-			repoPaths = append(repoPaths, joinRepoScopePath(spaceScopePath, relPath))
+			filesToAdd = append(filesToAdd, filepath.Join(wtSpaceDir, relPath))
 		}
 		if i == len(result.Commits)-1 {
-			repoPaths = append(repoPaths, joinRepoScopePath(spaceScopePath, fs.StateFileName))
-		}
-		repoPaths = dedupeRepoPaths(repoPaths)
-
-		addArgs := append([]string{"add", "--"}, repoPaths...)
-		if _, err := runGit(repoRoot, addArgs...); err != nil {
-			return err
+			filesToAdd = append(filesToAdd, filepath.Join(wtSpaceDir, fs.StateFileName))
 		}
 
-		hasChanges, err := gitHasScopedStagedChanges(repoRoot, spaceScopePath)
-		if err != nil {
-			return err
+		repoPaths := make([]string, 0, len(filesToAdd))
+		for _, absPath := range filesToAdd {
+			rel, _ := filepath.Rel(worktreeDir, absPath)
+			repoPaths = append(repoPaths, rel)
 		}
-		if !hasChanges {
-			continue
+
+		if err := wtClient.Add(repoPaths...); err != nil {
+			if stashRef != "" {
+				_ = gitClient.StashPop(stashRef)
+			}
+			return fmt.Errorf("git add failed: %w", err)
 		}
 
 		subject := fmt.Sprintf("Sync %q to Confluence (v%d)", commitPlan.PageTitle, commitPlan.Version)
@@ -201,28 +358,109 @@ func runPush(cmd *cobra.Command, target config.Target, onConflict string) error 
 			commitPlan.SpaceKey,
 			commitPlan.URL,
 		)
-		if _, err := runGit(repoRoot, "commit", "-m", subject, "-m", body); err != nil {
-			return err
+		if err := wtClient.Commit(subject, body); err != nil {
+			if stashRef != "" {
+				_ = gitClient.StashPop(stashRef)
+			}
+			return fmt.Errorf("git commit failed: %w", err)
 		}
 
 		fmt.Fprintf(out, "pushed %s (page %s, v%d)\n", commitPlan.Path, commitPlan.PageID, commitPlan.Version)
+	}
+
+	// 8. Rebase Sync Branch onto HEAD (main repo)
+	if err := gitClient.RemoveWorktree(worktreeDir); err != nil {
+		if stashRef != "" {
+			_ = gitClient.StashPop(stashRef)
+		}
+		return fmt.Errorf("remove worktree: %w", err)
+	}
+
+	// 9. Merge
+	if err := gitClient.Merge(syncBranchName, ""); err != nil {
+		if stashRef != "" {
+			_ = gitClient.StashPop(stashRef)
+		}
+		return fmt.Errorf("merge sync branch: %w", err)
+	}
+
+	// 10. Tag
+	tagName := fmt.Sprintf("confluence-sync/push/%s/%s", spaceKey, tsStr)
+	tagMsg := fmt.Sprintf("Confluence push sync for %s at %s", spaceKey, tsStr)
+	if err := gitClient.Tag(tagName, tagMsg); err != nil {
+		fmt.Fprintf(out, "warning: failed to create tag: %v\n", err)
+	}
+
+	// 11. Restore Stash
+	if stashRef != "" {
+		if err := gitClient.StashPop(stashRef); err != nil {
+			fmt.Fprintf(out, "warning: stash restore had conflicts: %v\n", err)
+		}
 	}
 
 	fmt.Fprintf(out, "push completed: %d page change(s) synced\n", len(result.Commits))
 	return nil
 }
 
-func resolvePushScopePath(repoRoot, spaceDir string, target config.Target, targetCtx validateTargetContext) (string, error) {
+func resolvePushScopePath(client *git.Client, spaceDir string, target config.Target, targetCtx validateTargetContext) (string, error) {
 	if target.IsFile() {
 		if len(targetCtx.files) != 1 {
 			return "", fmt.Errorf("expected one file target, got %d", len(targetCtx.files))
 		}
-		return gitScopePath(repoRoot, targetCtx.files[0])
+		return client.ScopePath(targetCtx.files[0])
 	}
-	return gitScopePath(repoRoot, spaceDir)
+	return client.ScopePath(spaceDir)
 }
 
-func toSyncPushChanges(changes []pushFileChange, repoRoot, spaceDir string) ([]syncflow.PushFileChange, error) {
+func gitPushBaselineRef(client *git.Client, spaceKey string) (string, error) {
+	spaceKey = strings.TrimSpace(spaceKey)
+	if spaceKey == "" {
+		return "", fmt.Errorf("space key is required")
+	}
+
+	tagsRaw, err := client.Run(
+		"tag",
+		"--list",
+		fmt.Sprintf("confluence-sync/pull/%s/*", spaceKey),
+		fmt.Sprintf("confluence-sync/push/%s/*", spaceKey),
+	)
+	if err != nil {
+		return "", err
+	}
+
+	bestTag := ""
+	bestStamp := ""
+	for _, line := range strings.Split(strings.ReplaceAll(tagsRaw, "\r\n", "\n"), "\n") {
+		tag := strings.TrimSpace(line)
+		if tag == "" {
+			continue
+		}
+		parts := strings.Split(tag, "/")
+		if len(parts) < 4 {
+			continue
+		}
+		timestamp := parts[len(parts)-1]
+		if timestamp > bestStamp {
+			bestStamp = timestamp
+			bestTag = tag
+		}
+	}
+	if bestTag != "" {
+		return bestTag, nil
+	}
+
+	rootCommitRaw, err := client.Run("rev-list", "--max-parents=0", "HEAD")
+	if err != nil {
+		return "", err
+	}
+	lines := strings.Fields(rootCommitRaw)
+	if len(lines) == 0 {
+		return "", fmt.Errorf("unable to determine baseline commit")
+	}
+	return lines[0], nil
+}
+
+func toSyncPushChanges(changes []git.FileStatus, repoRoot, spaceDir string) ([]syncflow.PushFileChange, error) {
 	out := make([]syncflow.PushFileChange, 0, len(changes))
 	for _, change := range changes {
 		absPath := filepath.Join(repoRoot, filepath.FromSlash(change.Path))
@@ -236,7 +474,7 @@ func toSyncPushChanges(changes []pushFileChange, repoRoot, spaceDir string) ([]s
 		}
 
 		var changeType syncflow.PushChangeType
-		switch change.Status {
+		switch change.Code {
 		case "A":
 			changeType = syncflow.PushChangeAdd
 		case "M", "T":
@@ -284,130 +522,4 @@ func formatPushConflictError(conflictErr *syncflow.PushConflictError) error {
 			conflictErr.LocalVersion,
 		)
 	}
-}
-
-func joinRepoScopePath(scopePath, relPath string) string {
-	relPath = filepath.ToSlash(filepath.Clean(filepath.FromSlash(relPath)))
-	if scopePath == "." {
-		return relPath
-	}
-	return filepath.ToSlash(filepath.Join(filepath.FromSlash(scopePath), filepath.FromSlash(relPath)))
-}
-
-func dedupeRepoPaths(paths []string) []string {
-	set := map[string]struct{}{}
-	for _, path := range paths {
-		path = filepath.ToSlash(filepath.Clean(filepath.FromSlash(path)))
-		if path == "." || path == "" {
-			continue
-		}
-		set[path] = struct{}{}
-	}
-	ordered := make([]string, 0, len(set))
-	for path := range set {
-		ordered = append(ordered, path)
-	}
-	sort.Strings(ordered)
-	return ordered
-}
-
-func gitPushBaselineRef(repoRoot, spaceKey string) (string, error) {
-	spaceKey = strings.TrimSpace(spaceKey)
-	if spaceKey == "" {
-		return "", fmt.Errorf("space key is required")
-	}
-
-	tagsRaw, err := runGit(
-		repoRoot,
-		"tag",
-		"--list",
-		fmt.Sprintf("confluence-sync/pull/%s/*", spaceKey),
-		fmt.Sprintf("confluence-sync/push/%s/*", spaceKey),
-	)
-	if err != nil {
-		return "", err
-	}
-
-	bestTag := ""
-	bestStamp := ""
-	for _, line := range strings.Split(strings.ReplaceAll(tagsRaw, "\r\n", "\n"), "\n") {
-		tag := strings.TrimSpace(line)
-		if tag == "" {
-			continue
-		}
-		parts := strings.Split(tag, "/")
-		if len(parts) < 4 {
-			continue
-		}
-		timestamp := parts[len(parts)-1]
-		if timestamp > bestStamp {
-			bestStamp = timestamp
-			bestTag = tag
-		}
-	}
-	if bestTag != "" {
-		return bestTag, nil
-	}
-
-	rootCommitRaw, err := runGit(repoRoot, "rev-list", "--max-parents=0", "HEAD")
-	if err != nil {
-		return "", err
-	}
-	lines := strings.Fields(rootCommitRaw)
-	if len(lines) == 0 {
-		return "", fmt.Errorf("unable to determine baseline commit")
-	}
-	return lines[0], nil
-}
-
-func gitChangedMarkdownSince(repoRoot, scopePath, baselineRef string) ([]pushFileChange, error) {
-	rangeExpr := fmt.Sprintf("%s..HEAD", strings.TrimSpace(baselineRef))
-	out, err := runGit(repoRoot, "diff", "--name-status", rangeExpr, "--", scopePath)
-	if err != nil {
-		return nil, err
-	}
-
-	changes := make([]pushFileChange, 0)
-	for _, line := range strings.Split(strings.ReplaceAll(out, "\r\n", "\n"), "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
-		}
-
-		parts := strings.Fields(line)
-		if len(parts) < 2 {
-			continue
-		}
-
-		status := parts[0]
-		switch {
-		case strings.HasPrefix(status, "R"):
-			if len(parts) < 3 {
-				continue
-			}
-			oldPath := filepath.ToSlash(parts[1])
-			newPath := filepath.ToSlash(parts[2])
-			if strings.HasSuffix(strings.ToLower(oldPath), ".md") {
-				changes = append(changes, pushFileChange{Status: "D", Path: oldPath})
-			}
-			if strings.HasSuffix(strings.ToLower(newPath), ".md") {
-				changes = append(changes, pushFileChange{Status: "A", Path: newPath})
-			}
-		default:
-			path := filepath.ToSlash(parts[1])
-			if !strings.HasSuffix(strings.ToLower(path), ".md") {
-				continue
-			}
-			changes = append(changes, pushFileChange{Status: string(status[0]), Path: path})
-		}
-	}
-
-	sort.Slice(changes, func(i, j int) bool {
-		if changes[i].Path == changes[j].Path {
-			return changes[i].Status < changes[j].Status
-		}
-		return changes[i].Path < changes[j].Path
-	})
-
-	return changes, nil
 }

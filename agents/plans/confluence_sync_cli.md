@@ -293,14 +293,14 @@ Done criteria:
 
 ### PR-06 - `push` v2 (Isolated Worktree + Snapshot/Recovery Model)
 Checklist:
-- [ ] Implement hidden snapshot refs (`refs/confluence-sync/snapshots/...`) for in-scope workspace capture.
-- [ ] Implement ephemeral sync branch + temporary worktree lifecycle.
-- [ ] Include staged/unstaged/untracked/deleted workspace changes in push snapshots.
-- [ ] Implement merge-on-success, cleanup-on-success, and retain-on-failure behavior for recovery refs.
-- [ ] Restore out-of-scope workspace state exactly after successful merge and create non-no-op push sync tags.
+- [x] Implement hidden snapshot refs (`refs/confluence-sync/snapshots/...`) for in-scope workspace capture.
+- [x] Implement ephemeral sync branch + temporary worktree lifecycle.
+- [x] Include staged/unstaged/untracked/deleted workspace changes in push snapshots.
+- [x] Implement merge-on-success, cleanup-on-success, and retain-on-failure behavior for recovery refs.
+- [x] Restore out-of-scope workspace state exactly after successful merge and create non-no-op push sync tags.
 Done criteria:
-- [ ] Integration tests verify snapshot/worktree lifecycle, failure retention, and success cleanup.
-- [ ] Integration tests verify out-of-scope workspace preservation and no-op push (no refs/merge/tag).
+- [x] Integration tests verify snapshot/worktree lifecycle, failure retention, and success cleanup.
+- [x] Integration tests verify out-of-scope workspace preservation and no-op push (no refs/merge/tag).
 
 ### PR-07 - `diff`, Hardening, and Final Test Matrix
 Checklist:
