@@ -235,6 +235,122 @@ func TestPlanPagePaths_FallsBackToTopLevelWhenParentMissing(t *testing.T) {
 	}
 }
 
+func TestPull_ForceFullPullsAllPagesWithoutIncrementalChanges(t *testing.T) {
+	tmpDir := t.TempDir()
+	spaceDir := filepath.Join(tmpDir, "ENG")
+	if err := os.MkdirAll(spaceDir, 0o755); err != nil {
+		t.Fatalf("mkdir space: %v", err)
+	}
+
+	initialDoc := fs.MarkdownDocument{
+		Frontmatter: fs.Frontmatter{
+			Title:                  "Root",
+			ConfluencePageID:       "1",
+			ConfluenceSpaceKey:     "ENG",
+			ConfluenceVersion:      1,
+			ConfluenceLastModified: "2026-02-01T08:00:00Z",
+		},
+		Body: "old body\n",
+	}
+	if err := fs.WriteMarkdownDocument(filepath.Join(spaceDir, "root.md"), initialDoc); err != nil {
+		t.Fatalf("write root.md: %v", err)
+	}
+
+	state := fs.SpaceState{
+		LastPullHighWatermark: "2026-02-02T00:00:00Z",
+		PagePathIndex: map[string]string{
+			"root.md": "1",
+		},
+		AttachmentIndex: map[string]string{},
+	}
+
+	remotePage := confluence.Page{
+		ID:           "1",
+		SpaceID:      "space-1",
+		Title:        "Root",
+		Version:      2,
+		LastModified: time.Date(2026, time.February, 1, 10, 0, 0, 0, time.UTC),
+		BodyADF: rawJSON(t, map[string]any{
+			"version": 1,
+			"type":    "doc",
+			"content": []any{
+				map[string]any{
+					"type": "paragraph",
+					"content": []any{
+						map[string]any{
+							"type": "text",
+							"text": "new body",
+						},
+					},
+				},
+			},
+		}),
+	}
+
+	noForceRemote := &fakePullRemote{
+		space:   confluence.Space{ID: "space-1", Key: "ENG", Name: "Engineering"},
+		pages:   []confluence.Page{{ID: "1", SpaceID: "space-1", Title: "Root", Version: 2, LastModified: remotePage.LastModified}},
+		changes: []confluence.Change{},
+		pagesByID: map[string]confluence.Page{
+			"1": remotePage,
+		},
+		attachments: map[string][]byte{},
+	}
+
+	resultNoForce, err := Pull(context.Background(), noForceRemote, PullOptions{
+		SpaceKey:      "ENG",
+		SpaceDir:      spaceDir,
+		State:         state,
+		PullStartedAt: time.Date(2026, time.February, 2, 1, 0, 0, 0, time.UTC),
+	})
+	if err != nil {
+		t.Fatalf("Pull() without force error: %v", err)
+	}
+	if len(resultNoForce.UpdatedMarkdown) != 0 {
+		t.Fatalf("expected no updated markdown without force, got %+v", resultNoForce.UpdatedMarkdown)
+	}
+
+	rootNoForce, err := fs.ReadMarkdownDocument(filepath.Join(spaceDir, "root.md"))
+	if err != nil {
+		t.Fatalf("read root.md without force: %v", err)
+	}
+	if strings.Contains(rootNoForce.Body, "new body") {
+		t.Fatalf("root.md should not be updated without force")
+	}
+
+	forceRemote := &fakePullRemote{
+		space:   confluence.Space{ID: "space-1", Key: "ENG", Name: "Engineering"},
+		pages:   []confluence.Page{{ID: "1", SpaceID: "space-1", Title: "Root", Version: 2, LastModified: remotePage.LastModified}},
+		changes: []confluence.Change{},
+		pagesByID: map[string]confluence.Page{
+			"1": remotePage,
+		},
+		attachments: map[string][]byte{},
+	}
+
+	resultForce, err := Pull(context.Background(), forceRemote, PullOptions{
+		SpaceKey:      "ENG",
+		SpaceDir:      spaceDir,
+		State:         state,
+		PullStartedAt: time.Date(2026, time.February, 2, 1, 0, 0, 0, time.UTC),
+		ForceFull:     true,
+	})
+	if err != nil {
+		t.Fatalf("Pull() with force error: %v", err)
+	}
+	if len(resultForce.UpdatedMarkdown) != 1 {
+		t.Fatalf("expected one updated markdown with force, got %+v", resultForce.UpdatedMarkdown)
+	}
+
+	rootForce, err := fs.ReadMarkdownDocument(filepath.Join(spaceDir, "root.md"))
+	if err != nil {
+		t.Fatalf("read root.md with force: %v", err)
+	}
+	if !strings.Contains(rootForce.Body, "new body") {
+		t.Fatalf("root.md should be updated with force; got body:\n%s", rootForce.Body)
+	}
+}
+
 type fakePullRemote struct {
 	space           confluence.Space
 	pages           []confluence.Page

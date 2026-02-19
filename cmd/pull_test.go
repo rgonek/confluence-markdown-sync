@@ -420,6 +420,128 @@ func TestRunPull_RecreatesMissingSpaceDirWithoutRestoringDeletionStash(t *testin
 	}
 }
 
+func TestRunPull_ForcePullRefreshesEntireSpace(t *testing.T) {
+	repo := t.TempDir()
+	setupGitRepo(t, repo)
+
+	spaceDir := filepath.Join(repo, "ENG")
+	if err := os.MkdirAll(spaceDir, 0o755); err != nil {
+		t.Fatalf("mkdir space: %v", err)
+	}
+	writeMarkdown(t, filepath.Join(spaceDir, "root.md"), fs.MarkdownDocument{
+		Frontmatter: fs.Frontmatter{
+			Title:                  "Root",
+			ConfluencePageID:       "1",
+			ConfluenceSpaceKey:     "ENG",
+			ConfluenceVersion:      1,
+			ConfluenceLastModified: "2026-02-01T08:00:00Z",
+		},
+		Body: "old body\n",
+	})
+	if err := fs.SaveState(spaceDir, fs.SpaceState{
+		LastPullHighWatermark: "2026-02-02T00:00:00Z",
+		PagePathIndex: map[string]string{
+			"root.md": "1",
+		},
+		AttachmentIndex: map[string]string{},
+	}); err != nil {
+		t.Fatalf("save state: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, ".gitignore"), []byte(".env\n.confluence-state.json\n"), 0o644); err != nil {
+		t.Fatalf("write .gitignore: %v", err)
+	}
+
+	runGitForTest(t, repo, "add", ".")
+	runGitForTest(t, repo, "commit", "-m", "initial")
+
+	fake := &cmdFakePullRemote{
+		space: confluence.Space{ID: "space-1", Key: "ENG", Name: "Engineering"},
+		pages: []confluence.Page{{
+			ID:           "1",
+			SpaceID:      "space-1",
+			Title:        "Root",
+			Version:      2,
+			LastModified: time.Date(2026, time.February, 1, 11, 0, 0, 0, time.UTC),
+		}},
+		changes: []confluence.Change{},
+		pagesByID: map[string]confluence.Page{
+			"1": {
+				ID:           "1",
+				SpaceID:      "space-1",
+				Title:        "Root",
+				Version:      2,
+				LastModified: time.Date(2026, time.February, 1, 11, 0, 0, 0, time.UTC),
+				BodyADF:      rawJSON(t, simpleADF("new body")),
+			},
+		},
+		attachments: map[string][]byte{},
+	}
+
+	oldFactory := newPullRemote
+	newPullRemote = func(_ *config.Config) (syncflow.PullRemote, error) { return fake, nil }
+	t.Cleanup(func() { newPullRemote = oldFactory })
+
+	setupEnv(t)
+	chdirRepo(t, repo)
+
+	previousForce := flagPullForce
+	flagPullForce = true
+	t.Cleanup(func() { flagPullForce = previousForce })
+
+	cmd := &cobra.Command{}
+	cmd.SetOut(&bytes.Buffer{})
+
+	if err := runPull(cmd, config.Target{Mode: config.TargetModeSpace, Value: "ENG"}); err != nil {
+		t.Fatalf("runPull() error: %v", err)
+	}
+
+	rootDoc, err := fs.ReadMarkdownDocument(filepath.Join(spaceDir, "root.md"))
+	if err != nil {
+		t.Fatalf("read root.md: %v", err)
+	}
+	if !strings.Contains(rootDoc.Body, "new body") {
+		t.Fatalf("expected root.md body to be refreshed on force pull, got:\n%s", rootDoc.Body)
+	}
+}
+
+func TestRunPull_ForceFlagRejectedForFileTarget(t *testing.T) {
+	repo := t.TempDir()
+	setupGitRepo(t, repo)
+
+	spaceDir := filepath.Join(repo, "ENG")
+	if err := os.MkdirAll(spaceDir, 0o755); err != nil {
+		t.Fatalf("mkdir space: %v", err)
+	}
+	filePath := filepath.Join(spaceDir, "root.md")
+	writeMarkdown(t, filePath, fs.MarkdownDocument{
+		Frontmatter: fs.Frontmatter{
+			Title:                  "Root",
+			ConfluencePageID:       "1",
+			ConfluenceSpaceKey:     "ENG",
+			ConfluenceVersion:      1,
+			ConfluenceLastModified: "2026-02-01T08:00:00Z",
+		},
+		Body: "body\n",
+	})
+
+	chdirRepo(t, repo)
+
+	previousForce := flagPullForce
+	flagPullForce = true
+	t.Cleanup(func() { flagPullForce = previousForce })
+
+	cmd := &cobra.Command{}
+	cmd.SetOut(&bytes.Buffer{})
+
+	err := runPull(cmd, config.Target{Mode: config.TargetModeFile, Value: filePath})
+	if err == nil {
+		t.Fatal("expected error for --force on file target")
+	}
+	if !strings.Contains(err.Error(), "--force is only supported for space targets") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 func buildBulkPullRemote(t *testing.T, pageCount int) *cmdFakePullRemote {
 	t.Helper()
 

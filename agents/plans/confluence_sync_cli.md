@@ -208,6 +208,7 @@ Compatibility and precedence:
 - **Automation Flags**:
     - `--yes`: Auto-approve confirmation prompts (for example, bulk-change or delete confirmations). Does not auto-resolve version conflicts.
     - `--non-interactive`: Disable prompts; fail fast when a required decision is missing.
+    - `pull --force` (`-f`): Force full-space pull planning and conversion even when incremental change detection reports no changes.
     - `push --on-conflict=pull-merge|force|cancel`: Non-interactive equivalent for remote-ahead conflict decisions.
 - **Safety Confirmation**: If `pull` or `push` affects >10 files or performs remote/local deletes, prompt for confirmation `[y/N]`; `--yes` auto-approves, and `--non-interactive` without `--yes` fails.
 
@@ -231,7 +232,7 @@ Compatibility and precedence:
 | `validate` | `[TARGET]` | Validates sync invariants before push: frontmatter schema, immutable key integrity, links/assets, and Markdown->ADF conversion. |
 | `diff` | `[TARGET]` | Shows file- or space-scoped diff against Confluence. If `TARGET` ends with `.md`, treat as file path; otherwise treat as `SPACE_KEY`. |
 
-Automation support for `pull`/`push`: `--yes`, `--non-interactive`; `push` additionally supports `--on-conflict=pull-merge|force|cancel`.
+Automation support for `pull`/`push`: `--yes`, `--non-interactive`; `pull` additionally supports `--skip-missing-assets` and `--force`; `push` additionally supports `--on-conflict=pull-merge|force|cancel`.
 
 ## 4. Delivery Plan (PR-by-PR)
 

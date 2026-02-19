@@ -18,6 +18,8 @@ import (
 )
 
 var (
+	flagPullForce = false
+
 	newPullRemote = func(cfg *config.Config) (syncflow.PullRemote, error) {
 		return confluence.NewClient(confluence.ClientConfig{
 			BaseURL:  cfg.Domain,
@@ -56,6 +58,7 @@ If omitted, the space is inferred from the current directory name.`,
 	cmd.Flags().BoolVarP(&flagYes, "yes", "y", false, "Auto-approve safety confirmations")
 	cmd.Flags().BoolVar(&flagNonInteractive, "non-interactive", false, "Disable prompts; fail fast when a decision is required")
 	cmd.Flags().BoolVarP(&flagSkipMissingAssets, "skip-missing-assets", "s", false, "Continue if an attachment is missing (not found)")
+	cmd.Flags().BoolVarP(&flagPullForce, "force", "f", false, "Force full space pull and refresh all tracked pages")
 	return cmd
 }
 
@@ -66,6 +69,9 @@ func runPull(cmd *cobra.Command, target config.Target) (runErr error) {
 	pullCtx, err := resolvePullContext(target)
 	if err != nil {
 		return err
+	}
+	if flagPullForce && strings.TrimSpace(pullCtx.targetPageID) != "" {
+		return errors.New("--force is only supported for space targets")
 	}
 	scopeDirExisted := dirExists(pullCtx.spaceDir)
 
@@ -89,7 +95,7 @@ func runPull(cmd *cobra.Command, target config.Target) (runErr error) {
 		return fmt.Errorf("load state: %w", err)
 	}
 
-	impact, err := estimatePullImpact(ctx, remote, pullCtx.spaceKey, pullCtx.targetPageID, state, syncflow.DefaultPullOverlapWindow)
+	impact, err := estimatePullImpact(ctx, remote, pullCtx.spaceKey, pullCtx.targetPageID, state, syncflow.DefaultPullOverlapWindow, flagPullForce)
 	if err != nil {
 		return err
 	}
@@ -133,6 +139,7 @@ func runPull(cmd *cobra.Command, target config.Target) (runErr error) {
 		PullStartedAt:     pullStartedAt,
 		OverlapWindow:     syncflow.DefaultPullOverlapWindow,
 		TargetPageID:      pullCtx.targetPageID,
+		ForceFull:         flagPullForce,
 		SkipMissingAssets: flagSkipMissingAssets,
 		OnDownloadError: func(attachmentID string, pageID string, err error) bool {
 			return askToContinueOnDownloadError(cmd.InOrStdin(), out, attachmentID, pageID, err)
@@ -392,6 +399,7 @@ func estimatePullImpact(
 	targetPageID string,
 	state fs.SpaceState,
 	overlapWindow time.Duration,
+	forceFull bool,
 ) (pullImpact, error) {
 	space, err := remote.GetSpace(ctx, spaceKey)
 	if err != nil {
@@ -421,6 +429,20 @@ func estimatePullImpact(
 		return pullImpact{changedMarkdown: 1}, nil
 	}
 
+	deletedIDs := map[string]struct{}{}
+	for _, pageID := range state.PagePathIndex {
+		if _, exists := pageByID[pageID]; !exists {
+			deletedIDs[pageID] = struct{}{}
+		}
+	}
+
+	if forceFull {
+		return pullImpact{
+			changedMarkdown: len(pageByID),
+			deletedMarkdown: len(deletedIDs),
+		}, nil
+	}
+
 	changedIDs := map[string]struct{}{}
 	if strings.TrimSpace(state.LastPullHighWatermark) == "" {
 		for _, page := range pages {
@@ -446,13 +468,6 @@ func estimatePullImpact(
 			if _, exists := pageByID[change.PageID]; exists {
 				changedIDs[change.PageID] = struct{}{}
 			}
-		}
-	}
-
-	deletedIDs := map[string]struct{}{}
-	for _, pageID := range state.PagePathIndex {
-		if _, exists := pageByID[pageID]; !exists {
-			deletedIDs[pageID] = struct{}{}
 		}
 	}
 

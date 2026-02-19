@@ -42,6 +42,9 @@ cms init
 # 1) Pull a Confluence space
 cms pull ENG
 
+# Force a full-space refresh (ignore incremental change detection)
+cms pull ENG --force
+
 # 2) Validate local markdown
 cms validate ENG
 

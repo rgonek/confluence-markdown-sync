@@ -86,14 +86,17 @@ func setAutomationFlags(t *testing.T, yes, nonInteractive bool) {
 	previousYes := flagYes
 	previousNonInteractive := flagNonInteractive
 	previousSkipMissingAssets := flagSkipMissingAssets
+	previousPullForce := flagPullForce
 
 	flagYes = yes
 	flagNonInteractive = nonInteractive
 	flagSkipMissingAssets = false
+	flagPullForce = false
 
 	t.Cleanup(func() {
 		flagYes = previousYes
 		flagNonInteractive = previousNonInteractive
 		flagSkipMissingAssets = previousSkipMissingAssets
+		flagPullForce = previousPullForce
 	})
 }

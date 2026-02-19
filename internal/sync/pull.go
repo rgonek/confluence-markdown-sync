@@ -40,6 +40,7 @@ type PullOptions struct {
 	PullStartedAt     time.Time
 	OverlapWindow     time.Duration
 	TargetPageID      string
+	ForceFull         bool
 	SkipMissingAssets bool
 	OnDownloadError   func(attachmentID string, pageID string, err error) bool // return true to skip and continue
 }
@@ -361,6 +362,15 @@ func selectChangedPageIDs(
 			return nil, nil
 		}
 		return []string{targetID}, nil
+	}
+
+	if opts.ForceFull {
+		allIDs := make([]string, 0, len(pageByID))
+		for id := range pageByID {
+			allIDs = append(allIDs, id)
+		}
+		sort.Strings(allIDs)
+		return allIDs, nil
 	}
 
 	if strings.TrimSpace(opts.State.LastPullHighWatermark) == "" {

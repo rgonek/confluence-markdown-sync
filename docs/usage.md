@@ -87,6 +87,7 @@ Highlights:
 - page files follow Confluence hierarchy (parent/child pages become nested directories),
 - same-space links rewritten to relative Markdown links,
 - attachments downloaded into `assets/<page-id>/<attachment-id>-<filename>`,
+- `--force` (`-f`) forces a full-space refresh (all tracked pages are re-pulled even when incremental changes are empty),
 - attachment download failures include the owning page ID,
 - missing assets can be auto-skipped with `--skip-missing-assets` (`-s`),
 - without `-s`, pull asks whether to continue when an attachment download fails,

@@ -16,6 +16,8 @@ Additional pull flag:
 
 - `--skip-missing-assets` (`-s`)
   - skips missing attachment downloads (`404`/not found) and continues pull.
+- `--force` (`-f`)
+  - forces a full-space pull refresh even when incremental change detection reports no updated pages.
 
 Additional push flag:
 
@@ -48,7 +50,7 @@ In non-interactive usage, set one explicitly.
 ## Recommended Non-Interactive Commands
 
 ```powershell
-cms pull ENG --yes --non-interactive --skip-missing-assets
+cms pull ENG --yes --non-interactive --skip-missing-assets --force
 cms validate ENG
 cms push ENG --yes --non-interactive --on-conflict=cancel
 ```
@@ -81,7 +83,7 @@ jobs:
           ATLASSIAN_DOMAIN: ${{ secrets.ATLASSIAN_DOMAIN }}
           ATLASSIAN_EMAIL: ${{ secrets.ATLASSIAN_EMAIL }}
           ATLASSIAN_API_TOKEN: ${{ secrets.ATLASSIAN_API_TOKEN }}
-        run: ./cms pull ENG --yes --non-interactive --skip-missing-assets
+        run: ./cms pull ENG --yes --non-interactive --skip-missing-assets --force
 
       - name: Validate docs
         env:
