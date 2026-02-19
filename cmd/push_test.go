@@ -318,6 +318,42 @@ func TestRunPush_YesBypassesDeleteConfirmation(t *testing.T) {
 	}
 }
 
+func TestRunPush_WorksWithoutGitRemoteConfigured(t *testing.T) {
+	repo := t.TempDir()
+	spaceDir := preparePushRepoWithBaseline(t, repo)
+
+	writeMarkdown(t, filepath.Join(spaceDir, "root.md"), fs.MarkdownDocument{
+		Frontmatter: fs.Frontmatter{
+			Title:                  "Root",
+			ConfluencePageID:       "1",
+			ConfluenceSpaceKey:     "ENG",
+			ConfluenceVersion:      1,
+			ConfluenceLastModified: "2026-02-01T10:00:00Z",
+		},
+		Body: "Updated local content\n",
+	})
+	runGitForTest(t, repo, "add", ".")
+	runGitForTest(t, repo, "commit", "-m", "local change")
+
+	if remotes := strings.TrimSpace(runGitForTest(t, repo, "remote")); remotes != "" {
+		t.Fatalf("expected no git remotes, got %q", remotes)
+	}
+
+	fake := newCmdFakePushRemote(1)
+	oldFactory := newPushRemote
+	newPushRemote = func(_ *config.Config) (syncflow.PushRemote, error) { return fake, nil }
+	t.Cleanup(func() { newPushRemote = oldFactory })
+
+	setupEnv(t)
+	chdirRepo(t, repo)
+
+	cmd := &cobra.Command{}
+	cmd.SetOut(&bytes.Buffer{})
+	if err := runPush(cmd, config.Target{Mode: config.TargetModeSpace, Value: "ENG"}, OnConflictCancel); err != nil {
+		t.Fatalf("runPush() error without git remote: %v", err)
+	}
+}
+
 func TestRunPush_FailureRetainsSnapshotAndSyncBranch(t *testing.T) {
 	repo := t.TempDir()
 	spaceDir := preparePushRepoWithBaseline(t, repo)
