@@ -136,6 +136,16 @@ func Pull(ctx context.Context, remote PullRemote, opts PullOptions) (PullResult,
 	if err != nil {
 		return PullResult{}, err
 	}
+	if strings.TrimSpace(opts.TargetPageID) == "" {
+		changedSet := map[string]struct{}{}
+		for _, pageID := range changedPageIDs {
+			changedSet[pageID] = struct{}{}
+		}
+		for _, pageID := range movedPageIDs(state.PagePathIndex, pagePathByIDRel) {
+			changedSet[pageID] = struct{}{}
+		}
+		changedPageIDs = sortedStringKeys(changedSet)
+	}
 
 	changedPages := make(map[string]confluence.Page, len(changedPageIDs))
 	for _, pageID := range changedPageIDs {
@@ -449,55 +459,117 @@ func PlanPagePaths(
 		pageByID[page.ID] = page
 	}
 
-	absByID := map[string]string{}
-	relByID := map[string]string{}
-	usedRelPaths := map[string]struct{}{}
-
-	previousPaths := sortedStringKeys(previousPageIndex)
-	for _, previousPath := range previousPaths {
+	previousPathByID := map[string]string{}
+	for _, previousPath := range sortedStringKeys(previousPageIndex) {
 		pageID := previousPageIndex[previousPath]
 		if _, exists := pageByID[pageID]; !exists {
 			continue
 		}
-		relPath := normalizeRelPath(previousPath)
-		if relPath == "" {
+		normalized := normalizeRelPath(previousPath)
+		if normalized == "" {
 			continue
 		}
-		if _, used := usedRelPaths[relPath]; used {
-			continue
+		if _, exists := previousPathByID[pageID]; !exists {
+			previousPathByID[pageID] = normalized
 		}
-		usedRelPaths[relPath] = struct{}{}
-		relByID[pageID] = relPath
-		absByID[pageID] = filepath.Join(spaceDir, filepath.FromSlash(relPath))
 	}
 
-	remaining := make([]confluence.Page, 0, len(pages))
-	for _, page := range pages {
-		if _, assigned := relByID[page.ID]; assigned {
-			continue
-		}
-		remaining = append(remaining, page)
+	absByID := map[string]string{}
+	relByID := map[string]string{}
+	usedRelPaths := map[string]struct{}{}
+
+	type pagePathPlan struct {
+		ID          string
+		BaseRelPath string
 	}
-	sort.Slice(remaining, func(i, j int) bool {
-		if remaining[i].Title == remaining[j].Title {
-			return remaining[i].ID < remaining[j].ID
+	plans := make([]pagePathPlan, 0, len(pages))
+	for _, page := range pages {
+		baseRelPath := plannedPageRelPath(page, pageByID)
+		if previousPath := previousPathByID[page.ID]; previousPath != "" && sameParentDirectory(previousPath, baseRelPath) {
+			baseRelPath = previousPath
 		}
-		return strings.ToLower(remaining[i].Title) < strings.ToLower(remaining[j].Title)
+
+		plans = append(plans, pagePathPlan{
+			ID:          page.ID,
+			BaseRelPath: baseRelPath,
+		})
+	}
+
+	sort.Slice(plans, func(i, j int) bool {
+		if plans[i].BaseRelPath == plans[j].BaseRelPath {
+			return plans[i].ID < plans[j].ID
+		}
+		return plans[i].BaseRelPath < plans[j].BaseRelPath
 	})
 
-	for _, page := range remaining {
-		title := strings.TrimSpace(page.Title)
-		if title == "" {
-			title = "page-" + page.ID
-		}
-		baseName := fs.SanitizeMarkdownFilename(title)
-		relPath := ensureUniqueMarkdownPath(baseName, usedRelPaths)
+	for _, plan := range plans {
+		relPath := ensureUniqueMarkdownPath(plan.BaseRelPath, usedRelPaths)
 		usedRelPaths[relPath] = struct{}{}
-		relByID[page.ID] = relPath
-		absByID[page.ID] = filepath.Join(spaceDir, filepath.FromSlash(relPath))
+		relByID[plan.ID] = relPath
+		absByID[plan.ID] = filepath.Join(spaceDir, filepath.FromSlash(relPath))
 	}
 
 	return absByID, relByID
+}
+
+func plannedPageRelPath(page confluence.Page, pageByID map[string]confluence.Page) string {
+	title := strings.TrimSpace(page.Title)
+	if title == "" {
+		title = "page-" + page.ID
+	}
+	filename := fs.SanitizeMarkdownFilename(title)
+
+	ancestorSegments, ok := ancestorPathSegments(page.ID, pageByID)
+	if !ok || len(ancestorSegments) == 0 {
+		return normalizeRelPath(filename)
+	}
+	parts := append(ancestorSegments, filename)
+	return normalizeRelPath(filepath.Join(parts...))
+}
+
+func ancestorPathSegments(pageID string, pageByID map[string]confluence.Page) ([]string, bool) {
+	page, exists := pageByID[pageID]
+	if !exists {
+		return nil, false
+	}
+
+	parentID := strings.TrimSpace(page.ParentPageID)
+	if parentID == "" {
+		return nil, true
+	}
+
+	visited := map[string]struct{}{pageID: {}}
+	segmentsReversed := []string{}
+	for parentID != "" {
+		if _, seen := visited[parentID]; seen {
+			return nil, false
+		}
+		visited[parentID] = struct{}{}
+
+		parent, ok := pageByID[parentID]
+		if !ok {
+			return nil, false
+		}
+
+		title := strings.TrimSpace(parent.Title)
+		if title == "" {
+			title = "page-" + parent.ID
+		}
+		segmentsReversed = append(segmentsReversed, fs.SanitizePathSegment(title))
+		parentID = strings.TrimSpace(parent.ParentPageID)
+	}
+
+	segments := make([]string, 0, len(segmentsReversed))
+	for i := len(segmentsReversed) - 1; i >= 0; i-- {
+		segments = append(segments, segmentsReversed[i])
+	}
+	return segments, true
+}
+
+func sameParentDirectory(pathA, pathB string) bool {
+	dirA := normalizeRelPath(filepath.Dir(pathA))
+	dirB := normalizeRelPath(filepath.Dir(pathB))
+	return dirA == dirB
 }
 
 func ensureUniqueMarkdownPath(baseName string, used map[string]struct{}) string {
@@ -523,6 +595,20 @@ func deletedPageIDs(previousPageIndex map[string]string, remotePages map[string]
 	set := map[string]struct{}{}
 	for _, pageID := range previousPageIndex {
 		if _, exists := remotePages[pageID]; !exists {
+			set[pageID] = struct{}{}
+		}
+	}
+	return sortedStringKeys(set)
+}
+
+func movedPageIDs(previousPageIndex map[string]string, nextPathByID map[string]string) []string {
+	set := map[string]struct{}{}
+	for previousPath, pageID := range previousPageIndex {
+		nextPath, exists := nextPathByID[pageID]
+		if !exists {
+			continue
+		}
+		if normalizeRelPath(previousPath) != normalizeRelPath(nextPath) {
 			set[pageID] = struct{}{}
 		}
 	}
