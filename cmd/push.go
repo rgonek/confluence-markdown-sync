@@ -74,9 +74,11 @@ func runPush(cmd *cobra.Command, target config.Target, onConflict string) (runEr
 	ctx := context.Background()
 	out := cmd.OutOrStdout()
 
-	if err := validateOnConflict(onConflict); err != nil {
+	resolvedPolicy, err := resolvePushConflictPolicy(cmd.InOrStdin(), out, onConflict)
+	if err != nil {
 		return err
 	}
+	onConflict = resolvedPolicy
 
 	targetCtx, err := resolveValidateTargetContext(target)
 	if err != nil {
@@ -263,6 +265,13 @@ func runPush(cmd *cobra.Command, target config.Target, onConflict string) (runEr
 			_ = gitClient.StashPop(stashRef)
 		}
 		return nil
+	}
+
+	if err := requireSafetyConfirmation(cmd.InOrStdin(), out, "push", len(syncChanges), pushHasDeleteChange(syncChanges)); err != nil {
+		if stashRef != "" {
+			_ = gitClient.StashPop(stashRef)
+		}
+		return err
 	}
 
 	// 6. Push (in worktree)
@@ -501,6 +510,15 @@ func toSyncConflictPolicy(policy string) syncflow.PushConflictPolicy {
 	default:
 		return syncflow.PushConflictPolicyCancel
 	}
+}
+
+func pushHasDeleteChange(changes []syncflow.PushFileChange) bool {
+	for _, change := range changes {
+		if change.Type == syncflow.PushChangeDelete {
+			return true
+		}
+	}
+	return false
 }
 
 func formatPushConflictError(conflictErr *syncflow.PushConflictError) error {

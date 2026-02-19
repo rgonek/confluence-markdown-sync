@@ -128,7 +128,7 @@ func Pull(ctx context.Context, remote PullRemote, opts PullOptions) (PullResult,
 	}
 	sort.Strings(pageIDs)
 
-	pagePathByIDAbs, pagePathByIDRel := planPagePaths(spaceDir, state.PagePathIndex, pages)
+	pagePathByIDAbs, pagePathByIDRel := PlanPagePaths(spaceDir, state.PagePathIndex, pages)
 
 	changedPageIDs, err := selectChangedPageIDs(ctx, remote, opts, overlapWindow, pageByID)
 	if err != nil {
@@ -414,7 +414,11 @@ func listAllChanges(ctx context.Context, remote PullRemote, opts confluence.Chan
 	return result, nil
 }
 
-func planPagePaths(
+// PlanPagePaths builds deterministic markdown paths for remote pages.
+//
+// It preserves previously mapped paths from page_path_index when possible,
+// then allocates unique sanitized filenames for newly discovered pages.
+func PlanPagePaths(
 	spaceDir string,
 	previousPageIndex map[string]string,
 	pages []confluence.Page,
