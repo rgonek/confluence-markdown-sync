@@ -123,4 +123,3 @@ func TestValidateImmutableFrontmatter(t *testing.T) {
 		t.Fatalf("issues = %d, want 2", len(result.Issues))
 	}
 }
-

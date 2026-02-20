@@ -69,6 +69,7 @@ Validation failures must stop `push` immediately.
 - `pull` and `push` support `--yes` and `--non-interactive`.
 - `pull` supports `--skip-missing-assets` and `--force` (`-f`) for full-space refresh.
 - `push` supports `--on-conflict=pull-merge|force|cancel` for non-interactive conflict policy.
+- `push` supports `--dry-run` to print simulated API requests and ADF output without modifying local or remote state.
 - `--yes` auto-approves safety confirmations but does not choose remote-ahead conflict strategy.
 - `--non-interactive` must fail fast when a required decision is missing.
 - Safety confirmation is required when an operation affects more than 10 markdown files or includes delete operations.
