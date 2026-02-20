@@ -4,7 +4,7 @@ go 1.25.5
 
 require (
 	github.com/joho/godotenv v1.5.1
-	github.com/rgonek/jira-adf-converter v0.0.0-20260220072340-f027fd3a56e4
+	github.com/rgonek/jira-adf-converter v0.0.0-20260220085723-6732775815f0
 	github.com/spf13/cobra v1.10.2
 	gopkg.in/yaml.v3 v3.0.1
 )

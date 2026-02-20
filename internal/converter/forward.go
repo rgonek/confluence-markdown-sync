@@ -35,6 +35,7 @@ func Forward(ctx context.Context, adfJSON []byte, cfg ForwardConfig, sourcePath 
 		AlignmentStyle:       adfconv.AlignPandoc,
 		ExpandStyle:          adfconv.ExpandPandoc,
 		InlineCardStyle:      adfconv.InlineCardPandoc,
+		LayoutSectionStyle:   adfconv.LayoutSectionPandoc,
 		TableMode:            adfconv.TableAutoPandoc,
 		ExtensionHandlers: map[string]adfconv.ExtensionHandler{
 			"plantumlcloud": &PlantUMLHandler{},
