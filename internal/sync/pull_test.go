@@ -124,17 +124,17 @@ func TestPull_IncrementalRewriteDeleteAndWatermark(t *testing.T) {
 		t.Fatalf("ListChanges since = %s, want %s", fake.lastChangeSince.Format(time.RFC3339), expectedSince.Format(time.RFC3339))
 	}
 
-	rootDoc, err := fs.ReadMarkdownDocument(filepath.Join(spaceDir, "Root", "Root.md"))
+	rootDoc, err := fs.ReadMarkdownDocument(filepath.Join(spaceDir, "root.md"))
 	if err != nil {
 		t.Fatalf("read Root/Root.md: %v", err)
 	}
-	if !strings.Contains(rootDoc.Body, "[Known](Child.md#section-a)") {
+	if !strings.Contains(rootDoc.Body, "[Known](child.md#section-a)") {
 		t.Fatalf("expected rewritten known link in root body, got:\n%s", rootDoc.Body)
 	}
 	if !strings.Contains(rootDoc.Body, "[Missing](https://example.atlassian.net/wiki/pages/viewpage.action?pageId=404)") {
 		t.Fatalf("expected unresolved fallback link in root body, got:\n%s", rootDoc.Body)
 	}
-	if !strings.Contains(rootDoc.Body, "![Diagram](../assets/1/att-1-diagram.png)") {
+	if !strings.Contains(rootDoc.Body, "![Diagram](assets/1/att-1-diagram.png)") {
 		t.Fatalf("expected rewritten media link in root body, got:\n%s", rootDoc.Body)
 	}
 	if rootDoc.Frontmatter.ConfluenceVersion != 5 {
@@ -153,17 +153,14 @@ func TestPull_IncrementalRewriteDeleteAndWatermark(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(spaceDir, "deleted.md")); !os.IsNotExist(err) {
 		t.Fatalf("deleted.md should be deleted, stat error=%v", err)
 	}
-	if _, err := os.Stat(filepath.Join(spaceDir, "root.md")); !os.IsNotExist(err) {
-		t.Fatalf("legacy root.md should be deleted after hierarchy rewrite, stat error=%v", err)
+	if _, err := os.Stat(filepath.Join(spaceDir, "root.md")); err != nil {
+		t.Fatalf("root markdown should exist at space root, stat error=%v", err)
 	}
-	if _, err := os.Stat(filepath.Join(spaceDir, "child.md")); !os.IsNotExist(err) {
-		t.Fatalf("legacy child.md should be deleted after hierarchy rewrite, stat error=%v", err)
+	if _, err := os.Stat(filepath.Join(spaceDir, "child.md")); err != nil {
+		t.Fatalf("child markdown should exist at space root, stat error=%v", err)
 	}
-	if _, err := os.Stat(filepath.Join(spaceDir, "Root", "Root.md")); err != nil {
-		t.Fatalf("hierarchical root markdown should exist, stat error=%v", err)
-	}
-	if _, err := os.Stat(filepath.Join(spaceDir, "Root", "Child.md")); err != nil {
-		t.Fatalf("hierarchical child markdown should exist, stat error=%v", err)
+	if _, err := os.Stat(filepath.Join(spaceDir, "Root")); !os.IsNotExist(err) {
+		t.Fatalf("nested Root directory should not exist, stat error=%v", err)
 	}
 	if _, err := os.Stat(legacyAssetPath); !os.IsNotExist(err) {
 		t.Fatalf("legacy asset should be deleted, stat error=%v", err)
@@ -186,17 +183,11 @@ func TestPull_IncrementalRewriteDeleteAndWatermark(t *testing.T) {
 	if result.State.LastPullHighWatermark != "2026-02-01T11:00:00Z" {
 		t.Fatalf("watermark = %q, want 2026-02-01T11:00:00Z", result.State.LastPullHighWatermark)
 	}
-	if got := result.State.PagePathIndex["Root/Root.md"]; got != "1" {
-		t.Fatalf("state page_path_index[Root/Root.md] = %q, want 1", got)
+	if got := result.State.PagePathIndex["root.md"]; got != "1" {
+		t.Fatalf("state page_path_index[root.md] = %q, want 1", got)
 	}
-	if got := result.State.PagePathIndex["Root/Child.md"]; got != "2" {
-		t.Fatalf("state page_path_index[Root/Child.md] = %q, want 2", got)
-	}
-	if _, exists := result.State.PagePathIndex["root.md"]; exists {
-		t.Fatalf("state page_path_index should not include legacy root.md path")
-	}
-	if _, exists := result.State.PagePathIndex["child.md"]; exists {
-		t.Fatalf("state page_path_index should not include legacy flat child.md path")
+	if got := result.State.PagePathIndex["child.md"]; got != "2" {
+		t.Fatalf("state page_path_index[child.md] = %q, want 2", got)
 	}
 	if _, exists := result.State.PagePathIndex["deleted.md"]; exists {
 		t.Fatalf("state page_path_index should not include deleted.md")
@@ -204,8 +195,8 @@ func TestPull_IncrementalRewriteDeleteAndWatermark(t *testing.T) {
 	if got := result.State.AttachmentIndex["assets/1/att-1-diagram.png"]; got != "att-1" {
 		t.Fatalf("state attachment_index mismatch for att-1: %q", got)
 	}
-	if got := result.State.AttachmentIndex["assets/2/att-2-inline.png"]; got != "att-2" {
-		t.Fatalf("state attachment_index mismatch for att-2: %q", got)
+	if _, exists := result.State.AttachmentIndex["assets/2/att-2-inline.png"]; exists {
+		t.Fatalf("state attachment_index should not include att-2 for unchanged page")
 	}
 	if _, exists := result.State.AttachmentIndex["assets/999/att-old-legacy.png"]; exists {
 		t.Fatalf("state attachment_index should not include legacy asset")
@@ -223,14 +214,14 @@ func TestPlanPagePaths_MaintainsConfluenceHierarchy(t *testing.T) {
 
 	_, relByID := PlanPagePaths(spaceDir, nil, pages, nil)
 
-	if got := relByID["1"]; got != "Root/Root.md" {
-		t.Fatalf("root path = %q, want Root/Root.md", got)
+	if got := relByID["1"]; got != "Root.md" {
+		t.Fatalf("root path = %q, want Root.md", got)
 	}
-	if got := relByID["2"]; got != "Root/Child/Child.md" {
-		t.Fatalf("child path = %q, want Root/Child/Child.md", got)
+	if got := relByID["2"]; got != "Child.md" {
+		t.Fatalf("child path = %q, want Child.md", got)
 	}
-	if got := relByID["3"]; got != "Root/Child/Grand-Child.md" {
-		t.Fatalf("grandchild path = %q, want Root/Child/Grand-Child.md", got)
+	if got := relByID["3"]; got != "Child/Grand-Child.md" {
+		t.Fatalf("grandchild path = %q, want Child/Grand-Child.md", got)
 	}
 }
 

@@ -82,12 +82,12 @@ func runPush(cmd *cobra.Command, target config.Target, onConflict string, dryRun
 	}
 	onConflict = resolvedPolicy
 
-	targetCtx, err := resolveValidateTargetContext(target)
+	initialCtx, err := resolveInitialPullContext(target)
 	if err != nil {
 		return err
 	}
-	spaceDir := targetCtx.spaceDir
-	spaceKey := filepath.Base(spaceDir)
+	spaceDir := initialCtx.spaceDir
+	spaceKey := initialCtx.spaceKey
 
 	gitClient, err := git.NewClient()
 	if err != nil {
@@ -99,7 +99,12 @@ func runPush(cmd *cobra.Command, target config.Target, onConflict string, dryRun
 		return err
 	}
 
-	changeScopePath, err := resolvePushScopePath(gitClient, spaceDir, target, targetCtx)
+	targetFiles := []string{}
+	if target.IsFile() {
+		abs, _ := filepath.Abs(target.Value)
+		targetFiles = append(targetFiles, abs)
+	}
+	changeScopePath, err := resolvePushScopePath(gitClient, spaceDir, target, validateTargetContext{spaceDir: spaceDir, files: targetFiles})
 	if err != nil {
 		return err
 	}
@@ -163,7 +168,8 @@ func runPush(cmd *cobra.Command, target config.Target, onConflict string, dryRun
 		// validate
 		var currentTarget config.Target
 		if target.IsFile() {
-			currentTarget = config.Target{Mode: config.TargetModeFile, Value: targetCtx.files[0]}
+			abs, _ := filepath.Abs(target.Value)
+			currentTarget = config.Target{Mode: config.TargetModeFile, Value: abs}
 		} else {
 			currentTarget = config.Target{Mode: config.TargetModeSpace, Value: spaceDir}
 		}
@@ -230,7 +236,11 @@ func runPush(cmd *cobra.Command, target config.Target, onConflict string, dryRun
 		return fmt.Errorf("resolve snapshot ref: %w", err)
 	}
 
-	snapshotName := fmt.Sprintf("refs/confluence-sync/snapshots/%s/%s", spaceKey, tsStr)
+	// Sanitize key for git refs (no spaces allowed)
+	// We MUST use the actual SpaceKey for refs, not sanitized space name
+	refKey := fs.SanitizePathSegment(spaceKey)
+
+	snapshotName := fmt.Sprintf("refs/confluence-sync/snapshots/%s/%s", refKey, tsStr)
 	if err := gitClient.UpdateRef(snapshotName, snapshotCommit, "create snapshot"); err != nil {
 		if stashRef != "" {
 			_ = gitClient.StashPop(stashRef)
@@ -248,7 +258,7 @@ func runPush(cmd *cobra.Command, target config.Target, onConflict string, dryRun
 	}()
 
 	// 2. Create Sync Branch
-	syncBranchName := fmt.Sprintf("sync/%s/%s", spaceKey, tsStr)
+	syncBranchName := fmt.Sprintf("sync/%s/%s", refKey, tsStr)
 	if err := gitClient.CreateBranch(syncBranchName, snapshotCommit); err != nil {
 		if stashRef != "" {
 			_ = gitClient.StashPop(stashRef)
@@ -266,7 +276,7 @@ func runPush(cmd *cobra.Command, target config.Target, onConflict string, dryRun
 	}()
 
 	// 3. Create Worktree
-	worktreeDir := filepath.Join(gitClient.RootDir, ".confluence-worktrees", fmt.Sprintf("%s-%s", spaceKey, tsStr))
+	worktreeDir := filepath.Join(gitClient.RootDir, ".confluence-worktrees", fmt.Sprintf("%s-%s", refKey, tsStr))
 	if err := gitClient.AddWorktree(worktreeDir, syncBranchName); err != nil {
 		if stashRef != "" {
 			_ = gitClient.StashPop(stashRef)
@@ -301,7 +311,8 @@ func runPush(cmd *cobra.Command, target config.Target, onConflict string, dryRun
 	var wtTarget config.Target
 
 	if target.IsFile() {
-		relFile, _ := filepath.Rel(spaceDir, targetCtx.files[0]) // Assumes single file
+		abs, _ := filepath.Abs(target.Value)
+		relFile, _ := filepath.Rel(spaceDir, abs) // Assumes single file
 		wtFile := filepath.Join(wtSpaceDir, relFile)
 		wtTarget = config.Target{Mode: config.TargetModeFile, Value: wtFile}
 	} else {
@@ -498,7 +509,7 @@ func runPush(cmd *cobra.Command, target config.Target, onConflict string, dryRun
 	}
 
 	// 10. Tag
-	tagName := fmt.Sprintf("confluence-sync/push/%s/%s", spaceKey, tsStr)
+	tagName := fmt.Sprintf("confluence-sync/push/%s/%s", refKey, tsStr)
 	tagMsg := fmt.Sprintf("Confluence push sync for %s at %s", spaceKey, tsStr)
 	if err := gitClient.Tag(tagName, tagMsg); err != nil {
 		fmt.Fprintf(out, "warning: failed to create tag: %v\n", err)
@@ -531,11 +542,12 @@ func gitPushBaselineRef(client *git.Client, spaceKey string) (string, error) {
 		return "", fmt.Errorf("space key is required")
 	}
 
+	refKey := fs.SanitizePathSegment(spaceKey)
 	tagsRaw, err := client.Run(
 		"tag",
 		"--list",
-		fmt.Sprintf("confluence-sync/pull/%s/*", spaceKey),
-		fmt.Sprintf("confluence-sync/push/%s/*", spaceKey),
+		fmt.Sprintf("confluence-sync/pull/%s/*", refKey),
+		fmt.Sprintf("confluence-sync/push/%s/*", refKey),
 	)
 	if err != nil {
 		return "", err
@@ -574,13 +586,35 @@ func gitPushBaselineRef(client *git.Client, spaceKey string) (string, error) {
 }
 
 func toSyncPushChanges(changes []git.FileStatus, repoRoot, spaceDir string) ([]syncflow.PushFileChange, error) {
+	normalizedSpaceDir, err := normalizeCommandPath(spaceDir)
+	if err != nil {
+		return nil, err
+	}
+
 	out := make([]syncflow.PushFileChange, 0, len(changes))
 	for _, change := range changes {
 		absPath := filepath.Join(repoRoot, filepath.FromSlash(change.Path))
-		relPath, err := filepath.Rel(spaceDir, absPath)
+		normalizedAbsPath, err := normalizeCommandPath(absPath)
 		if err != nil {
 			return nil, err
 		}
+
+		relPath, err := filepath.Rel(normalizedSpaceDir, normalizedAbsPath)
+		if err != nil {
+			return nil, err
+		}
+
+		relPath = filepath.Clean(relPath)
+		if relPath == ".." || strings.HasPrefix(relPath, ".."+string(filepath.Separator)) {
+			lowerSpace := strings.ToLower(filepath.ToSlash(normalizedSpaceDir))
+			lowerAbs := strings.ToLower(filepath.ToSlash(normalizedAbsPath))
+			if lowerAbs != lowerSpace && !strings.HasPrefix(lowerAbs, lowerSpace+"/") {
+				continue
+			}
+			relPath = strings.TrimPrefix(lowerAbs, lowerSpace)
+			relPath = strings.TrimPrefix(relPath, "/")
+		}
+
 		relPath = filepath.ToSlash(relPath)
 		if relPath == "." || strings.HasPrefix(relPath, "../") {
 			continue
@@ -601,6 +635,18 @@ func toSyncPushChanges(changes []git.FileStatus, repoRoot, spaceDir string) ([]s
 		out = append(out, syncflow.PushFileChange{Type: changeType, Path: relPath})
 	}
 	return out, nil
+}
+
+func normalizeCommandPath(path string) (string, error) {
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	resolvedPath, err := filepath.EvalSymlinks(absPath)
+	if err == nil && strings.TrimSpace(resolvedPath) != "" {
+		absPath = resolvedPath
+	}
+	return filepath.Clean(absPath), nil
 }
 
 func toSyncConflictPolicy(policy string) syncflow.PushConflictPolicy {

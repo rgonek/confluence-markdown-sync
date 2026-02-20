@@ -58,12 +58,12 @@ func runDiff(cmd *cobra.Command, target config.Target) error {
 	ctx := context.Background()
 	out := cmd.OutOrStdout()
 
-	diffCtx, err := resolveDiffContext(target)
+	initialCtx, err := resolveInitialPullContext(target)
 	if err != nil {
 		return err
 	}
 
-	envPath := findEnvPath(diffCtx.spaceDir)
+	envPath := findEnvPath(initialCtx.spaceDir)
 	cfg, err := config.Load(envPath)
 	if err != nil {
 		return fmt.Errorf("failed to load config: %w", err)
@@ -74,19 +74,36 @@ func runDiff(cmd *cobra.Command, target config.Target) error {
 		return fmt.Errorf("create confluence client: %w", err)
 	}
 
+	space, err := remote.GetSpace(ctx, initialCtx.spaceKey)
+	if err != nil {
+		return fmt.Errorf("resolve space %q: %w", initialCtx.spaceKey, err)
+	}
+
+	spaceDir := initialCtx.spaceDir
+	if !initialCtx.fixedDir {
+		spaceDir = filepath.Join(filepath.Dir(initialCtx.spaceDir), fs.SanitizeSpaceDirName(space.Name, space.Key))
+	}
+
+	diffCtx := diffContext{
+		spaceKey:     space.Key,
+		spaceDir:     spaceDir,
+		targetPageID: initialCtx.targetPageID,
+	}
+	if target.IsFile() {
+		absPath, err := filepath.Abs(target.Value)
+		if err == nil {
+			diffCtx.targetFile = absPath
+		}
+	}
+
 	state, err := fs.LoadState(diffCtx.spaceDir)
 	if err != nil {
 		return fmt.Errorf("load state: %w", err)
 	}
 
-	space, err := remote.GetSpace(ctx, diffCtx.spaceKey)
-	if err != nil {
-		return fmt.Errorf("resolve space %q: %w", diffCtx.spaceKey, err)
-	}
-
 	pages, err := listAllDiffPages(ctx, remote, confluence.PageListOptions{
 		SpaceID:  space.ID,
-		SpaceKey: diffCtx.spaceKey,
+		SpaceKey: space.Key,
 		Status:   "current",
 		Limit:    100,
 	})
@@ -128,29 +145,6 @@ func runDiff(cmd *cobra.Command, target config.Target) error {
 		attachmentPathByID,
 		tmpRoot,
 	)
-}
-
-func resolveDiffContext(target config.Target) (diffContext, error) {
-	pullCtx, err := resolvePullContext(target)
-	if err != nil {
-		return diffContext{}, err
-	}
-
-	ctx := diffContext{
-		spaceKey:     pullCtx.spaceKey,
-		spaceDir:     pullCtx.spaceDir,
-		targetPageID: pullCtx.targetPageID,
-	}
-
-	if target.IsFile() {
-		absPath, err := filepath.Abs(target.Value)
-		if err != nil {
-			return diffContext{}, err
-		}
-		ctx.targetFile = absPath
-	}
-
-	return ctx, nil
 }
 
 func runDiffFileMode(

@@ -640,13 +640,12 @@ func plannedPageRelPath(page confluence.Page, pageByID map[string]confluence.Pag
 	filename := fs.SanitizeMarkdownFilename(title)
 
 	ancestorSegments, ok := ancestorPathSegments(strings.TrimSpace(page.ParentPageID), strings.TrimSpace(page.ParentType), pageByID, folderByID)
-	if !ok || len(ancestorSegments) == 0 {
-		if hasChildren {
-			return normalizeRelPath(filepath.Join(fs.SanitizePathSegment(title), filename))
-		}
+	if !ok {
+		// Fallback to flat if hierarchy is broken
 		return normalizeRelPath(filename)
 	}
-	if hasChildren {
+
+	if len(ancestorSegments) > 0 && hasChildren {
 		ancestorSegments = append(ancestorSegments, fs.SanitizePathSegment(title))
 	}
 	parts := append(ancestorSegments, filename)
@@ -671,39 +670,49 @@ func ancestorPathSegments(parentID string, parentType string, pageByID map[strin
 		}
 		visited[currentID] = struct{}{}
 
+		var title string
+		var nextID string
+		var nextType string
+
 		if currentType == "folder" {
 			folder, ok := folderByID[currentID]
 			if !ok {
 				return nil, false
 			}
-			title := strings.TrimSpace(folder.Title)
+			title = strings.TrimSpace(folder.Title)
 			if title == "" {
 				title = "folder-" + folder.ID
 			}
-			segmentsReversed = append(segmentsReversed, fs.SanitizePathSegment(title))
-			currentID = strings.TrimSpace(folder.ParentID)
-			currentType = strings.ToLower(strings.TrimSpace(folder.ParentType))
-			if currentType == "" {
-				currentType = "folder"
+			nextID = strings.TrimSpace(folder.ParentID)
+			nextType = strings.ToLower(strings.TrimSpace(folder.ParentType))
+			if nextType == "" {
+				nextType = "folder"
 			}
-			continue
+		} else {
+			parentPage, ok := pageByID[currentID]
+			if !ok {
+				return nil, false
+			}
+			title = strings.TrimSpace(parentPage.Title)
+			if title == "" {
+				title = "page-" + parentPage.ID
+			}
+			nextID = strings.TrimSpace(parentPage.ParentPageID)
+			nextType = strings.ToLower(strings.TrimSpace(parentPage.ParentType))
+			if nextType == "" {
+				nextType = "page"
+			}
 		}
 
-		parentPage, ok := pageByID[currentID]
-		if !ok {
-			return nil, false
+		// Collapse only top-level page ancestors (space home level) to avoid
+		// creating an extra directory that duplicates the space directory name.
+		// Keep folder ancestors intact, including top-level folders.
+		if currentType == "folder" || nextID != "" {
+			segmentsReversed = append(segmentsReversed, fs.SanitizePathSegment(title))
 		}
 
-		title := strings.TrimSpace(parentPage.Title)
-		if title == "" {
-			title = "page-" + parentPage.ID
-		}
-		segmentsReversed = append(segmentsReversed, fs.SanitizePathSegment(title))
-		currentID = strings.TrimSpace(parentPage.ParentPageID)
-		currentType = strings.ToLower(strings.TrimSpace(parentPage.ParentType))
-		if currentType == "" {
-			currentType = "page"
-		}
+		currentID = nextID
+		currentType = nextType
 	}
 
 	segments := make([]string, 0, len(segmentsReversed))
