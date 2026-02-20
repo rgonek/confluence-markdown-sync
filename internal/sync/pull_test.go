@@ -104,6 +104,7 @@ func TestPull_IncrementalRewriteDeleteAndWatermark(t *testing.T) {
 		},
 		attachments: map[string][]byte{
 			"att-1": []byte("diagram-bytes"),
+			"att-2": []byte("inline-bytes"),
 		},
 	}
 
@@ -201,7 +202,10 @@ func TestPull_IncrementalRewriteDeleteAndWatermark(t *testing.T) {
 		t.Fatalf("state page_path_index should not include deleted.md")
 	}
 	if got := result.State.AttachmentIndex["assets/1/att-1-diagram.png"]; got != "att-1" {
-		t.Fatalf("state attachment_index mismatch: %q", got)
+		t.Fatalf("state attachment_index mismatch for att-1: %q", got)
+	}
+	if got := result.State.AttachmentIndex["assets/2/att-2-inline.png"]; got != "att-2" {
+		t.Fatalf("state attachment_index mismatch for att-2: %q", got)
 	}
 	if _, exists := result.State.AttachmentIndex["assets/999/att-old-legacy.png"]; exists {
 		t.Fatalf("state attachment_index should not include legacy asset")
@@ -298,7 +302,9 @@ func TestPull_FolderListFailureFallsBackToPageHierarchy(t *testing.T) {
 				BodyADF:      rawJSON(t, sampleChildADF()),
 			},
 		},
-		attachments: map[string][]byte{},
+		attachments: map[string][]byte{
+			"att-2": []byte("inline-bytes"),
+		},
 	}
 
 	result, err := Pull(context.Background(), fake, PullOptions{
@@ -575,6 +581,13 @@ func sampleChildADF() map[string]any {
 					map[string]any{
 						"type": "text",
 						"text": "Child body",
+					},
+					map[string]any{
+						"type": "mediaInline",
+						"attrs": map[string]any{
+							"id":       "att-2",
+							"fileName": "inline.png",
+						},
 					},
 				},
 			},

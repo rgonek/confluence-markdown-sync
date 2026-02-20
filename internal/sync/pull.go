@@ -820,7 +820,7 @@ func collectAttachmentRefs(adfJSON []byte, defaultPageID string) map[string]atta
 	out := map[string]attachmentRef{}
 	walkADFNode(raw, func(node map[string]any) {
 		nodeType, _ := node["type"].(string)
-		if nodeType != "media" {
+		if nodeType != "media" && nodeType != "mediaInline" && nodeType != "image" && nodeType != "file" {
 			return
 		}
 		attrs, _ := node["attrs"].(map[string]any)
@@ -832,6 +832,8 @@ func collectAttachmentRefs(adfJSON []byte, defaultPageID string) map[string]atta
 			"attachmentId",
 			"attachmentID",
 			"mediaId",
+			"fileId",
+			"fileID",
 			"id",
 		)
 		if attachmentID == "" {
