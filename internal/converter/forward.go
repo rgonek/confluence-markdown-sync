@@ -24,9 +24,22 @@ func Forward(ctx context.Context, adfJSON []byte, cfg ForwardConfig, sourcePath 
 	// Create converter with best-effort resolution.
 	// We want to recover as much content as possible even if some references are broken.
 	c, err := adfconv.New(adfconv.Config{
-		ResolutionMode: adfconv.ResolutionBestEffort,
-		LinkHook:       cfg.LinkHook,
-		MediaHook:      cfg.MediaHook,
+		ResolutionMode:       adfconv.ResolutionBestEffort,
+		LinkHook:             cfg.LinkHook,
+		MediaHook:            cfg.MediaHook,
+		UnderlineStyle:       adfconv.UnderlinePandoc,
+		SubSupStyle:          adfconv.SubSupPandoc,
+		TextColorStyle:       adfconv.ColorPandoc,
+		BackgroundColorStyle: adfconv.ColorPandoc,
+		MentionStyle:         adfconv.MentionPandoc,
+		AlignmentStyle:       adfconv.AlignPandoc,
+		ExpandStyle:          adfconv.ExpandPandoc,
+		InlineCardStyle:      adfconv.InlineCardPandoc,
+		LayoutSectionStyle:   adfconv.LayoutSectionPandoc,
+		TableMode:            adfconv.TableAutoPandoc,
+		ExtensionHandlers: map[string]adfconv.ExtensionHandler{
+			"plantumlcloud": &PlantUMLHandler{},
+		},
 	})
 	if err != nil {
 		return ForwardResult{}, err
