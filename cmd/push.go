@@ -32,6 +32,7 @@ var newPushRemote = func(cfg *config.Config) (syncflow.PushRemote, error) {
 
 func newPushCmd() *cobra.Command {
 	var onConflict string
+	var dryRun bool
 
 	cmd := &cobra.Command{
 		Use:   "push [TARGET]",
@@ -49,9 +50,10 @@ It uses an isolated worktree and a temporary branch to ensure safety.`,
 			if len(args) > 0 {
 				raw = args[0]
 			}
-			return runPush(cmd, config.ParseTarget(raw), onConflict)
+			return runPush(cmd, config.ParseTarget(raw), onConflict, dryRun)
 		},
 	}
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Simulate the push without modifying Confluence or local Git state")
 	cmd.Flags().BoolVarP(&flagYes, "yes", "y", false, "Auto-approve safety confirmations")
 	cmd.Flags().BoolVar(&flagNonInteractive, "non-interactive", false, "Disable prompts; fail fast when a decision is required")
 	cmd.Flags().StringVar(&onConflict, "on-conflict", "", "Non-interactive conflict policy: pull-merge|force|cancel")
@@ -70,7 +72,7 @@ func validateOnConflict(v string) error {
 	}
 }
 
-func runPush(cmd *cobra.Command, target config.Target, onConflict string) (runErr error) {
+func runPush(cmd *cobra.Command, target config.Target, onConflict string, dryRun bool) (runErr error) {
 	ctx := context.Background()
 	out := cmd.OutOrStdout()
 
@@ -104,6 +106,108 @@ func runPush(cmd *cobra.Command, target config.Target, onConflict string) (runEr
 
 	ts := nowUTC()
 	tsStr := ts.Format("20060102T150405Z")
+
+	if dryRun {
+		fmt.Fprintln(out, "[DRY-RUN] Simulating push (no git or confluence state will be modified)")
+
+		baselineRef, err := gitPushBaselineRef(gitClient, spaceKey)
+		if err != nil {
+			return err
+		}
+
+		changes, err := gitClient.DiffNameStatus(baselineRef, "", spaceScopePath)
+		if err != nil {
+			return fmt.Errorf("diff failed: %w", err)
+		}
+
+		untracked, err := gitClient.Run("ls-files", "--others", "--exclude-standard", "--", spaceScopePath)
+		if err == nil {
+			for _, line := range strings.Split(strings.ReplaceAll(untracked, "\r\n", "\n"), "\n") {
+				line = strings.TrimSpace(line)
+				if line != "" {
+					changes = append(changes, git.FileStatus{Code: "A", Path: filepath.ToSlash(line)})
+				}
+			}
+		}
+
+		syncChanges, err := toSyncPushChanges(changes, gitClient.RootDir, spaceDir)
+		if err != nil {
+			return err
+		}
+
+		if target.IsFile() {
+			changes, err = gitClient.DiffNameStatus(baselineRef, "", changeScopePath)
+			if err != nil {
+				return err
+			}
+			untracked, err = gitClient.Run("ls-files", "--others", "--exclude-standard", "--", changeScopePath)
+			if err == nil {
+				for _, line := range strings.Split(strings.ReplaceAll(untracked, "\r\n", "\n"), "\n") {
+					line = strings.TrimSpace(line)
+					if line != "" {
+						changes = append(changes, git.FileStatus{Code: "A", Path: filepath.ToSlash(line)})
+					}
+				}
+			}
+			syncChanges, err = toSyncPushChanges(changes, gitClient.RootDir, spaceDir)
+			if err != nil {
+				return err
+			}
+		}
+
+		if len(syncChanges) == 0 {
+			fmt.Fprintln(out, "push completed with no in-scope markdown changes (no-op)")
+			return nil
+		}
+
+		// validate
+		var currentTarget config.Target
+		if target.IsFile() {
+			currentTarget = config.Target{Mode: config.TargetModeFile, Value: targetCtx.files[0]}
+		} else {
+			currentTarget = config.Target{Mode: config.TargetModeSpace, Value: spaceDir}
+		}
+		if err := runValidateTarget(out, currentTarget); err != nil {
+			return fmt.Errorf("pre-push validate failed: %w", err)
+		}
+
+		envPath := findEnvPath(spaceDir)
+		cfg, err := config.Load(envPath)
+		if err != nil {
+			return fmt.Errorf("failed to load config: %w", err)
+		}
+
+		realRemote, err := newPushRemote(cfg)
+		if err != nil {
+			return fmt.Errorf("create confluence client: %w", err)
+		}
+
+		remote := &dryRunPushRemote{inner: realRemote, out: out, domain: cfg.Domain}
+
+		state, err := fs.LoadState(spaceDir)
+		if err != nil {
+			return fmt.Errorf("load state: %w", err)
+		}
+
+		result, err := syncflow.Push(ctx, remote, syncflow.PushOptions{
+			SpaceKey:       spaceKey,
+			SpaceDir:       spaceDir,
+			Domain:         cfg.Domain,
+			State:          state,
+			Changes:        syncChanges,
+			ConflictPolicy: toSyncConflictPolicy(onConflict),
+		})
+		if err != nil {
+			var conflictErr *syncflow.PushConflictError
+			if errors.As(err, &conflictErr) {
+				return formatPushConflictError(conflictErr)
+			}
+			return err
+		}
+
+		fmt.Fprintf(out, "\n[DRY-RUN] push completed: %d page change(s) would be synced\n", len(result.Commits))
+		return nil
+	}
 
 	// 1. Capture Snapshot
 	stashRef, err := gitClient.StashScopeIfDirty(spaceScopePath, spaceKey, ts)

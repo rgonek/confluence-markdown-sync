@@ -50,7 +50,7 @@ func TestRunPush_UnresolvedValidationStopsBeforeRemoteWrites(t *testing.T) {
 
 	cmd := &cobra.Command{}
 	cmd.SetOut(&bytes.Buffer{})
-	err := runPush(cmd, config.Target{Mode: config.TargetModeSpace, Value: "ENG"}, OnConflictCancel)
+	err := runPush(cmd, config.Target{Mode: config.TargetModeSpace, Value: "ENG"}, OnConflictCancel, false)
 	if err == nil {
 		t.Fatal("runPush() expected error for unresolved link")
 	}
@@ -125,7 +125,7 @@ func TestRunPush_ConflictPolicies(t *testing.T) {
 
 			cmd := &cobra.Command{}
 			cmd.SetOut(&bytes.Buffer{})
-			err := runPush(cmd, config.Target{Mode: config.TargetModeSpace, Value: "ENG"}, tc.policy)
+			err := runPush(cmd, config.Target{Mode: config.TargetModeSpace, Value: "ENG"}, tc.policy, false)
 
 			if tc.wantErrContains != "" {
 				if err == nil {
@@ -186,7 +186,7 @@ func TestRunPush_WritesStructuredCommitTrailers(t *testing.T) {
 
 	cmd := &cobra.Command{}
 	cmd.SetOut(&bytes.Buffer{})
-	if err := runPush(cmd, config.Target{Mode: config.TargetModeSpace, Value: "ENG"}, OnConflictCancel); err != nil {
+	if err := runPush(cmd, config.Target{Mode: config.TargetModeSpace, Value: "ENG"}, OnConflictCancel, false); err != nil {
 		t.Fatalf("runPush() unexpected error: %v", err)
 	}
 
@@ -244,7 +244,7 @@ func TestRunPush_NonInteractiveRequiresOnConflict(t *testing.T) {
 
 	cmd := &cobra.Command{}
 	cmd.SetOut(&bytes.Buffer{})
-	err := runPush(cmd, config.Target{Mode: config.TargetModeSpace, Value: "ENG"}, "")
+	err := runPush(cmd, config.Target{Mode: config.TargetModeSpace, Value: "ENG"}, "", false)
 	if err == nil {
 		t.Fatal("runPush() expected non-interactive on-conflict error")
 	}
@@ -278,7 +278,7 @@ func TestRunPush_NonInteractiveRequiresYesForDeleteConfirmation(t *testing.T) {
 
 	cmd := &cobra.Command{}
 	cmd.SetOut(&bytes.Buffer{})
-	err := runPush(cmd, config.Target{Mode: config.TargetModeSpace, Value: "ENG"}, OnConflictCancel)
+	err := runPush(cmd, config.Target{Mode: config.TargetModeSpace, Value: "ENG"}, OnConflictCancel, false)
 	if err == nil {
 		t.Fatal("runPush() expected delete confirmation error")
 	}
@@ -310,7 +310,7 @@ func TestRunPush_YesBypassesDeleteConfirmation(t *testing.T) {
 	cmd := &cobra.Command{}
 	cmd.SetOut(&bytes.Buffer{})
 
-	if err := runPush(cmd, config.Target{Mode: config.TargetModeSpace, Value: "ENG"}, OnConflictCancel); err != nil {
+	if err := runPush(cmd, config.Target{Mode: config.TargetModeSpace, Value: "ENG"}, OnConflictCancel, false); err != nil {
 		t.Fatalf("runPush() error: %v", err)
 	}
 	if len(fake.archiveCalls) != 1 {
@@ -349,7 +349,7 @@ func TestRunPush_WorksWithoutGitRemoteConfigured(t *testing.T) {
 
 	cmd := &cobra.Command{}
 	cmd.SetOut(&bytes.Buffer{})
-	if err := runPush(cmd, config.Target{Mode: config.TargetModeSpace, Value: "ENG"}, OnConflictCancel); err != nil {
+	if err := runPush(cmd, config.Target{Mode: config.TargetModeSpace, Value: "ENG"}, OnConflictCancel, false); err != nil {
 		t.Fatalf("runPush() error without git remote: %v", err)
 	}
 }
@@ -387,7 +387,7 @@ func TestRunPush_FailureRetainsSnapshotAndSyncBranch(t *testing.T) {
 	out := &bytes.Buffer{}
 	cmd.SetOut(out)
 
-	err := runPush(cmd, config.Target{Mode: config.TargetModeSpace, Value: "ENG"}, OnConflictCancel)
+	err := runPush(cmd, config.Target{Mode: config.TargetModeSpace, Value: "ENG"}, OnConflictCancel, false)
 	if err == nil {
 		t.Fatal("runPush() expected error")
 	}
@@ -470,7 +470,7 @@ func TestRunPush_PreservesOutOfScopeChanges(t *testing.T) {
 	out := &bytes.Buffer{}
 	cmd.SetOut(out)
 
-	err := runPush(cmd, config.Target{Mode: config.TargetModeSpace, Value: "ENG"}, OnConflictCancel)
+	err := runPush(cmd, config.Target{Mode: config.TargetModeSpace, Value: "ENG"}, OnConflictCancel, false)
 	t.Logf("runPush stdout:\n%s", out.String())
 	if err != nil {
 		t.Fatalf("runPush() failed: %v", err)

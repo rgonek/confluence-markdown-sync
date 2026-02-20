@@ -94,4 +94,3 @@ func validateWatermark(v string) error {
 	}
 	return nil
 }
-

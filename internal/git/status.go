@@ -23,9 +23,18 @@ func (c *Client) StatusPorcelain(scopePath string) (string, error) {
 }
 
 // DiffNameStatus returns the status of changed files between two commits.
+// If 'to' is empty, it returns the status of changed files between 'from' and the working tree.
 func (c *Client) DiffNameStatus(from, to, scopePath string) ([]FileStatus, error) {
-	rangeExpr := fmt.Sprintf("%s..%s", from, to)
-	out, err := c.Run("diff", "--name-status", rangeExpr, "--", scopePath)
+	var out string
+	var err error
+
+	if to == "" {
+		out, err = c.Run("diff", "--name-status", from, "--", scopePath)
+	} else {
+		rangeExpr := fmt.Sprintf("%s..%s", from, to)
+		out, err = c.Run("diff", "--name-status", rangeExpr, "--", scopePath)
+	}
+
 	if err != nil {
 		return nil, err
 	}

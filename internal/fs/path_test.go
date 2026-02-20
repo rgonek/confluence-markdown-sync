@@ -32,4 +32,3 @@ func TestSanitizeMarkdownFilename(t *testing.T) {
 		t.Fatalf("SanitizeMarkdownFilename() should keep .md suffix, got %q", got)
 	}
 }
-
