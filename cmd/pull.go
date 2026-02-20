@@ -66,20 +66,14 @@ func runPull(cmd *cobra.Command, target config.Target) (runErr error) {
 	ctx := context.Background()
 	out := cmd.OutOrStdout()
 
-	pullCtx, err := resolvePullContext(target)
+	// 1. Initial resolution of key/dir
+	initialCtx, err := resolveInitialPullContext(target)
 	if err != nil {
 		return err
 	}
-	if flagPullForce && strings.TrimSpace(pullCtx.targetPageID) != "" {
-		return errors.New("--force is only supported for space targets")
-	}
-	scopeDirExisted := dirExists(pullCtx.spaceDir)
 
-	if err := os.MkdirAll(pullCtx.spaceDir, 0o755); err != nil {
-		return fmt.Errorf("prepare space directory: %w", err)
-	}
-
-	envPath := findEnvPath(pullCtx.spaceDir)
+	// 2. Load config to talk to Confluence
+	envPath := findEnvPath(initialCtx.spaceDir)
 	cfg, err := config.Load(envPath)
 	if err != nil {
 		return fmt.Errorf("failed to load config: %w", err)
@@ -90,12 +84,40 @@ func runPull(cmd *cobra.Command, target config.Target) (runErr error) {
 		return fmt.Errorf("create confluence client: %w", err)
 	}
 
+	// 3. Resolve actual space metadata and final directory
+	space, err := remote.GetSpace(ctx, initialCtx.spaceKey)
+	if err != nil {
+		return fmt.Errorf("resolve space %q: %w", initialCtx.spaceKey, err)
+	}
+
+	// Finalize space directory based on Space Name if we are creating it,
+	// or if we found it via state file.
+	spaceDir := initialCtx.spaceDir
+	if !initialCtx.fixedDir {
+		// If not already in a tracked directory, use sanitized "Name (KEY)"
+		spaceDir = filepath.Join(filepath.Dir(initialCtx.spaceDir), fs.SanitizeSpaceDirName(space.Name, space.Key))
+	}
+	pullCtx := pullContext{
+		spaceKey:     space.Key,
+		spaceDir:     spaceDir,
+		targetPageID: initialCtx.targetPageID,
+	}
+
+	if flagPullForce && strings.TrimSpace(pullCtx.targetPageID) != "" {
+		return errors.New("--force is only supported for space targets")
+	}
+	scopeDirExisted := dirExists(pullCtx.spaceDir)
+
+	if err := os.MkdirAll(pullCtx.spaceDir, 0o755); err != nil {
+		return fmt.Errorf("prepare space directory: %w", err)
+	}
+
 	state, err := fs.LoadState(pullCtx.spaceDir)
 	if err != nil {
 		return fmt.Errorf("load state: %w", err)
 	}
 
-	impact, err := estimatePullImpact(ctx, remote, pullCtx.spaceKey, pullCtx.targetPageID, state, syncflow.DefaultPullOverlapWindow, flagPullForce)
+	impact, err := estimatePullImpactWithSpace(ctx, remote, space, pullCtx.targetPageID, state, syncflow.DefaultPullOverlapWindow, flagPullForce)
 	if err != nil {
 		return err
 	}
@@ -178,7 +200,9 @@ func runPull(cmd *cobra.Command, target config.Target) (runErr error) {
 	}
 
 	ts := pullStartedAt.UTC().Format("20060102T150405Z")
-	tagName := fmt.Sprintf("confluence-sync/pull/%s/%s", pullCtx.spaceKey, ts)
+	// Use actual SpaceKey for tags, sanitized for safety
+	refKey := fs.SanitizePathSegment(pullCtx.spaceKey)
+	tagName := fmt.Sprintf("confluence-sync/pull/%s/%s", refKey, ts)
 	tagMsg := fmt.Sprintf("Confluence pull sync for %s at %s", pullCtx.spaceKey, ts)
 	if _, err := runGit(repoRoot, "tag", "-a", tagName, "-m", tagMsg); err != nil {
 		return err
@@ -188,70 +212,119 @@ func runPull(cmd *cobra.Command, target config.Target) (runErr error) {
 	return nil
 }
 
-func resolvePullContext(target config.Target) (pullContext, error) {
+type initialPullContext struct {
+	spaceKey     string
+	spaceDir     string
+	targetPageID string
+	fixedDir     bool
+}
+
+func resolveInitialPullContext(target config.Target) (initialPullContext, error) {
 	cwd, err := os.Getwd()
 	if err != nil {
-		return pullContext{}, err
+		return initialPullContext{}, err
 	}
 
 	if target.IsFile() {
 		absPath, err := filepath.Abs(target.Value)
 		if err != nil {
-			return pullContext{}, err
+			return initialPullContext{}, err
 		}
 
 		doc, err := fs.ReadMarkdownDocument(absPath)
 		if err != nil {
-			return pullContext{}, fmt.Errorf("read target file %s: %w", target.Value, err)
+			return initialPullContext{}, fmt.Errorf("read target file %s: %w", target.Value, err)
 		}
 
 		spaceKey := strings.TrimSpace(doc.Frontmatter.ConfluenceSpaceKey)
 		if spaceKey == "" {
-			return pullContext{}, fmt.Errorf("target file %s missing confluence_space_key", target.Value)
+			return initialPullContext{}, fmt.Errorf("target file %s missing confluence_space_key", target.Value)
 		}
 		pageID := strings.TrimSpace(doc.Frontmatter.ConfluencePageID)
 		if pageID == "" {
-			return pullContext{}, fmt.Errorf("target file %s missing confluence_page_id", target.Value)
+			return initialPullContext{}, fmt.Errorf("target file %s missing confluence_page_id", target.Value)
 		}
 
-		return pullContext{
+		return initialPullContext{
 			spaceKey:     spaceKey,
 			spaceDir:     findSpaceDirFromFile(absPath, spaceKey),
 			targetPageID: pageID,
+			fixedDir:     true,
 		}, nil
 	}
 
 	if target.Value == "" {
+		// If we are in a tracked directory, use it.
+		if _, err := os.Stat(filepath.Join(cwd, fs.StateFileName)); err == nil {
+			state, err := fs.LoadState(cwd)
+			if err == nil && len(state.PagePathIndex) > 0 {
+				// We need space key. Usually we can find it in one of the files frontmatter
+				// or we assume current dir name might be the key if not found.
+				// But best is to check if we can find ANY .md file and its space key.
+				for relPath := range state.PagePathIndex {
+					doc, err := fs.ReadMarkdownDocument(filepath.Join(cwd, filepath.FromSlash(relPath)))
+					if err == nil && doc.Frontmatter.ConfluenceSpaceKey != "" {
+						return initialPullContext{
+							spaceKey: doc.Frontmatter.ConfluenceSpaceKey,
+							spaceDir: cwd,
+							fixedDir: true,
+						}, nil
+					}
+				}
+			}
+		}
+
 		spaceDir, err := filepath.Abs(cwd)
 		if err != nil {
-			return pullContext{}, err
+			return initialPullContext{}, err
 		}
-		return pullContext{
+		return initialPullContext{
 			spaceKey: filepath.Base(spaceDir),
 			spaceDir: spaceDir,
+			fixedDir: false,
 		}, nil
 	}
 
 	if info, statErr := os.Stat(target.Value); statErr == nil && info.IsDir() {
 		spaceDir, err := filepath.Abs(target.Value)
 		if err != nil {
-			return pullContext{}, err
+			return initialPullContext{}, err
 		}
-		return pullContext{
+
+		// Check if it is a tracked directory
+		if _, err := os.Stat(filepath.Join(spaceDir, fs.StateFileName)); err == nil {
+			state, err := fs.LoadState(spaceDir)
+			if err == nil {
+				for relPath := range state.PagePathIndex {
+					doc, err := fs.ReadMarkdownDocument(filepath.Join(spaceDir, filepath.FromSlash(relPath)))
+					if err == nil && doc.Frontmatter.ConfluenceSpaceKey != "" {
+						return initialPullContext{
+							spaceKey: doc.Frontmatter.ConfluenceSpaceKey,
+							spaceDir: spaceDir,
+							fixedDir: true,
+						}, nil
+					}
+				}
+			}
+		}
+
+		return initialPullContext{
 			spaceKey: filepath.Base(spaceDir),
 			spaceDir: spaceDir,
+			fixedDir: true, // User explicitly provided a directory
 		}, nil
 	}
 
 	spaceDir := filepath.Join(cwd, target.Value)
 	spaceDir, err = filepath.Abs(spaceDir)
 	if err != nil {
-		return pullContext{}, err
+		return initialPullContext{}, err
 	}
 
-	return pullContext{
+	return initialPullContext{
 		spaceKey: target.Value,
 		spaceDir: spaceDir,
+		fixedDir: false,
 	}, nil
 }
 
@@ -307,13 +380,28 @@ func gitScopePath(repoRoot, scopeDir string) (string, error) {
 		return "", err
 	}
 
+	// Case-insensitive comparison for Windows
+	isOutside := false
 	rel, err := filepath.Rel(normalizedRepoRoot, normalizedScopeDir)
 	if err != nil {
-		return "", err
+		isOutside = true
+	} else {
+		rel = filepath.Clean(rel)
+		if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			isOutside = true
+		}
 	}
-	rel = filepath.Clean(rel)
-	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return "", fmt.Errorf("space directory %s is outside repository root %s", scopeDir, repoRoot)
+
+	if isOutside {
+		// Final check: if they are actually the same path or one is prefix of other (case-insensitive)
+		lowerRoot := strings.ToLower(filepath.ToSlash(normalizedRepoRoot))
+		lowerScope := strings.ToLower(filepath.ToSlash(normalizedScopeDir))
+		if !strings.HasPrefix(lowerScope, lowerRoot) {
+			return "", fmt.Errorf("space directory %s is outside repository root %s", scopeDir, repoRoot)
+		}
+		// If it IS a subpath but filepath.Rel failed or returned .., recalculate rel
+		rel = strings.TrimPrefix(lowerScope, lowerRoot)
+		rel = strings.TrimPrefix(rel, "/")
 	}
 	rel = filepath.ToSlash(rel)
 	if rel == "." {
@@ -331,7 +419,16 @@ func normalizeRepoPath(p string) (string, error) {
 	if err == nil && strings.TrimSpace(resolvedPath) != "" {
 		absPath = resolvedPath
 	}
+
+	// On Windows, handle case sensitivity and short paths for comparison
+	if strings.TrimSpace(absPath) != "" {
+		if longPath, err := filepath.Abs(absPath); err == nil {
+			absPath = longPath
+		}
+	}
+
 	absPath = filepath.Clean(absPath)
+
 	return absPath, nil
 }
 
@@ -392,23 +489,18 @@ type pullImpact struct {
 	deletedMarkdown int
 }
 
-func estimatePullImpact(
+func estimatePullImpactWithSpace(
 	ctx context.Context,
 	remote syncflow.PullRemote,
-	spaceKey string,
+	space confluence.Space,
 	targetPageID string,
 	state fs.SpaceState,
 	overlapWindow time.Duration,
 	forceFull bool,
 ) (pullImpact, error) {
-	space, err := remote.GetSpace(ctx, spaceKey)
-	if err != nil {
-		return pullImpact{}, fmt.Errorf("resolve space %q: %w", spaceKey, err)
-	}
-
 	pages, err := listAllPullPagesForEstimate(ctx, remote, confluence.PageListOptions{
 		SpaceID:  space.ID,
-		SpaceKey: spaceKey,
+		SpaceKey: space.Key,
 		Status:   "current",
 		Limit:    100,
 	})
@@ -456,7 +548,7 @@ func estimatePullImpact(
 
 		since := watermark.Add(-overlapWindow)
 		changes, err := listAllPullChangesForEstimate(ctx, remote, confluence.ChangeListOptions{
-			SpaceKey: spaceKey,
+			SpaceKey: space.Key,
 			Since:    since,
 			Limit:    100,
 		})

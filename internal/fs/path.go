@@ -1,6 +1,7 @@
 package fs
 
 import (
+	"fmt"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -9,6 +10,7 @@ import (
 var (
 	invalidPathChars = regexp.MustCompile(`[<>:"/\\|?*\x00-\x1f]`)
 	separatorRun     = regexp.MustCompile(`[\s-]+`)
+	spaceRun         = regexp.MustCompile(`\s+`)
 )
 
 // SanitizePathSegment converts arbitrary text into a safe single path segment.
@@ -44,6 +46,35 @@ func JoinSanitizedPath(segments ...string) string {
 		clean = append(clean, SanitizePathSegment(segment))
 	}
 	return filepath.Join(clean...)
+}
+
+// SanitizeSpaceDirName produces a filesystem-safe directory name for a Confluence space.
+func SanitizeSpaceDirName(name, key string) string {
+	name = sanitizeSpaceDirComponent(name)
+	key = sanitizeSpaceDirComponent(key)
+
+	if name == "" {
+		return SanitizePathSegment(key)
+	}
+	if key == "" {
+		return name
+	}
+
+	return strings.TrimSpace(fmt.Sprintf("%s (%s)", name, key))
+}
+
+func sanitizeSpaceDirComponent(v string) string {
+	v = strings.TrimSpace(v)
+	v = invalidPathChars.ReplaceAllString(v, "-")
+	v = strings.Trim(v, ". ")
+	v = spaceRun.ReplaceAllString(v, " ")
+	if v == "" {
+		return ""
+	}
+	if isWindowsReservedName(v) {
+		return v + "-item"
+	}
+	return v
 }
 
 func isWindowsReservedName(v string) bool {

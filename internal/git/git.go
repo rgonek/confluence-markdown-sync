@@ -21,22 +21,44 @@ func NewClient() (*Client, error) {
 	if err != nil {
 		return nil, fmt.Errorf("find git root: %w", err)
 	}
-	return &Client{RootDir: strings.TrimSpace(root)}, nil
+	return &Client{RootDir: evalFinalPath(strings.TrimSpace(root))}, nil
 }
 
 // ScopePath resolves a path relative to the repository root.
 // It returns an error if the path is outside the repository.
 func (c *Client) ScopePath(absPath string) (string, error) {
-	rel, err := filepath.Rel(c.RootDir, absPath)
+	root := evalFinalPath(c.RootDir)
+	target := evalFinalPath(absPath)
+
+	rel, err := filepath.Rel(root, target)
+	isOutside := false
 	if err != nil {
-		return "", err
+		isOutside = true
+	} else {
+		rel = filepath.Clean(rel)
+		if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			isOutside = true
+		}
 	}
-	rel = filepath.Clean(rel)
-	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return "", fmt.Errorf("path %s is outside repository root %s", absPath, c.RootDir)
+
+	if isOutside {
+		// Case-insensitive fallback for Windows and path normalization
+		lowerRoot := strings.ToLower(filepath.ToSlash(root))
+		lowerAbs := strings.ToLower(filepath.ToSlash(target))
+		if !strings.HasPrefix(lowerAbs, lowerRoot) {
+			// Final attempt: check if it is literally the same path after lowercasing
+			if lowerRoot != lowerAbs {
+				return "", fmt.Errorf("path %s is outside repository root %s", absPath, c.RootDir)
+			}
+			rel = "."
+		} else {
+			rel = strings.TrimPrefix(lowerAbs, lowerRoot)
+			rel = strings.TrimPrefix(rel, "/")
+		}
 	}
+
 	rel = filepath.ToSlash(rel)
-	if rel == "." {
+	if rel == "" || rel == "." {
 		return ".", nil
 	}
 	return rel, nil
@@ -48,6 +70,18 @@ func (c *Client) Run(args ...string) (string, error) {
 }
 
 // RunGit executes a git command in a specific directory.
+func evalFinalPath(p string) string {
+	abs, err := filepath.Abs(p)
+	if err != nil {
+		abs = p
+	}
+	eval, err := filepath.EvalSymlinks(abs)
+	if err == nil {
+		abs = eval
+	}
+	return filepath.Clean(abs)
+}
+
 func RunGit(workdir string, args ...string) (string, error) {
 	cmd := exec.Command("git", args...)
 	if strings.TrimSpace(workdir) != "" {

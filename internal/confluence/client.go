@@ -306,7 +306,18 @@ func (c *Client) DownloadAttachment(ctx context.Context, attachmentID string) ([
 	if err != nil {
 		return nil, err
 	}
-	downloadReq.SetBasicAuth(c.email, c.apiToken)
+
+	// Only send Basic Auth if the download URL is on the same host as our base URL.
+	// Many Confluence attachments redirect to external media services (like S3)
+	// which will reject the request if an unexpected Authorization header is present.
+	if u, err := url.Parse(resolvedDownloadURL); err == nil {
+		if baseU, err := url.Parse(c.baseURL); err == nil {
+			if u.Host == baseU.Host {
+				downloadReq.SetBasicAuth(c.email, c.apiToken)
+			}
+		}
+	}
+
 	downloadReq.Header.Set("Accept", "*/*")
 	downloadReq.Header.Set("User-Agent", c.userAgent)
 

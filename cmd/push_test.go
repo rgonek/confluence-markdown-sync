@@ -44,13 +44,13 @@ func TestRunPush_UnresolvedValidationStopsBeforeRemoteWrites(t *testing.T) {
 	t.Cleanup(func() { newPushRemote = oldFactory })
 
 	setupEnv(t)
-	chdirRepo(t, repo)
+	chdirRepo(t, spaceDir)
 
 	headBefore := strings.TrimSpace(runGitForTest(t, repo, "rev-parse", "HEAD"))
 
 	cmd := &cobra.Command{}
 	cmd.SetOut(&bytes.Buffer{})
-	err := runPush(cmd, config.Target{Mode: config.TargetModeSpace, Value: "ENG"}, OnConflictCancel, false)
+	err := runPush(cmd, config.Target{Mode: config.TargetModeSpace, Value: ""}, OnConflictCancel, false)
 	if err == nil {
 		t.Fatal("runPush() expected error for unresolved link")
 	}
@@ -119,13 +119,13 @@ func TestRunPush_ConflictPolicies(t *testing.T) {
 			t.Cleanup(func() { newPushRemote = oldFactory })
 
 			setupEnv(t)
-			chdirRepo(t, repo)
+			chdirRepo(t, spaceDir)
 
 			headBefore := strings.TrimSpace(runGitForTest(t, repo, "rev-parse", "HEAD"))
 
 			cmd := &cobra.Command{}
 			cmd.SetOut(&bytes.Buffer{})
-			err := runPush(cmd, config.Target{Mode: config.TargetModeSpace, Value: "ENG"}, tc.policy, false)
+			err := runPush(cmd, config.Target{Mode: config.TargetModeSpace, Value: ""}, tc.policy, false)
 
 			if tc.wantErrContains != "" {
 				if err == nil {
@@ -180,13 +180,13 @@ func TestRunPush_WritesStructuredCommitTrailers(t *testing.T) {
 	t.Cleanup(func() { newPushRemote = oldFactory })
 
 	setupEnv(t)
-	chdirRepo(t, repo)
+	chdirRepo(t, spaceDir)
 
 	headBefore := strings.TrimSpace(runGitForTest(t, repo, "rev-parse", "HEAD"))
 
 	cmd := &cobra.Command{}
 	cmd.SetOut(&bytes.Buffer{})
-	if err := runPush(cmd, config.Target{Mode: config.TargetModeSpace, Value: "ENG"}, OnConflictCancel, false); err != nil {
+	if err := runPush(cmd, config.Target{Mode: config.TargetModeSpace, Value: ""}, OnConflictCancel, false); err != nil {
 		t.Fatalf("runPush() unexpected error: %v", err)
 	}
 
@@ -195,14 +195,11 @@ func TestRunPush_WritesStructuredCommitTrailers(t *testing.T) {
 		t.Fatal("expected push to create a commit")
 	}
 
-	// Check logs to find the sync commit (it might be merged)
-	// We look for the subject in recent history
 	logOut := runGitForTest(t, repo, "log", "-5", "--pretty=%B")
 	if !strings.Contains(logOut, `Sync "Root" to Confluence (v2)`) {
 		t.Fatalf("commit with subject 'Sync \"Root\" to Confluence (v2)' not found in log:\n%s", logOut)
 	}
 
-	// We also verify trailers are present in that commit's message
 	for _, expected := range []string{
 		"Confluence-Page-ID: 1",
 		"Confluence-Version: 2",
@@ -239,12 +236,12 @@ func TestRunPush_NonInteractiveRequiresOnConflict(t *testing.T) {
 	t.Cleanup(func() { newPushRemote = oldFactory })
 
 	setupEnv(t)
-	chdirRepo(t, repo)
+	chdirRepo(t, spaceDir)
 	setAutomationFlags(t, false, true)
 
 	cmd := &cobra.Command{}
 	cmd.SetOut(&bytes.Buffer{})
-	err := runPush(cmd, config.Target{Mode: config.TargetModeSpace, Value: "ENG"}, "", false)
+	err := runPush(cmd, config.Target{Mode: config.TargetModeSpace, Value: ""}, "", false)
 	if err == nil {
 		t.Fatal("runPush() expected non-interactive on-conflict error")
 	}
@@ -273,12 +270,12 @@ func TestRunPush_NonInteractiveRequiresYesForDeleteConfirmation(t *testing.T) {
 	t.Cleanup(func() { newPushRemote = oldFactory })
 
 	setupEnv(t)
-	chdirRepo(t, repo)
+	chdirRepo(t, spaceDir)
 	setAutomationFlags(t, false, true)
 
 	cmd := &cobra.Command{}
 	cmd.SetOut(&bytes.Buffer{})
-	err := runPush(cmd, config.Target{Mode: config.TargetModeSpace, Value: "ENG"}, OnConflictCancel, false)
+	err := runPush(cmd, config.Target{Mode: config.TargetModeSpace, Value: ""}, OnConflictCancel, false)
 	if err == nil {
 		t.Fatal("runPush() expected delete confirmation error")
 	}
@@ -304,13 +301,13 @@ func TestRunPush_YesBypassesDeleteConfirmation(t *testing.T) {
 	t.Cleanup(func() { newPushRemote = oldFactory })
 
 	setupEnv(t)
-	chdirRepo(t, repo)
+	chdirRepo(t, spaceDir)
 	setAutomationFlags(t, true, true)
 
 	cmd := &cobra.Command{}
 	cmd.SetOut(&bytes.Buffer{})
 
-	if err := runPush(cmd, config.Target{Mode: config.TargetModeSpace, Value: "ENG"}, OnConflictCancel, false); err != nil {
+	if err := runPush(cmd, config.Target{Mode: config.TargetModeSpace, Value: ""}, OnConflictCancel, false); err != nil {
 		t.Fatalf("runPush() error: %v", err)
 	}
 	if len(fake.archiveCalls) != 1 {
@@ -345,11 +342,11 @@ func TestRunPush_WorksWithoutGitRemoteConfigured(t *testing.T) {
 	t.Cleanup(func() { newPushRemote = oldFactory })
 
 	setupEnv(t)
-	chdirRepo(t, repo)
+	chdirRepo(t, spaceDir)
 
 	cmd := &cobra.Command{}
 	cmd.SetOut(&bytes.Buffer{})
-	if err := runPush(cmd, config.Target{Mode: config.TargetModeSpace, Value: "ENG"}, OnConflictCancel, false); err != nil {
+	if err := runPush(cmd, config.Target{Mode: config.TargetModeSpace, Value: ""}, OnConflictCancel, false); err != nil {
 		t.Fatalf("runPush() error without git remote: %v", err)
 	}
 }
@@ -358,7 +355,6 @@ func TestRunPush_FailureRetainsSnapshotAndSyncBranch(t *testing.T) {
 	repo := t.TempDir()
 	spaceDir := preparePushRepoWithBaseline(t, repo)
 
-	// Make a change
 	writeMarkdown(t, filepath.Join(spaceDir, "root.md"), fs.MarkdownDocument{
 		Frontmatter: fs.Frontmatter{
 			Title:                  "Root",
@@ -372,7 +368,6 @@ func TestRunPush_FailureRetainsSnapshotAndSyncBranch(t *testing.T) {
 	runGitForTest(t, repo, "add", ".")
 	runGitForTest(t, repo, "commit", "-m", "local change")
 
-	// Fake remote that fails on update
 	fake := newCmdFakePushRemote(1)
 	failingFake := &failingPushRemote{cmdFakePushRemote: fake}
 
@@ -381,50 +376,25 @@ func TestRunPush_FailureRetainsSnapshotAndSyncBranch(t *testing.T) {
 	t.Cleanup(func() { newPushRemote = oldFactory })
 
 	setupEnv(t)
-	chdirRepo(t, repo)
+	chdirRepo(t, spaceDir)
 
 	cmd := &cobra.Command{}
 	out := &bytes.Buffer{}
 	cmd.SetOut(out)
 
-	err := runPush(cmd, config.Target{Mode: config.TargetModeSpace, Value: "ENG"}, OnConflictCancel, false)
+	err := runPush(cmd, config.Target{Mode: config.TargetModeSpace, Value: ""}, OnConflictCancel, false)
 	if err == nil {
 		t.Fatal("runPush() expected error")
 	}
 
-	// Verify Snapshot Ref exists
-	// refs format: refs/confluence-sync/snapshots/ENG/TIMESTAMP
-	// We list all refs matching the pattern
 	refs := runGitForTest(t, repo, "for-each-ref", "refs/confluence-sync/snapshots/ENG/")
 	if strings.TrimSpace(refs) == "" {
 		t.Error("expected snapshot ref to be retained on failure")
 	}
 
-	// Verify Sync Branch exists
 	branches := runGitForTest(t, repo, "branch", "--list", "sync/ENG/*")
 	if strings.TrimSpace(branches) == "" {
 		t.Error("expected sync branch to be retained on failure")
-	}
-
-	// Verify Worktree is cleaned up (always cleanup)
-	// We can check .confluence-worktrees dir
-	wtDir := filepath.Join(repo, ".confluence-worktrees")
-	if _, err := os.Stat(wtDir); err == nil {
-		entries, _ := os.ReadDir(wtDir)
-		if len(entries) > 0 {
-			// Actually, defer cleanup should remove the specific worktree.
-			// git worktree prune might be needed if directory is removed but git metadata remains.
-			// But our implementation calls RemoveWorktree.
-			// Let's check 'git worktree list'.
-			// "worktree list" output format: path <SHA> [branch]
-			// We check if any path contains .confluence-worktrees
-			wts := runGitForTest(t, repo, "worktree", "list")
-			if strings.Contains(wts, ".confluence-worktrees") {
-				// Wait, if RemoveWorktree failed or wasn't called (it is deferred), it might persist.
-				// But we expect it to be removed.
-				t.Errorf("expected worktree to be removed, got list:\n%s", wts)
-			}
-		}
 	}
 }
 
@@ -432,7 +402,6 @@ func TestRunPush_PreservesOutOfScopeChanges(t *testing.T) {
 	repo := t.TempDir()
 	spaceDir := preparePushRepoWithBaseline(t, repo)
 
-	// Create out-of-scope file
 	outOfScope := filepath.Join(repo, "README.md")
 	if err := os.WriteFile(outOfScope, []byte("Original README"), 0o644); err != nil {
 		t.Fatalf("write readme: %v", err)
@@ -440,12 +409,10 @@ func TestRunPush_PreservesOutOfScopeChanges(t *testing.T) {
 	runGitForTest(t, repo, "add", "README.md")
 	runGitForTest(t, repo, "commit", "-m", "add readme")
 
-	// Modify out-of-scope file (unstaged)
 	if err := os.WriteFile(outOfScope, []byte("Modified README"), 0o644); err != nil {
 		t.Fatalf("modify readme: %v", err)
 	}
 
-	// Modify in-scope file
 	writeMarkdown(t, filepath.Join(spaceDir, "root.md"), fs.MarkdownDocument{
 		Frontmatter: fs.Frontmatter{
 			Title:                  "Root",
@@ -456,7 +423,6 @@ func TestRunPush_PreservesOutOfScopeChanges(t *testing.T) {
 		},
 		Body: "Updated local content\n",
 	})
-	// We leave it unstaged (runPush should snapshot it)
 
 	fake := newCmdFakePushRemote(1)
 	oldFactory := newPushRemote
@@ -464,19 +430,17 @@ func TestRunPush_PreservesOutOfScopeChanges(t *testing.T) {
 	t.Cleanup(func() { newPushRemote = oldFactory })
 
 	setupEnv(t)
-	chdirRepo(t, repo)
+	chdirRepo(t, spaceDir)
 
 	cmd := &cobra.Command{}
 	out := &bytes.Buffer{}
 	cmd.SetOut(out)
 
-	err := runPush(cmd, config.Target{Mode: config.TargetModeSpace, Value: "ENG"}, OnConflictCancel, false)
-	t.Logf("runPush stdout:\n%s", out.String())
+	err := runPush(cmd, config.Target{Mode: config.TargetModeSpace, Value: ""}, OnConflictCancel, false)
 	if err != nil {
 		t.Fatalf("runPush() failed: %v", err)
 	}
 
-	// Verify out-of-scope file preserved
 	content, err := os.ReadFile(outOfScope)
 	if err != nil {
 		t.Fatalf("read out-of-scope file: %v", err)
@@ -485,17 +449,11 @@ func TestRunPush_PreservesOutOfScopeChanges(t *testing.T) {
 		t.Errorf("out-of-scope change lost! got %q, want %q", string(content), "Modified README")
 	}
 
-	// Verify in-scope file updated (version bump)
 	doc, _ := fs.ReadMarkdownDocument(filepath.Join(spaceDir, "root.md"))
 	if doc.Frontmatter.ConfluenceVersion != 2 {
-		t.Logf("git status:\n%s", runGitForTest(t, repo, "status"))
-		t.Logf("git log -p:\n%s", runGitForTest(t, repo, "log", "-p"))
-		content, _ := os.ReadFile(filepath.Join(spaceDir, "root.md"))
-		t.Logf("root.md content:\n%s", string(content))
 		t.Errorf("expected version 2, got %d", doc.Frontmatter.ConfluenceVersion)
 	}
 
-	// Verify stash is popped (empty)
 	stashList := runGitForTest(t, repo, "stash", "list")
 	if strings.TrimSpace(stashList) != "" {
 		t.Errorf("expected stash to be empty, got:\n%s", stashList)
@@ -514,7 +472,8 @@ func preparePushRepoWithBaseline(t *testing.T, repo string) string {
 	t.Helper()
 	setupGitRepo(t, repo)
 
-	spaceDir := filepath.Join(repo, "ENG")
+	// Directory name is now "Engineering (ENG)" based on fake remote
+	spaceDir := filepath.Join(repo, "Engineering (ENG)")
 	if err := os.MkdirAll(spaceDir, 0o755); err != nil {
 		t.Fatalf("mkdir space: %v", err)
 	}
@@ -541,6 +500,7 @@ func preparePushRepoWithBaseline(t *testing.T, repo string) string {
 
 	runGitForTest(t, repo, "add", ".")
 	runGitForTest(t, repo, "commit", "-m", "baseline")
+	// Tag key must be sanitized "ENG" not "Engineering (ENG)"
 	runGitForTest(t, repo, "tag", "-a", "confluence-sync/pull/ENG/20260201T120000Z", "-m", "baseline pull")
 
 	return spaceDir

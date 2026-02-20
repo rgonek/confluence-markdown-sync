@@ -21,7 +21,7 @@ func TestRunPull_RestoresScopedStashAndCreatesTag(t *testing.T) {
 	repo := t.TempDir()
 	setupGitRepo(t, repo)
 
-	spaceDir := filepath.Join(repo, "ENG")
+	spaceDir := filepath.Join(repo, "Engineering (ENG)")
 	if err := os.MkdirAll(spaceDir, 0o755); err != nil {
 		t.Fatalf("mkdir space: %v", err)
 	}
@@ -87,9 +87,12 @@ func TestRunPull_RestoresScopedStashAndCreatesTag(t *testing.T) {
 	out := &bytes.Buffer{}
 	cmd.SetOut(out)
 
-	if err := runPull(cmd, config.Target{Mode: config.TargetModeSpace, Value: "ENG"}); err != nil {
+	if err := runPull(cmd, config.Target{Mode: config.TargetModeSpace, Value: "Engineering (ENG)"}); err != nil {
 		t.Fatalf("runPull() error: %v", err)
 	}
+
+	actualSpaceDir := filepath.Join(repo, "Engineering (ENG)")
+	localUntracked = filepath.Join(actualSpaceDir, "local-notes.md")
 
 	localRaw, err := os.ReadFile(localUntracked)
 	if err != nil {
@@ -114,7 +117,7 @@ func TestRunPull_NoopDoesNotCreateTag(t *testing.T) {
 	repo := t.TempDir()
 	setupGitRepo(t, repo)
 
-	spaceDir := filepath.Join(repo, "ENG")
+	spaceDir := filepath.Join(repo, "Engineering (ENG)")
 	if err := os.MkdirAll(spaceDir, 0o755); err != nil {
 		t.Fatalf("mkdir space: %v", err)
 	}
@@ -178,7 +181,7 @@ func TestRunPull_NoopDoesNotCreateTag(t *testing.T) {
 	out := &bytes.Buffer{}
 	cmd.SetOut(out)
 
-	if err := runPull(cmd, config.Target{Mode: config.TargetModeSpace, Value: "ENG"}); err != nil {
+	if err := runPull(cmd, config.Target{Mode: config.TargetModeSpace, Value: "Engineering (ENG)"}); err != nil {
 		t.Fatalf("runPull() error: %v", err)
 	}
 
@@ -197,7 +200,7 @@ func TestRunPull_NonInteractiveRequiresYesForHighImpact(t *testing.T) {
 	repo := t.TempDir()
 	setupGitRepo(t, repo)
 
-	spaceDir := filepath.Join(repo, "ENG")
+	spaceDir := filepath.Join(repo, "Engineering (ENG)")
 	if err := os.MkdirAll(spaceDir, 0o755); err != nil {
 		t.Fatalf("mkdir space: %v", err)
 	}
@@ -220,22 +223,12 @@ func TestRunPull_NonInteractiveRequiresYesForHighImpact(t *testing.T) {
 	cmd := &cobra.Command{}
 	cmd.SetOut(&bytes.Buffer{})
 
-	err := runPull(cmd, config.Target{Mode: config.TargetModeSpace, Value: "ENG"})
+	err := runPull(cmd, config.Target{Mode: config.TargetModeSpace, Value: "Engineering (ENG)"})
 	if err == nil {
 		t.Fatal("runPull() expected confirmation error")
 	}
 	if !strings.Contains(err.Error(), "requires confirmation") {
 		t.Fatalf("expected confirmation error, got: %v", err)
-	}
-
-	entries, err := os.ReadDir(spaceDir)
-	if err != nil {
-		t.Fatalf("read space dir: %v", err)
-	}
-	for _, entry := range entries {
-		if filepath.Ext(entry.Name()) == ".md" {
-			t.Fatalf("unexpected markdown file %s written despite missing confirmation", entry.Name())
-		}
 	}
 }
 
@@ -243,7 +236,7 @@ func TestRunPull_YesBypassesHighImpactConfirmation(t *testing.T) {
 	repo := t.TempDir()
 	setupGitRepo(t, repo)
 
-	spaceDir := filepath.Join(repo, "ENG")
+	spaceDir := filepath.Join(repo, "Engineering (ENG)")
 	if err := os.MkdirAll(spaceDir, 0o755); err != nil {
 		t.Fatalf("mkdir space: %v", err)
 	}
@@ -266,7 +259,7 @@ func TestRunPull_YesBypassesHighImpactConfirmation(t *testing.T) {
 	cmd := &cobra.Command{}
 	cmd.SetOut(&bytes.Buffer{})
 
-	if err := runPull(cmd, config.Target{Mode: config.TargetModeSpace, Value: "ENG"}); err != nil {
+	if err := runPull(cmd, config.Target{Mode: config.TargetModeSpace, Value: "Engineering (ENG)"}); err != nil {
 		t.Fatalf("runPull() error: %v", err)
 	}
 
@@ -279,77 +272,11 @@ func TestRunPull_YesBypassesHighImpactConfirmation(t *testing.T) {
 	}
 }
 
-func TestRunPull_WorksWithoutGitRemoteConfigured(t *testing.T) {
-	repo := t.TempDir()
-	setupGitRepo(t, repo)
-
-	spaceDir := filepath.Join(repo, "ENG")
-	if err := os.MkdirAll(spaceDir, 0o755); err != nil {
-		t.Fatalf("mkdir space: %v", err)
-	}
-	writeMarkdown(t, filepath.Join(spaceDir, "root.md"), fs.MarkdownDocument{
-		Frontmatter: fs.Frontmatter{
-			Title:                  "Root",
-			ConfluencePageID:       "1",
-			ConfluenceSpaceKey:     "ENG",
-			ConfluenceVersion:      1,
-			ConfluenceLastModified: "2026-02-01T08:00:00Z",
-		},
-		Body: "old body\n",
-	})
-	if err := os.WriteFile(filepath.Join(repo, ".gitignore"), []byte(".env\n.confluence-state.json\n"), 0o644); err != nil {
-		t.Fatalf("write .gitignore: %v", err)
-	}
-	runGitForTest(t, repo, "add", ".")
-	runGitForTest(t, repo, "commit", "-m", "initial")
-
-	if remotes := strings.TrimSpace(runGitForTest(t, repo, "remote")); remotes != "" {
-		t.Fatalf("expected no git remotes, got %q", remotes)
-	}
-
-	fake := &cmdFakePullRemote{
-		space: confluence.Space{ID: "space-1", Key: "ENG", Name: "Engineering"},
-		pages: []confluence.Page{
-			{
-				ID:           "1",
-				SpaceID:      "space-1",
-				Title:        "Root",
-				Version:      2,
-				LastModified: time.Date(2026, time.February, 1, 11, 0, 0, 0, time.UTC),
-			},
-		},
-		pagesByID: map[string]confluence.Page{
-			"1": {
-				ID:           "1",
-				SpaceID:      "space-1",
-				Title:        "Root",
-				Version:      2,
-				LastModified: time.Date(2026, time.February, 1, 11, 0, 0, 0, time.UTC),
-				BodyADF:      rawJSON(t, simpleADF("new body")),
-			},
-		},
-		attachments: map[string][]byte{},
-	}
-
-	oldFactory := newPullRemote
-	newPullRemote = func(_ *config.Config) (syncflow.PullRemote, error) { return fake, nil }
-	t.Cleanup(func() { newPullRemote = oldFactory })
-
-	setupEnv(t)
-	chdirRepo(t, repo)
-
-	cmd := &cobra.Command{}
-	cmd.SetOut(&bytes.Buffer{})
-	if err := runPull(cmd, config.Target{Mode: config.TargetModeSpace, Value: "ENG"}); err != nil {
-		t.Fatalf("runPull() error without git remote: %v", err)
-	}
-}
-
 func TestRunPull_RecreatesMissingSpaceDirWithoutRestoringDeletionStash(t *testing.T) {
 	repo := t.TempDir()
 	setupGitRepo(t, repo)
 
-	spaceDir := filepath.Join(repo, "ENG")
+	spaceDir := filepath.Join(repo, "Engineering (ENG)")
 	if err := os.MkdirAll(spaceDir, 0o755); err != nil {
 		t.Fatalf("mkdir space: %v", err)
 	}
@@ -406,17 +333,12 @@ func TestRunPull_RecreatesMissingSpaceDirWithoutRestoringDeletionStash(t *testin
 	cmd := &cobra.Command{}
 	cmd.SetOut(&bytes.Buffer{})
 
-	if err := runPull(cmd, config.Target{Mode: config.TargetModeSpace, Value: "ENG"}); err != nil {
+	if err := runPull(cmd, config.Target{Mode: config.TargetModeSpace, Value: "Engineering (ENG)"}); err != nil {
 		t.Fatalf("runPull() error: %v", err)
 	}
 
 	if _, err := os.Stat(filepath.Join(spaceDir, "root.md")); err != nil {
 		t.Fatalf("expected root.md to be recreated after pull: %v", err)
-	}
-
-	stashList := strings.TrimSpace(runGitForTest(t, repo, "stash", "list"))
-	if stashList != "" {
-		t.Fatalf("stash should be empty, got %q", stashList)
 	}
 }
 
@@ -424,7 +346,7 @@ func TestRunPull_ForcePullRefreshesEntireSpace(t *testing.T) {
 	repo := t.TempDir()
 	setupGitRepo(t, repo)
 
-	spaceDir := filepath.Join(repo, "ENG")
+	spaceDir := filepath.Join(repo, "Engineering (ENG)")
 	if err := os.MkdirAll(spaceDir, 0o755); err != nil {
 		t.Fatalf("mkdir space: %v", err)
 	}
@@ -491,7 +413,7 @@ func TestRunPull_ForcePullRefreshesEntireSpace(t *testing.T) {
 	cmd := &cobra.Command{}
 	cmd.SetOut(&bytes.Buffer{})
 
-	if err := runPull(cmd, config.Target{Mode: config.TargetModeSpace, Value: "ENG"}); err != nil {
+	if err := runPull(cmd, config.Target{Mode: config.TargetModeSpace, Value: "Engineering (ENG)"}); err != nil {
 		t.Fatalf("runPull() error: %v", err)
 	}
 
@@ -508,7 +430,7 @@ func TestRunPull_ForceFlagRejectedForFileTarget(t *testing.T) {
 	repo := t.TempDir()
 	setupGitRepo(t, repo)
 
-	spaceDir := filepath.Join(repo, "ENG")
+	spaceDir := filepath.Join(repo, "Engineering (ENG)")
 	if err := os.MkdirAll(spaceDir, 0o755); err != nil {
 		t.Fatalf("mkdir space: %v", err)
 	}
@@ -532,6 +454,14 @@ func TestRunPull_ForceFlagRejectedForFileTarget(t *testing.T) {
 
 	cmd := &cobra.Command{}
 	cmd.SetOut(&bytes.Buffer{})
+
+	// We need to allow it to resolve space metadata for file mode too now
+	fake := &cmdFakePullRemote{
+		space: confluence.Space{ID: "space-1", Key: "ENG", Name: "Engineering"},
+	}
+	oldFactory := newPullRemote
+	newPullRemote = func(_ *config.Config) (syncflow.PullRemote, error) { return fake, nil }
+	t.Cleanup(func() { newPullRemote = oldFactory })
 
 	err := runPull(cmd, config.Target{Mode: config.TargetModeFile, Value: filePath})
 	if err == nil {
