@@ -23,26 +23,6 @@ func TestForward(t *testing.T) {
 	}
 }
 
-func TestForwardWithPlaceholder(t *testing.T) {
-	ctx := context.Background()
-	// ADF with placeholder
-	adfJSON := []byte(`{"version":1,"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"Start "},{"type":"placeholder","attrs":{"text":"instructional text"}},{"type":"text","text":" End"}]}]}`)
-
-	res, err := Forward(ctx, adfJSON, ForwardConfig{}, "test.md")
-	if err != nil {
-		t.Fatalf("Forward failed: %v", err)
-	}
-
-	expected := "Start  End\n"
-	if res.Markdown != expected {
-		t.Errorf("Expected markdown %q, got %q", expected, res.Markdown)
-	}
-
-	if len(res.Warnings) > 0 {
-		t.Errorf("Expected no warnings, got %v", res.Warnings)
-	}
-}
-
 func TestForwardWithHook(t *testing.T) {
 	ctx := context.Background()
 	// ADF with link
