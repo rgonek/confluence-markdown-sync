@@ -8,6 +8,4 @@ confluence_parent_page_id: "1376436"
 ---
 # Test Page 2 (opencode)
 
-
-This is a child page of Test Page 1.
-It links back to [Test Page 1](../Test-Page-1.md).
+This is a child page of Test Page 1. It links back to [Test Page 1](Test-Page-1.md).
