@@ -68,6 +68,7 @@ type PushOptions struct {
 	Changes        []PushFileChange
 	ConflictPolicy PushConflictPolicy
 	HardDelete     bool
+	Progress       Progress
 }
 
 // PushCommitPlan describes local paths and metadata for one push commit.
@@ -159,9 +160,17 @@ func Push(ctx context.Context, remote PushRemote, opts PushOptions) (PushResult,
 	changes := normalizePushChanges(opts.Changes)
 	commits := make([]PushCommitPlan, 0, len(changes))
 
+	if opts.Progress != nil {
+		opts.Progress.SetDescription("Pushing changes")
+		opts.Progress.SetTotal(len(changes))
+	}
+
 	for _, change := range changes {
 		relPath := normalizeRelPath(change.Path)
 		if relPath == "" {
+			if opts.Progress != nil {
+				opts.Progress.Add(1)
+			}
 			continue
 		}
 
@@ -194,8 +203,19 @@ func Push(ctx context.Context, remote PushRemote, opts PushOptions) (PushResult,
 				commits = append(commits, commit)
 			}
 		default:
+			if opts.Progress != nil {
+				opts.Progress.Add(1)
+			}
 			continue
 		}
+
+		if opts.Progress != nil {
+			opts.Progress.Add(1)
+		}
+	}
+
+	if opts.Progress != nil {
+		opts.Progress.Done()
 	}
 
 	state.AttachmentIndex = attachmentIDByPath

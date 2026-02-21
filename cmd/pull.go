@@ -25,8 +25,10 @@ var (
 			BaseURL:  cfg.Domain,
 			Email:    cfg.Email,
 			APIToken: cfg.APIToken,
+			Verbose:  flagVerbose,
 		})
 	}
+
 	nowUTC = func() time.Time {
 		return time.Now().UTC()
 	}
@@ -154,6 +156,11 @@ func runPull(cmd *cobra.Command, target config.Target) (runErr error) {
 		}
 	}
 
+	var progress syncflow.Progress
+	if !flagVerbose {
+		progress = newConsoleProgress(out, "Syncing from Confluence")
+	}
+
 	result, err := syncflow.Pull(ctx, remote, syncflow.PullOptions{
 		SpaceKey:          pullCtx.spaceKey,
 		SpaceDir:          pullCtx.spaceDir,
@@ -166,6 +173,7 @@ func runPull(cmd *cobra.Command, target config.Target) (runErr error) {
 		OnDownloadError: func(attachmentID string, pageID string, err error) bool {
 			return askToContinueOnDownloadError(cmd.InOrStdin(), out, attachmentID, pageID, err)
 		},
+		Progress: progress,
 	})
 
 	if err != nil {

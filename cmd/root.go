@@ -10,6 +10,7 @@ var (
 	flagYes               bool
 	flagNonInteractive    bool
 	flagSkipMissingAssets bool
+	flagVerbose           bool
 )
 
 var rootCmd = &cobra.Command{
@@ -27,6 +28,7 @@ func Execute() error {
 }
 
 func init() {
+	rootCmd.PersistentFlags().BoolVarP(&flagVerbose, "verbose", "v", false, "Enable verbose output (log HTTP requests)")
 	rootCmd.AddCommand(
 		newInitCmd(),
 		newPullCmd(),

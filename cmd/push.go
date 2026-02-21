@@ -27,6 +27,7 @@ var newPushRemote = func(cfg *config.Config) (syncflow.PushRemote, error) {
 		BaseURL:  cfg.Domain,
 		Email:    cfg.Email,
 		APIToken: cfg.APIToken,
+		Verbose:  flagVerbose,
 	})
 }
 
@@ -195,6 +196,11 @@ func runPush(cmd *cobra.Command, target config.Target, onConflict string, dryRun
 			return fmt.Errorf("load state: %w", err)
 		}
 
+		var progress syncflow.Progress
+		if !flagVerbose {
+			progress = newConsoleProgress(out, "[DRY-RUN] Syncing to Confluence")
+		}
+
 		result, err := syncflow.Push(ctx, remote, syncflow.PushOptions{
 			SpaceKey:       spaceKey,
 			SpaceDir:       spaceDir,
@@ -202,6 +208,7 @@ func runPush(cmd *cobra.Command, target config.Target, onConflict string, dryRun
 			State:          state,
 			Changes:        syncChanges,
 			ConflictPolicy: toSyncConflictPolicy(onConflict),
+			Progress:       progress,
 		})
 		if err != nil {
 			var conflictErr *syncflow.PushConflictError
@@ -415,6 +422,11 @@ func runPush(cmd *cobra.Command, target config.Target, onConflict string, dryRun
 		return fmt.Errorf("load state: %w", err)
 	}
 
+	var progress syncflow.Progress
+	if !flagVerbose {
+		progress = newConsoleProgress(out, "Syncing to Confluence")
+	}
+
 	result, err := syncflow.Push(ctx, remote, syncflow.PushOptions{
 		SpaceKey:       spaceKey,
 		SpaceDir:       wtSpaceDir, // Use worktree dir!
@@ -422,6 +434,7 @@ func runPush(cmd *cobra.Command, target config.Target, onConflict string, dryRun
 		State:          state,
 		Changes:        syncChanges,
 		ConflictPolicy: toSyncConflictPolicy(onConflict),
+		Progress:       progress,
 	})
 	if err != nil {
 		if stashRef != "" {

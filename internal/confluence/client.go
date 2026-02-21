@@ -35,6 +35,7 @@ type ClientConfig struct {
 	APIToken   string
 	HTTPClient *http.Client
 	UserAgent  string
+	Verbose    bool
 }
 
 // Client is an HTTP-backed Confluence API client.
@@ -44,6 +45,7 @@ type Client struct {
 	apiToken   string
 	httpClient *http.Client
 	userAgent  string
+	verbose    bool
 }
 
 // APIError is returned for non-2xx responses.
@@ -103,6 +105,7 @@ func NewClient(cfg ClientConfig) (*Client, error) {
 		apiToken:   token,
 		httpClient: httpClient,
 		userAgent:  userAgent,
+		verbose:    cfg.Verbose,
 	}, nil
 }
 
@@ -320,6 +323,10 @@ func (c *Client) DownloadAttachment(ctx context.Context, attachmentID string, pa
 
 	downloadReq.Header.Set("Accept", "*/*")
 	downloadReq.Header.Set("User-Agent", c.userAgent)
+
+	if c.verbose {
+		fmt.Printf("%s %s\n", downloadReq.Method, downloadReq.URL.String())
+	}
 
 	resp, err := c.httpClient.Do(downloadReq)
 	if err != nil {
@@ -646,6 +653,9 @@ func (c *Client) newRequest(
 }
 
 func (c *Client) do(req *http.Request, out any) error {
+	if c.verbose {
+		fmt.Printf("%s %s\n", req.Method, req.URL.String())
+	}
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		return err
