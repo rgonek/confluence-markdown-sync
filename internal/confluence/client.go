@@ -327,12 +327,8 @@ func (c *Client) DownloadAttachment(ctx context.Context, attachmentID string) ([
 	}
 	defer resp.Body.Close()
 
-	bodyBytes, err := io.ReadAll(io.LimitReader(resp.Body, maxErrorBodyBytes))
-	if err != nil {
-		return nil, fmt.Errorf("read attachment response body: %w", err)
-	}
-
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrorBodyBytes))
 		if resp.StatusCode == http.StatusNotFound {
 			return nil, ErrNotFound
 		}
@@ -343,6 +339,11 @@ func (c *Client) DownloadAttachment(ctx context.Context, attachmentID string) ([
 			Message:    decodeAPIErrorMessage(bodyBytes),
 			Body:       string(bodyBytes),
 		}
+	}
+
+	bodyBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("read attachment response body: %w", err)
 	}
 
 	return bodyBytes, nil
@@ -651,12 +652,8 @@ func (c *Client) do(req *http.Request, out any) error {
 	}
 	defer resp.Body.Close()
 
-	bodyBytes, err := io.ReadAll(io.LimitReader(resp.Body, maxErrorBodyBytes))
-	if err != nil {
-		return fmt.Errorf("read response body: %w", err)
-	}
-
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrorBodyBytes))
 		return &APIError{
 			StatusCode: resp.StatusCode,
 			Method:     req.Method,
@@ -666,12 +663,15 @@ func (c *Client) do(req *http.Request, out any) error {
 		}
 	}
 
-	if out == nil || len(bodyBytes) == 0 {
+	if out == nil {
+		_, _ = io.Copy(io.Discard, resp.Body)
 		return nil
 	}
-	if err := json.Unmarshal(bodyBytes, out); err != nil {
+
+	if err := json.NewDecoder(resp.Body).Decode(out); err != nil && !errors.Is(err, io.EOF) {
 		return fmt.Errorf("decode response JSON: %w", err)
 	}
+	_, _ = io.Copy(io.Discard, resp.Body)
 	return nil
 }
 
