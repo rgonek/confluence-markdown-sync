@@ -3,8 +3,10 @@ package sync
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	adfconv "github.com/rgonek/jira-adf-converter/converter"
@@ -17,9 +19,14 @@ import (
 // pagePathByID maps page IDs to absolute or relative-to-root paths of target files.
 func NewForwardLinkHook(sourcePath string, pagePathByID map[string]string, currentSpaceKey string) adfconv.LinkRenderHook {
 	return func(ctx context.Context, in adfconv.LinkRenderInput) (adfconv.LinkRenderOutput, error) {
+		pageID := in.Meta.PageID
+		if pageID == "" {
+			pageID = extractPageID(in.Href)
+		}
+
 		// If page ID is present, try to resolve to local path
-		if in.Meta.PageID != "" {
-			targetPath, ok := pagePathByID[in.Meta.PageID]
+		if pageID != "" {
+			targetPath, ok := pagePathByID[pageID]
 			if ok {
 				// Calculate relative path from source file to target file
 				// We assume both paths are either absolute or relative to the same base.
@@ -51,6 +58,34 @@ func NewForwardLinkHook(sourcePath string, pagePathByID map[string]string, curre
 		// If not resolved, return unhandled (library default behavior)
 		return adfconv.LinkRenderOutput{Handled: false}, nil
 	}
+}
+
+func extractPageID(href string) string {
+	if href == "" {
+		return ""
+	}
+	u, err := url.Parse(href)
+	if err != nil {
+		return ""
+	}
+
+	// 1. ?pageId=123
+	if id := u.Query().Get("pageId"); id != "" {
+		return id
+	}
+
+	// 2. /pages/123/Title
+	segments := strings.Split(u.Path, "/")
+	for i, seg := range segments {
+		if seg == "pages" && i+1 < len(segments) {
+			id := segments[i+1]
+			if _, err := strconv.Atoi(id); err == nil {
+				return id
+			}
+		}
+	}
+
+	return ""
 }
 
 // NewForwardMediaHook creates a media hook for ADF -> Markdown conversion.
