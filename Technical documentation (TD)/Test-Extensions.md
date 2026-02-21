@@ -2,14 +2,13 @@
 title: Test Extensions
 confluence_page_id: "2850908"
 confluence_space_key: TD
-confluence_version: 5
-confluence_last_modified: "2026-02-21T21:53:54Z"
+confluence_version: 6
+confluence_last_modified: "2026-02-21T21:54:21Z"
 confluence_parent_page_id: "1376436"
 ---
 # Test Extensions
 
 ## Mermaid
-
 ```mermaid
 graph TD
     A[Start] --> B{Is it working?}
@@ -18,7 +17,6 @@ graph TD
 ```
 
 ## PlantUML
-
 ```plantuml
 @startuml
 Alice -> Bob: Hello
