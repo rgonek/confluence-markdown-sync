@@ -8,5 +8,4 @@ confluence_parent_page_id: "2850863"
 ---
 # Test Page 2 (opencode-final)
 
-I am a child.
-I link back to [Test Page 1](./Test-Page-1.md).
+I am a child. I link back to [Test Page 1](../Test-Page-1-(opencode-final).md).

@@ -8,7 +8,6 @@ confluence_parent_page_id: "1376436"
 ---
 # Test Page 1 (opencode-final)
 
-I have a child: [Test Page 2](./Test-Page-2.md)
+I have a child: [Test Page 2](Test-Page-1-(opencode-final)/Test-Page-2-(opencode-final).md)
 
-And an attachment:
-![dummy.txt](../assets/test-page-1/dummy.txt)
+And an attachment: [Embedded content]
