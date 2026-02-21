@@ -894,11 +894,21 @@ func resolveWebURL(baseURL, webUI string) string {
 	if err != nil {
 		return webUI
 	}
-	ref, err := url.Parse(webUI)
-	if err != nil {
-		return webUI
+
+	contextPath := root.Path
+	if contextPath == "" || contextPath == "/" {
+		if strings.HasSuffix(root.Host, ".atlassian.net") {
+			contextPath = "/wiki"
+		}
 	}
-	return root.ResolveReference(ref).String()
+
+	if strings.HasPrefix(u.Path, "/") && contextPath != "" && contextPath != "/" {
+		if !strings.HasPrefix(u.Path, contextPath) {
+			u.Path = path.Join(contextPath, u.Path)
+		}
+	}
+
+	return root.ResolveReference(u).String()
 }
 
 func parseRemoteTime(candidates ...string) time.Time {
