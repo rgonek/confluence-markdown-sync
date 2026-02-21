@@ -1,6 +1,7 @@
 {
   "last_pull_high_watermark": "2026-02-21T21:13:14Z",
   "page_path_index": {
+    "Attachment-Test.md": "2818083",
     "Big-page.md": "2850818",
     "Mermaid-and-Plantuml.md": "1703946",
     "Simple-with-attachment.md": "2359297",
@@ -14,6 +15,7 @@
   },
   "attachment_index": {
     "assets/2359297/ffd70a27-0a48-48db-9662-24252c884152-image-20260220-184049.png": "ffd70a27-0a48-48db-9662-24252c884152",
+    "assets/attachment-test/dummy.txt": "att2949153",
     "assets/test-page-1/dummy.txt": "att3047450"
   }
 }
