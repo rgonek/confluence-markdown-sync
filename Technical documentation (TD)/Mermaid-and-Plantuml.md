@@ -131,7 +131,7 @@ confluence_parent_page_id: "1376436"
           "dataClassificationPolicyDecision": {
             "status": "ALLOWED"
           },
-          "egress": null,
+          "egress": [],
           "environmentId": "470a7f30-da28-4543-80be-2038371d5b5c",
           "environmentKey": "production",
           "environmentType": "PRODUCTION",

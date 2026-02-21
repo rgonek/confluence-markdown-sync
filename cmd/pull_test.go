@@ -547,7 +547,7 @@ func (f *cmdFakePullRemote) GetPage(_ context.Context, pageID string) (confluenc
 	return page, nil
 }
 
-func (f *cmdFakePullRemote) DownloadAttachment(_ context.Context, attachmentID string) ([]byte, error) {
+func (f *cmdFakePullRemote) DownloadAttachment(_ context.Context, attachmentID string, pageID string) ([]byte, error) {
 	raw, ok := f.attachments[attachmentID]
 	if !ok {
 		return nil, confluence.ErrNotFound

@@ -13,7 +13,7 @@ type Service interface {
 	ListPages(ctx context.Context, opts PageListOptions) (PageListResult, error)
 	GetFolder(ctx context.Context, folderID string) (Folder, error)
 	GetPage(ctx context.Context, pageID string) (Page, error)
-	DownloadAttachment(ctx context.Context, attachmentID string) ([]byte, error)
+	DownloadAttachment(ctx context.Context, attachmentID string, pageID string) ([]byte, error)
 	UploadAttachment(ctx context.Context, input AttachmentUploadInput) (Attachment, error)
 	DeleteAttachment(ctx context.Context, attachmentID string) error
 	CreatePage(ctx context.Context, input PageUpsertInput) (Page, error)
