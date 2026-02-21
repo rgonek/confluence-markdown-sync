@@ -11,10 +11,9 @@ confluence_parent_page_id: "1376436"
 This is a test page created by the opencode agent.
 
 ## Links
+
 (Links removed)
 
-
 ## Images
+
 (Image removed for testing)
-
-

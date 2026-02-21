@@ -9,6 +9,7 @@ confluence_parent_page_id: "1376436"
 # Test Extensions
 
 ## Mermaid
+
 ```mermaid
 graph TD
     A[Start] --> B{Is it working?}
@@ -17,6 +18,7 @@ graph TD
 ```
 
 ## PlantUML
+
 ```plantuml
 @startuml
 Alice -> Bob: Hello
