@@ -9,8 +9,7 @@ confluence_last_modified: "2026-02-21T20:49:32Z"
 
 Updated by opencode at 2026-02-21T20:49:00Z
 
-> [!CUSTOM]
-> In a sentence or two, describe the purpose of this space.
+> [!CUSTOM] In a sentence or two, describe the purpose of this space.
 
 ## Search this Space
 
