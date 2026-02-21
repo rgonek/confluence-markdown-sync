@@ -2,10 +2,12 @@
 title: Technical documentation
 confluence_page_id: "1376436"
 confluence_space_key: TD
-confluence_version: 1
-confluence_last_modified: "2026-02-19T19:47:57Z"
+confluence_version: 2
+confluence_last_modified: "2026-02-21T20:49:32Z"
 ---
 ## Description
+
+Updated by opencode at 2026-02-21T20:49:00Z
 
 > [!CUSTOM]
 > In a sentence or two, describe the purpose of this space.
