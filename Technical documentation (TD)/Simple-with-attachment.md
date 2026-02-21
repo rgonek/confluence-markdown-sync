@@ -10,6 +10,6 @@ confluence_parent_page_id: "1376436"
 
 here should be a image:
 
-![image-20260220-184049.png](assets/2359297/ffd70a27-0a48-48db-9662-24252c884152-attachment)
+![image-20260220-184049.png](assets/2359297/ffd70a27-0a48-48db-9662-24252c884152-image-20260220-184049.png)
 
 after
