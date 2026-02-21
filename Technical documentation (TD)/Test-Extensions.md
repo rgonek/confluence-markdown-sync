@@ -2,8 +2,8 @@
 title: Test Extensions
 confluence_page_id: "2850908"
 confluence_space_key: TD
-confluence_version: 6
-confluence_last_modified: "2026-02-21T21:54:21Z"
+confluence_version: 7
+confluence_last_modified: "2026-02-21T21:55:17Z"
 confluence_parent_page_id: "1376436"
 ---
 # Test Extensions
@@ -11,17 +11,18 @@ confluence_parent_page_id: "1376436"
 ## Mermaid
 
 ```mermaid
-graph TD
-    A[Start] --> B{Is it working?}
-    B -- Yes --> C[Great!]
-    B -- No --> D[Debug]
+graph LR
+    A[Start] --> B[Processing]
+    B --> C[End]
 ```
 
 ## PlantUML
 
 ```plantuml
 @startuml
-Alice -> Bob: Hello
-Bob -> Alice: Hi!
+participant User
+participant System
+User -> System: Request
+System -> User: Response
 @enduml
 ```
