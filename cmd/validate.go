@@ -148,6 +148,10 @@ func resolveSpaceDirFromTarget(cwd string, target config.Target) (string, error)
 		return filepath.Abs(cwd)
 	}
 
+	if filepath.IsAbs(target.Value) {
+		return filepath.Abs(target.Value)
+	}
+
 	if info, err := os.Stat(target.Value); err == nil && info.IsDir() {
 		return filepath.Abs(target.Value)
 	}

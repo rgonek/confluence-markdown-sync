@@ -10,6 +10,16 @@ func (c *Client) Add(path ...string) error {
 	return err
 }
 
+// AddForce stages files even if they are ignored.
+func (c *Client) AddForce(path ...string) error {
+	if len(path) == 0 {
+		return nil
+	}
+	args := append([]string{"add", "-f", "--"}, path...)
+	_, err := c.Run(args...)
+	return err
+}
+
 // Commit creates a commit with the given message.
 func (c *Client) Commit(subject, body string) error {
 	args := []string{"commit", "-m", subject}
