@@ -47,12 +47,16 @@ func requireSafetyConfirmation(in io.Reader, out io.Writer, action string, chang
 	return nil
 }
 
-func resolvePushConflictPolicy(in io.Reader, out io.Writer, onConflict string) (string, error) {
+func resolvePushConflictPolicy(in io.Reader, out io.Writer, onConflict string, isSpace bool) (string, error) {
 	if err := validateOnConflict(onConflict); err != nil {
 		return "", err
 	}
 	if onConflict != "" {
 		return onConflict, nil
+	}
+
+	if isSpace {
+		return OnConflictPullMerge, nil
 	}
 
 	if flagNonInteractive {

@@ -247,6 +247,57 @@ func TestArchiveAndDeleteEndpoints(t *testing.T) {
 	}
 }
 
+func TestCreateAndUpdatePage_Payloads(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		var body map[string]any
+		json.NewDecoder(r.Body).Decode(&body)
+
+		if r.Method == http.MethodPost {
+			if body["id"] != nil {
+				t.Errorf("CreatePage payload should not have id, got %v", body["id"])
+			}
+			if body["spaceId"] != "S1" {
+				t.Errorf("CreatePage spaceId = %v, want S1", body["spaceId"])
+			}
+			io.WriteString(w, `{"id":"101","title":"New","spaceId":"S1","version":{"number":1}}`)
+		} else if r.Method == http.MethodPut {
+			if body["id"] != "101" {
+				t.Errorf("UpdatePage payload should have id=101, got %v", body["id"])
+			}
+			if body["spaceId"] != "S1" {
+				t.Errorf("UpdatePage spaceId = %v, want S1", body["spaceId"])
+			}
+			io.WriteString(w, `{"id":"101","title":"Updated","spaceId":"S1","version":{"number":2}}`)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	client, _ := NewClient(ClientConfig{
+		BaseURL:  server.URL,
+		Email:    "u",
+		APIToken: "t",
+	})
+
+	ctx := context.Background()
+	input := PageUpsertInput{
+		SpaceID: "S1",
+		Title:   "Test",
+		Version: 1,
+		BodyADF: json.RawMessage(`{"version":1}`),
+	}
+
+	_, err := client.CreatePage(ctx, input)
+	if err != nil {
+		t.Fatalf("CreatePage failed: %v", err)
+	}
+
+	_, err = client.UpdatePage(ctx, "101", input)
+	if err != nil {
+		t.Fatalf("UpdatePage failed: %v", err)
+	}
+}
+
 func TestDownloadAttachment_ResolvesUUID(t *testing.T) {
 	uuid := "e2cabb2e-4df7-49bb-84e0-c76ae83f6f9b"
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

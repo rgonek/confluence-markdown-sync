@@ -188,7 +188,7 @@ func runPull(cmd *cobra.Command, target config.Target) (runErr error) {
 		fmt.Fprintf(out, "warning: %s [%s] %s\n", diag.Path, diag.Code, diag.Message)
 	}
 
-	if _, err := runGit(repoRoot, "add", "--", scopePath); err != nil {
+	if _, err := runGit(repoRoot, "add", "-f", "--", scopePath); err != nil {
 		return err
 	}
 
@@ -324,6 +324,23 @@ func resolveInitialPullContext(target config.Target) (initialPullContext, error)
 	}
 
 	spaceDir := filepath.Join(cwd, target.Value)
+	if _, err := os.Stat(spaceDir); err != nil {
+		// Try to find a directory that looks like "Name (KEY)"
+		if items, err := os.ReadDir(cwd); err == nil {
+			suffix := fmt.Sprintf("(%s)", target.Value)
+			for _, item := range items {
+				if item.IsDir() && strings.HasSuffix(item.Name(), suffix) {
+					spaceDir = filepath.Join(cwd, item.Name())
+					return initialPullContext{
+						spaceKey: target.Value,
+						spaceDir: spaceDir,
+						fixedDir: true,
+					}, nil
+				}
+			}
+		}
+	}
+
 	spaceDir, err = filepath.Abs(spaceDir)
 	if err != nil {
 		return initialPullContext{}, err

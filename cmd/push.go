@@ -43,6 +43,9 @@ func newPushCmd() *cobra.Command {
 TARGET can be a SPACE_KEY (e.g. "MYSPACE") or a path to a .md file.
 If omitted, the space is inferred from the current directory name.
 
+For space-wide pushes, the conflict policy defaults to "pull-merge" if not specified.
+For single-file pushes, a policy must be specified via --on-conflict or chosen via prompt.
+
 push always runs validate before any remote write.
 It uses an isolated worktree and a temporary branch to ensure safety.`,
 		Args: cobra.MaximumNArgs(1),
@@ -77,7 +80,7 @@ func runPush(cmd *cobra.Command, target config.Target, onConflict string, dryRun
 	ctx := context.Background()
 	out := cmd.OutOrStdout()
 
-	resolvedPolicy, err := resolvePushConflictPolicy(cmd.InOrStdin(), out, onConflict)
+	resolvedPolicy, err := resolvePushConflictPolicy(cmd.InOrStdin(), out, onConflict, target.IsSpace())
 	if err != nil {
 		return err
 	}
@@ -89,6 +92,22 @@ func runPush(cmd *cobra.Command, target config.Target, onConflict string, dryRun
 	}
 	spaceDir := initialCtx.spaceDir
 	spaceKey := initialCtx.spaceKey
+
+	envPath := findEnvPath(spaceDir)
+	cfg, err := config.Load(envPath)
+	if err != nil {
+		return fmt.Errorf("failed to load config: %w", err)
+	}
+
+	if !initialCtx.fixedDir {
+		remote, err := newPushRemote(cfg)
+		if err == nil {
+			space, err := remote.GetSpace(ctx, spaceKey)
+			if err == nil {
+				spaceDir = filepath.Join(filepath.Dir(spaceDir), fs.SanitizeSpaceDirName(space.Name, space.Key))
+			}
+		}
+	}
 
 	gitClient, err := git.NewClient()
 	if err != nil {
@@ -178,8 +197,8 @@ func runPush(cmd *cobra.Command, target config.Target, onConflict string, dryRun
 			return fmt.Errorf("pre-push validate failed: %w", err)
 		}
 
-		envPath := findEnvPath(spaceDir)
-		cfg, err := config.Load(envPath)
+		envPath = findEnvPath(spaceDir)
+		cfg, err = config.Load(envPath)
 		if err != nil {
 			return fmt.Errorf("failed to load config: %w", err)
 		}
@@ -397,8 +416,8 @@ func runPush(cmd *cobra.Command, target config.Target, onConflict string, dryRun
 	}
 
 	// 6. Push (in worktree)
-	envPath := findEnvPath(wtSpaceDir) // Load config from worktree
-	cfg, err := config.Load(envPath)
+	envPath = findEnvPath(wtSpaceDir) // Load config from worktree
+	cfg, err = config.Load(envPath)
 	if err != nil {
 		if stashRef != "" {
 			_ = gitClient.StashPop(stashRef)
@@ -478,7 +497,7 @@ func runPush(cmd *cobra.Command, target config.Target, onConflict string, dryRun
 			repoPaths = append(repoPaths, rel)
 		}
 
-		if err := wtClient.Add(repoPaths...); err != nil {
+		if err := wtClient.AddForce(repoPaths...); err != nil {
 			if stashRef != "" {
 				_ = gitClient.StashPop(stashRef)
 			}

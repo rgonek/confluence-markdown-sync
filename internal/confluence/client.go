@@ -461,7 +461,7 @@ func (c *Client) CreatePage(ctx context.Context, input PageUpsertInput) (Page, e
 		return Page{}, errors.New("page title is required")
 	}
 
-	req, err := c.newRequest(ctx, http.MethodPost, "/wiki/api/v2/pages", nil, pageWritePayload(input))
+	req, err := c.newRequest(ctx, http.MethodPost, "/wiki/api/v2/pages", nil, pageWritePayload("", input))
 	if err != nil {
 		return Page{}, err
 	}
@@ -488,7 +488,7 @@ func (c *Client) UpdatePage(ctx context.Context, pageID string, input PageUpsert
 		http.MethodPut,
 		"/wiki/api/v2/pages/"+url.PathEscape(id),
 		nil,
-		pageWritePayload(input),
+		pageWritePayload(id, input),
 	)
 	if err != nil {
 		return Page{}, err
@@ -760,11 +760,14 @@ func buildChangeCQL(spaceKey string, since time.Time) string {
 	return strings.Join(parts, " AND ")
 }
 
-func pageWritePayload(input PageUpsertInput) map[string]any {
+func pageWritePayload(id string, input PageUpsertInput) map[string]any {
 	payload := map[string]any{
 		"spaceId": strings.TrimSpace(input.SpaceID),
 		"title":   strings.TrimSpace(input.Title),
 		"status":  defaultPageStatus(input.Status),
+	}
+	if id != "" {
+		payload["id"] = strings.TrimSpace(id)
 	}
 	if input.ParentPageID != "" {
 		payload["parentId"] = strings.TrimSpace(input.ParentPageID)
