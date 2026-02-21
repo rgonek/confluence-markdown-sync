@@ -258,14 +258,14 @@ func (c *Client) GetPage(ctx context.Context, pageID string) (Page, error) {
 }
 
 // DownloadAttachment downloads attachment bytes by attachment ID.
-func (c *Client) DownloadAttachment(ctx context.Context, attachmentID string) ([]byte, error) {
+func (c *Client) DownloadAttachment(ctx context.Context, attachmentID string, pageID string) ([]byte, error) {
 	id := strings.TrimSpace(attachmentID)
 	if id == "" {
 		return nil, errors.New("attachment ID is required")
 	}
 
 	if isUUID(id) {
-		if resolvedID, err := c.resolveAttachmentIDByFileID(ctx, id); err == nil {
+		if resolvedID, err := c.resolveAttachmentIDByFileID(ctx, id, pageID); err == nil {
 			id = resolvedID
 		}
 	}
@@ -973,6 +973,7 @@ type archiveResponse struct {
 
 type attachmentDTO struct {
 	ID           string `json:"id"`
+	FileID       string `json:"fileId"`
 	DownloadLink string `json:"downloadLink"`
 	Links        struct {
 		Download string `json:"download"`
@@ -1004,25 +1005,44 @@ func firstNonEmpty(values ...string) string {
 	return ""
 }
 
-func (c *Client) resolveAttachmentIDByFileID(ctx context.Context, fileID string) (string, error) {
-	query := url.Values{}
-	query.Set("file-id", fileID)
+func (c *Client) resolveAttachmentIDByFileID(ctx context.Context, fileID string, pageID string) (string, error) {
+	if pageID == "" {
+		return "", errors.New("page ID is required to resolve file ID")
+	}
 
-	req, err := c.newRequest(ctx, http.MethodGet, "/wiki/api/v2/attachments", query, nil)
+	query := url.Values{}
+	query.Set("limit", "100")
+
+	req, err := c.newRequest(ctx, http.MethodGet, "/wiki/api/v2/pages/"+url.PathEscape(pageID)+"/attachments", query, nil)
 	if err != nil {
 		return "", err
 	}
 
 	var payload v2ListResponse[attachmentDTO]
-	if err := c.do(req, &payload); err != nil {
-		return "", err
+	for {
+		if err := c.do(req, &payload); err != nil {
+			return "", err
+		}
+
+		for _, att := range payload.Results {
+			if att.FileID == fileID {
+				return att.ID, nil
+			}
+		}
+
+		nextURL := payload.Links.Next
+		if nextURL == "" {
+			break
+		}
+
+		req, err = c.newRequest(ctx, http.MethodGet, nextURL, nil, nil)
+		if err != nil {
+			return "", err
+		}
+		payload = v2ListResponse[attachmentDTO]{}
 	}
 
-	if len(payload.Results) == 0 {
-		return "", ErrNotFound
-	}
-
-	return payload.Results[0].ID, nil
+	return "", ErrNotFound
 }
 
 func isUUID(s string) bool {

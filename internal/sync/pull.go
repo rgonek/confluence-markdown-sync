@@ -30,7 +30,7 @@ type PullRemote interface {
 	GetFolder(ctx context.Context, folderID string) (confluence.Folder, error)
 	ListChanges(ctx context.Context, opts confluence.ChangeListOptions) (confluence.ChangeListResult, error)
 	GetPage(ctx context.Context, pageID string) (confluence.Page, error)
-	DownloadAttachment(ctx context.Context, attachmentID string) ([]byte, error)
+	DownloadAttachment(ctx context.Context, attachmentID string, pageID string) ([]byte, error)
 }
 
 // PullOptions controls pull orchestration behavior.
@@ -226,7 +226,7 @@ func Pull(ctx context.Context, remote PullRemote, opts PullOptions) (PullResult,
 	for _, attachmentID := range assetIDs {
 		assetPath := attachmentPathByID[attachmentID]
 		pageID := attachmentPageByID[attachmentID]
-		raw, err := remote.DownloadAttachment(ctx, attachmentID)
+		raw, err := remote.DownloadAttachment(ctx, attachmentID, pageID)
 		if err != nil {
 			skip := false
 			if errors.Is(err, confluence.ErrNotFound) && opts.SkipMissingAssets {
@@ -850,6 +850,12 @@ func collectAttachmentRefs(adfJSON []byte, defaultPageID string) map[string]atta
 		}
 
 		pageID := firstString(attrs, "pageId", "pageID", "contentId")
+		if pageID == "" {
+			collection := firstString(attrs, "collection")
+			if strings.HasPrefix(collection, "contentId-") {
+				pageID = strings.TrimPrefix(collection, "contentId-")
+			}
+		}
 		if pageID == "" {
 			pageID = defaultPageID
 		}
