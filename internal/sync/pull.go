@@ -33,6 +33,14 @@ type PullRemote interface {
 	DownloadAttachment(ctx context.Context, attachmentID string) ([]byte, error)
 }
 
+// Progress defines a progress reporter.
+type Progress interface {
+	SetDescription(desc string)
+	SetTotal(total int)
+	Add(n int)
+	Done()
+}
+
 // PullOptions controls pull orchestration behavior.
 type PullOptions struct {
 	SpaceKey          string
@@ -44,6 +52,7 @@ type PullOptions struct {
 	ForceFull         bool
 	SkipMissingAssets bool
 	OnDownloadError   func(attachmentID string, pageID string, err error) bool // return true to skip and continue
+	Progress          Progress
 }
 
 // PullDiagnostic captures non-fatal conversion diagnostics.
@@ -156,11 +165,19 @@ func Pull(ctx context.Context, remote PullRemote, opts PullOptions) (PullResult,
 		changedPageIDs = sortedStringKeys(changedSet)
 	}
 
+	if opts.Progress != nil {
+		opts.Progress.SetDescription("Fetching pages")
+		opts.Progress.SetTotal(len(changedPageIDs))
+	}
+
 	changedPages := make(map[string]confluence.Page, len(changedPageIDs))
 	for _, pageID := range changedPageIDs {
 		page, err := remote.GetPage(ctx, pageID)
 		if err != nil {
 			if errors.Is(err, confluence.ErrNotFound) {
+				if opts.Progress != nil {
+					opts.Progress.Add(1)
+				}
 				continue
 			}
 			return PullResult{}, fmt.Errorf("fetch page %s: %w", pageID, err)
@@ -172,6 +189,13 @@ func Pull(ctx context.Context, remote PullRemote, opts PullOptions) (PullResult,
 		if page.LastModified.After(maxRemoteModified) {
 			maxRemoteModified = page.LastModified
 		}
+		if opts.Progress != nil {
+			opts.Progress.Add(1)
+		}
+	}
+
+	if opts.Progress != nil {
+		opts.Progress.Done()
 	}
 
 	attachmentIndex := cloneStringMap(state.AttachmentIndex)
@@ -223,6 +247,11 @@ func Pull(ctx context.Context, remote PullRemote, opts PullOptions) (PullResult,
 	assetIDs := sortedStringKeys(attachmentPathByID)
 	downloadedAssets := make([]string, 0, len(assetIDs))
 
+	if opts.Progress != nil {
+		opts.Progress.SetDescription("Downloading assets & writing markdown")
+		opts.Progress.SetTotal(len(assetIDs) + len(changedPageIDs))
+	}
+
 	for _, attachmentID := range assetIDs {
 		assetPath := attachmentPathByID[attachmentID]
 		pageID := attachmentPageByID[attachmentID]
@@ -241,6 +270,9 @@ func Pull(ctx context.Context, remote PullRemote, opts PullOptions) (PullResult,
 					Code:    "ATTACHMENT_DOWNLOAD_SKIPPED",
 					Message: fmt.Sprintf("download attachment %s (page %s) failed, skipping: %v", attachmentID, pageID, err),
 				})
+				if opts.Progress != nil {
+					opts.Progress.Add(1)
+				}
 				continue
 			}
 			return PullResult{}, fmt.Errorf("download attachment %s (page %s): %w", attachmentID, pageID, err)
@@ -256,6 +288,10 @@ func Pull(ctx context.Context, remote PullRemote, opts PullOptions) (PullResult,
 			relAssetPath = assetPath
 		}
 		downloadedAssets = append(downloadedAssets, filepath.ToSlash(relAssetPath))
+
+		if opts.Progress != nil {
+			opts.Progress.Add(1)
+		}
 	}
 
 	updatedMarkdown := make([]string, 0, len(changedPages))
@@ -305,6 +341,14 @@ func Pull(ctx context.Context, remote PullRemote, opts PullOptions) (PullResult,
 				Message: warning.Message,
 			})
 		}
+
+		if opts.Progress != nil {
+			opts.Progress.Add(1)
+		}
+	}
+
+	if opts.Progress != nil {
+		opts.Progress.Done()
 	}
 
 	deletedMarkdownSet := map[string]struct{}{}
