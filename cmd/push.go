@@ -43,6 +43,9 @@ func newPushCmd() *cobra.Command {
 TARGET can be a SPACE_KEY (e.g. "MYSPACE") or a path to a .md file.
 If omitted, the space is inferred from the current directory name.
 
+For space-wide pushes, the conflict policy defaults to "pull-merge" if not specified.
+For single-file pushes, a policy must be specified via --on-conflict or chosen via prompt.
+
 push always runs validate before any remote write.
 It uses an isolated worktree and a temporary branch to ensure safety.`,
 		Args: cobra.MaximumNArgs(1),
@@ -77,7 +80,7 @@ func runPush(cmd *cobra.Command, target config.Target, onConflict string, dryRun
 	ctx := context.Background()
 	out := cmd.OutOrStdout()
 
-	resolvedPolicy, err := resolvePushConflictPolicy(cmd.InOrStdin(), out, onConflict)
+	resolvedPolicy, err := resolvePushConflictPolicy(cmd.InOrStdin(), out, onConflict, target.IsSpace())
 	if err != nil {
 		return err
 	}
