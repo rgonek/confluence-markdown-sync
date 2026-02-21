@@ -860,7 +860,7 @@ func collectAttachmentRefs(adfJSON []byte, defaultPageID string) map[string]atta
 			pageID = defaultPageID
 		}
 
-		filename := firstString(attrs, "filename", "fileName", "name")
+		filename := firstString(attrs, "filename", "fileName", "name", "alt", "title")
 		if filename == "" {
 			filename = "attachment"
 		}
