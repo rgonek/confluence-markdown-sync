@@ -192,13 +192,8 @@ func ReadFrontmatter(path string) (Frontmatter, error) {
 func ValidateFrontmatterSchema(fm Frontmatter) ValidationResult {
 	result := ValidationResult{}
 
-	if strings.TrimSpace(fm.ConfluencePageID) == "" {
-		result.Issues = append(result.Issues, ValidationIssue{
-			Field:   "confluence_page_id",
-			Code:    "required",
-			Message: "confluence_page_id is required",
-		})
-	}
+	// confluence_page_id is optional for new pages but must be valid if present
+	// confluence_space_key is always required
 	if strings.TrimSpace(fm.ConfluenceSpaceKey) == "" {
 		result.Issues = append(result.Issues, ValidationIssue{
 			Field:   "confluence_space_key",
@@ -206,25 +201,28 @@ func ValidateFrontmatterSchema(fm Frontmatter) ValidationResult {
 			Message: "confluence_space_key is required",
 		})
 	}
-	if fm.ConfluenceVersion <= 0 {
-		result.Issues = append(result.Issues, ValidationIssue{
-			Field:   "confluence_version",
-			Code:    "invalid",
-			Message: "confluence_version must be greater than zero",
-		})
-	}
-	if strings.TrimSpace(fm.ConfluenceLastModified) == "" {
-		result.Issues = append(result.Issues, ValidationIssue{
-			Field:   "confluence_last_modified",
-			Code:    "required",
-			Message: "confluence_last_modified is required",
-		})
-	} else if _, err := time.Parse(time.RFC3339, fm.ConfluenceLastModified); err != nil {
-		result.Issues = append(result.Issues, ValidationIssue{
-			Field:   "confluence_last_modified",
-			Code:    "invalid",
-			Message: "confluence_last_modified must be RFC3339",
-		})
+
+	if strings.TrimSpace(fm.ConfluencePageID) != "" {
+		if fm.ConfluenceVersion <= 0 {
+			result.Issues = append(result.Issues, ValidationIssue{
+				Field:   "confluence_version",
+				Code:    "invalid",
+				Message: "confluence_version must be greater than zero for existing pages",
+			})
+		}
+		if strings.TrimSpace(fm.ConfluenceLastModified) == "" {
+			result.Issues = append(result.Issues, ValidationIssue{
+				Field:   "confluence_last_modified",
+				Code:    "required",
+				Message: "confluence_last_modified is required for existing pages",
+			})
+		} else if _, err := time.Parse(time.RFC3339, fm.ConfluenceLastModified); err != nil {
+			result.Issues = append(result.Issues, ValidationIssue{
+				Field:   "confluence_last_modified",
+				Code:    "invalid",
+				Message: "confluence_last_modified must be RFC3339",
+			})
+		}
 	}
 
 	return result

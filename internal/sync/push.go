@@ -27,6 +27,7 @@ type PushRemote interface {
 	GetSpace(ctx context.Context, spaceKey string) (confluence.Space, error)
 	ListPages(ctx context.Context, opts confluence.PageListOptions) (confluence.PageListResult, error)
 	GetPage(ctx context.Context, pageID string) (confluence.Page, error)
+	CreatePage(ctx context.Context, input confluence.PageUpsertInput) (confluence.Page, error)
 	UpdatePage(ctx context.Context, pageID string, input confluence.PageUpsertInput) (confluence.Page, error)
 	ArchivePages(ctx context.Context, pageIDs []string) (confluence.ArchiveResult, error)
 	DeletePage(ctx context.Context, pageID string, hardDelete bool) error
@@ -302,48 +303,71 @@ func pushUpsertPage(
 	}
 
 	pageID := strings.TrimSpace(doc.Frontmatter.ConfluencePageID)
-	if pageID == "" {
-		return PushCommitPlan{}, fmt.Errorf("%s missing confluence_page_id", relPath)
-	}
 	if !strings.EqualFold(strings.TrimSpace(doc.Frontmatter.ConfluenceSpaceKey), strings.TrimSpace(opts.SpaceKey)) {
 		return PushCommitPlan{}, fmt.Errorf("%s belongs to space %q, expected %q", relPath, doc.Frontmatter.ConfluenceSpaceKey, opts.SpaceKey)
 	}
 
-	remotePage, ok := remotePageByID[pageID]
-	if !ok {
-		fetched, fetchErr := remote.GetPage(ctx, pageID)
-		if fetchErr != nil {
-			if errors.Is(fetchErr, confluence.ErrNotFound) {
-				return PushCommitPlan{}, fmt.Errorf("remote page %s for %s was not found", pageID, relPath)
-			}
-			return PushCommitPlan{}, fmt.Errorf("fetch page %s: %w", pageID, fetchErr)
-		}
-		remotePage = fetched
-		remotePageByID[pageID] = fetched
-	}
-
 	localVersion := doc.Frontmatter.ConfluenceVersion
-	if remotePage.Version > localVersion {
-		switch policy {
-		case PushConflictPolicyForce:
-			// Continue and overwrite on top of remote head.
-		case PushConflictPolicyPullMerge, PushConflictPolicyCancel:
-			return PushCommitPlan{}, &PushConflictError{
-				Path:          relPath,
-				PageID:        pageID,
-				LocalVersion:  localVersion,
-				RemoteVersion: remotePage.Version,
-				Policy:        policy,
+	var remotePage confluence.Page
+	if pageID != "" {
+		var ok bool
+		remotePage, ok = remotePageByID[pageID]
+		if !ok {
+			fetched, fetchErr := remote.GetPage(ctx, pageID)
+			if fetchErr != nil {
+				if errors.Is(fetchErr, confluence.ErrNotFound) {
+					return PushCommitPlan{}, fmt.Errorf("remote page %s for %s was not found", pageID, relPath)
+				}
+				return PushCommitPlan{}, fmt.Errorf("fetch page %s: %w", pageID, fetchErr)
 			}
-		default:
-			return PushCommitPlan{}, &PushConflictError{
-				Path:          relPath,
-				PageID:        pageID,
-				LocalVersion:  localVersion,
-				RemoteVersion: remotePage.Version,
-				Policy:        PushConflictPolicyCancel,
+			remotePage = fetched
+			remotePageByID[pageID] = fetched
+		}
+
+		if remotePage.Version > localVersion {
+			switch policy {
+			case PushConflictPolicyForce:
+				// Continue and overwrite on top of remote head.
+			case PushConflictPolicyPullMerge, PushConflictPolicyCancel:
+				return PushCommitPlan{}, &PushConflictError{
+					Path:          relPath,
+					PageID:        pageID,
+					LocalVersion:  localVersion,
+					RemoteVersion: remotePage.Version,
+					Policy:        policy,
+				}
+			default:
+				return PushCommitPlan{}, &PushConflictError{
+					Path:          relPath,
+					PageID:        pageID,
+					LocalVersion:  localVersion,
+					RemoteVersion: remotePage.Version,
+					Policy:        PushConflictPolicyCancel,
+				}
 			}
 		}
+	} else {
+		// Create a placeholder page to get an ID for attachments
+		title := resolveLocalTitle(doc, relPath)
+		resolvedParentID := resolveParentIDFromHierarchy(relPath, "", doc.Frontmatter.ConfluenceParentPageID, pageIDByPath)
+		created, err := remote.CreatePage(ctx, confluence.PageUpsertInput{
+			SpaceID:      space.ID,
+			ParentPageID: resolvedParentID,
+			Title:        title,
+			Status:       "current",
+			BodyADF:      []byte(`{"version":1,"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"Initial sync..."}]}]}`),
+		})
+		if err != nil {
+			return PushCommitPlan{}, fmt.Errorf("create placeholder page for %s: %w", relPath, err)
+		}
+		pageID = created.ID
+		doc.Frontmatter.ConfluencePageID = pageID
+		doc.Frontmatter.ConfluenceSpaceKey = opts.SpaceKey
+		doc.Frontmatter.ConfluenceVersion = created.Version
+		localVersion = created.Version
+		remotePage = created
+		remotePageByID[pageID] = created
+		pageIDByPath[normalizeRelPath(relPath)] = pageID
 	}
 
 	linkHook := NewReverseLinkHook(opts.SpaceDir, pageIDByPath, opts.Domain)

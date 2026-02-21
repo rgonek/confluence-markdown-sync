@@ -336,8 +336,8 @@ func TestRunPush_NonInteractiveRequiresYesForDeleteConfirmation(t *testing.T) {
 	if !strings.Contains(err.Error(), "requires confirmation") {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if factoryCalls != 0 {
-		t.Fatalf("expected remote factory to not be called, got %d", factoryCalls)
+	if factoryCalls != 1 {
+		t.Fatalf("expected push remote factory to be called exactly once for early resolution, got %d", factoryCalls)
 	}
 }
 
@@ -610,6 +610,22 @@ func (f *cmdFakePushRemote) GetPage(_ context.Context, pageID string) (confluenc
 		return confluence.Page{}, confluence.ErrNotFound
 	}
 	return page, nil
+}
+
+func (f *cmdFakePushRemote) CreatePage(_ context.Context, input confluence.PageUpsertInput) (confluence.Page, error) {
+	id := fmt.Sprintf("new-page-%d", len(f.pagesByID)+1)
+	created := confluence.Page{
+		ID:           id,
+		SpaceID:      input.SpaceID,
+		Title:        input.Title,
+		ParentPageID: input.ParentPageID,
+		Version:      1,
+		LastModified: time.Now().UTC(),
+		WebURL:       fmt.Sprintf("https://example.atlassian.net/wiki/pages/%s", id),
+	}
+	f.pagesByID[id] = created
+	f.pages = append(f.pages, created)
+	return created, nil
 }
 
 func (f *cmdFakePushRemote) UpdatePage(_ context.Context, pageID string, input confluence.PageUpsertInput) (confluence.Page, error) {

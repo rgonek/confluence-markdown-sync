@@ -171,6 +171,14 @@ func NewReverseLinkHook(spaceDir string, index PageIndex, domain string) mdconv.
 		// Look up in index
 		pageID, ok := index[targetPath]
 		if !ok {
+			// Check if destination exists locally
+			if _, err := os.Stat(destPath); err == nil {
+				// File exists but no ID yet. Use placeholder for validation/pre-push conversion.
+				return mdconv.LinkParseOutput{
+					Destination: "https://placeholder.invalid/page/" + url.PathEscape(targetPath),
+					Handled:     true,
+				}, nil
+			}
 			return mdconv.LinkParseOutput{}, mdconv.ErrUnresolved
 		}
 

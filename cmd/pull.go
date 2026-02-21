@@ -188,7 +188,7 @@ func runPull(cmd *cobra.Command, target config.Target) (runErr error) {
 		fmt.Fprintf(out, "warning: %s [%s] %s\n", diag.Path, diag.Code, diag.Message)
 	}
 
-	if _, err := runGit(repoRoot, "add", "-f", "--", scopePath); err != nil {
+	if _, err := runGit(repoRoot, "add", "--", scopePath); err != nil {
 		return err
 	}
 

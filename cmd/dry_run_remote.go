@@ -29,7 +29,35 @@ func (d *dryRunPushRemote) GetPage(ctx context.Context, pageID string) (confluen
 	return d.inner.GetPage(ctx, pageID)
 }
 
+func (d *dryRunPushRemote) CreatePage(ctx context.Context, input confluence.PageUpsertInput) (confluence.Page, error) {
+	fmt.Fprintf(d.out, "[DRY-RUN] CREATE PAGE (POST %s/wiki/api/v2/pages)\n", d.domain)
+	fmt.Fprintf(d.out, "  Title: %s\n", input.Title)
+	if input.ParentPageID != "" {
+		fmt.Fprintf(d.out, "  ParentPageID: %s\n", input.ParentPageID)
+	}
+	fmt.Fprintf(d.out, "  Status: %s\n", input.Status)
+
+	var formattedADF bytes.Buffer
+	if err := json.Indent(&formattedADF, input.BodyADF, "  ", "  "); err == nil {
+		fmt.Fprintf(d.out, "  BodyADF:\n  %s\n", formattedADF.String())
+	} else {
+		fmt.Fprintf(d.out, "  BodyADF: %s\n", string(input.BodyADF))
+	}
+	fmt.Fprintln(d.out)
+
+	return confluence.Page{
+		ID:           "dry-run-new-page-id",
+		SpaceID:      input.SpaceID,
+		Title:        input.Title,
+		Status:       input.Status,
+		ParentPageID: input.ParentPageID,
+		Version:      1,
+		WebURL:       fmt.Sprintf("%s/spaces/%s/pages/%s", d.domain, input.SpaceID, "dry-run-new-page-id"),
+	}, nil
+}
+
 func (d *dryRunPushRemote) UpdatePage(ctx context.Context, pageID string, input confluence.PageUpsertInput) (confluence.Page, error) {
+
 	fmt.Fprintf(d.out, "[DRY-RUN] UPDATE PAGE (PUT %s/wiki/api/v2/pages/%s)\n", d.domain, pageID)
 	fmt.Fprintf(d.out, "  Title: %s\n", input.Title)
 	if input.ParentPageID != "" {

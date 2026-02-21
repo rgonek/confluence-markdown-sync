@@ -652,6 +652,10 @@ func toSyncPushChanges(changes []git.FileStatus, repoRoot, spaceDir string) ([]s
 			continue
 		}
 
+		if !strings.HasSuffix(relPath, ".md") || strings.HasPrefix(relPath, "assets/") {
+			continue
+		}
+
 		var changeType syncflow.PushChangeType
 		switch change.Code {
 		case "A":
