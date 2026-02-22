@@ -30,32 +30,46 @@ cms.exe
 
 const agentsMDTemplate = `# AGENTS
 
-## Purpose
-This repository uses ` + "`cms`" + ` (confluence-sync) to sync Confluence pages with local Markdown files.
+This repository uses ` + "`cms`" + ` (confluence-sync) to manage Confluence documentation as Markdown.
+
+## Intended Usages
+
+### 1. Human-in-the-Loop (Agent as Writer)
+In this mode, the agent edits Markdown files, and a human performs the sync commands.
+- **Workflow**:
+  - Edit ` + "`.md`" + ` files in the space directories.
+  - Run ` + "`cms validate [TARGET]`" + ` to ensure your changes are compatible with Confluence.
+  - Inform the human when changes are ready for ` + "`cms push`" + `.
+- **Rules**:
+  - NEVER manually edit ` + "`id`" + ` or ` + "`space`" + ` in frontmatter.
+  - Add images to the correct ` + "`assets/`" + ` subfolder.
+
+### 2. Full Agentic Use (Autonomous Sync)
+In this mode, the agent is responsible for the entire lifecycle.
+- **Workflow**:
+  - ` + "`cms pull [SPACE]`" + ` — Always pull first to avoid conflicts.
+  - Edit/Create Markdown files.
+  - ` + "`cms validate [SPACE]`" + ` — Verify all links and assets.
+  - ` + "`cms diff [SPACE]`" + ` — Preview changes.
+  - ` + "`cms push [SPACE] --on-conflict=pull-merge`" + ` — Publish changes.
+- **Automation**: Use ` + "`--yes`" + ` and ` + "`--non-interactive`" + ` in CI/CD or automated scripts.
 
 ## Core Invariants
-- ` + "`push`" + ` must always run ` + "`validate`" + ` before any remote write.
-- Immutable frontmatter keys (do not edit manually):
-  - ` + "`id`" + `
-  - ` + "`space`" + `
-- Mutable-by-sync frontmatter keys (managed by ` + "`cms`" + ` only):
-  - ` + "`version`" + `
+- **Source of Truth**: Confluence is the primary source of truth for IDs and versions. Local Markdown is the source of truth for content between syncs.
+- **Validation**: ` + "`push`" + ` will fail if ` + "`validate`" + ` fails.
+- **Frontmatter**:
+  - ` + "`id`" + `, ` + "`space`" + `: Immutable.
+  - ` + "`version`" + `: Managed by ` + "`cms`" + `.
+- **State**: ` + "`.confluence-state.json`" + ` tracks sync state. Do not delete.
 
-## Workflow
-- ` + "`cms pull [SPACE_KEY]`" + ` — fetch remote changes and update local Markdown files.
-- ` + "`cms push [SPACE_KEY]`" + ` — validate and publish local changes to Confluence.
-- ` + "`cms validate [SPACE_KEY]`" + ` — check frontmatter and conversion before push.
-- ` + "`cms diff [SPACE_KEY]`" + ` — compare local files with remote Confluence content.
-
-## AI-Safe Rules
-- Do not modify ` + "`id`" + ` or ` + "`space`" + ` frontmatter fields.
-- Do not delete or rename ` + "`.confluence-state.json`" + ` (it is gitignored; managed by ` + "`cms`" + `).
-- Do not commit ` + "`.env`" + ` files (they contain API credentials).
+## Space-Specific Rules
+Each space directory (e.g., ` + "`Technical documentation (TD)/`" + `) may contain its own ` + "`AGENTS.md`" + ` with space-specific content rules (e.g., required templates, PII guidelines). Check those if they exist.
 `
 
 const readmeMDTemplate = `# Confluence Markdown Sync
 
 This workspace is managed by [cms](https://github.com/rgonek/confluence-markdown-sync).
+
 
 ## Quick Start
 

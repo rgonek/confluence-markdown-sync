@@ -185,6 +185,7 @@ func runPull(cmd *cobra.Command, target config.Target) (runErr error) {
 	}
 
 	for _, diag := range result.Diagnostics {
+
 		fmt.Fprintf(out, "warning: %s [%s] %s\n", diag.Path, diag.Code, diag.Message)
 	}
 
@@ -664,4 +665,30 @@ func runGit(workdir string, args ...string) (string, error) {
 func dirExists(path string) bool {
 	info, err := os.Stat(path)
 	return err == nil && info.IsDir()
+}
+
+func ensureSpaceAgentsMD(spaceDir, spaceKey string) {
+	path := filepath.Join(spaceDir, "AGENTS.md")
+	if _, err := os.Stat(path); err == nil {
+		return // Already exists
+	}
+
+	content := fmt.Sprintf(`# AGENTS (%s)
+
+This space directory contains Markdown files synced from Confluence space [%s].
+
+## Space Purpose
+[Describe what this space is for, e.g., Technical Documentation, HR Policies, etc.]
+
+## Space-Specific Rules
+- [e.g., Use Mermaid for all diagrams]
+- [e.g., Every page must have a 'Last Reviewed' date at the bottom]
+- [e.g., Do not include customer names in these docs]
+
+## Sync Workflow
+- Use `+"`cms pull`"+` to get latest updates.
+- Use `+"`cms push`"+` to publish your changes.
+`, spaceKey, spaceKey)
+
+	_ = os.WriteFile(path, []byte(content), 0644)
 }
