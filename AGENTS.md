@@ -10,12 +10,10 @@ This repository builds `cms` (`confluence-sync`), a Go CLI that syncs Confluence
 ## Core Invariants
 - `push` must always run `validate` before any remote write.
 - Immutable frontmatter keys:
-  - `confluence_page_id`
-  - `confluence_space_key`
+  - `id`
+  - `space`
 - Mutable-by-sync frontmatter keys:
-  - `confluence_version`
-  - `confluence_last_modified`
-  - `confluence_parent_page_id`
+  - `version`
 - Remote deletions are hard-deleted locally during `pull` (recovery is via Git history).
 - `.confluence-state.json` is local state and must stay gitignored.
 

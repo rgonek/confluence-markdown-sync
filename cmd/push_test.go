@@ -25,9 +25,9 @@ func TestRunPush_UnresolvedValidationStopsBeforeRemoteWrites(t *testing.T) {
 	writeMarkdown(t, filepath.Join(spaceDir, "root.md"), fs.MarkdownDocument{
 		Frontmatter: fs.Frontmatter{
 			Title:                  "Root",
-			ConfluencePageID:       "1",
-			ConfluenceSpaceKey:     "ENG",
-			ConfluenceVersion:      1,
+			ID:                     "1",
+			Space:                  "ENG",
+			Version:                1,
 			ConfluenceLastModified: "2026-02-01T10:00:00Z",
 		},
 		Body: "[Broken](missing.md)\n",
@@ -103,9 +103,9 @@ func TestRunPush_ConflictPolicies(t *testing.T) {
 			writeMarkdown(t, filepath.Join(spaceDir, "root.md"), fs.MarkdownDocument{
 				Frontmatter: fs.Frontmatter{
 					Title:                  "Root",
-					ConfluencePageID:       "1",
-					ConfluenceSpaceKey:     "ENG",
-					ConfluenceVersion:      1,
+					ID:                     "1",
+					Space:                  "ENG",
+					Version:                1,
 					ConfluenceLastModified: "2026-02-01T10:00:00Z",
 				},
 				Body: "Updated local content\n",
@@ -163,9 +163,9 @@ func TestRunPush_WritesStructuredCommitTrailers(t *testing.T) {
 	writeMarkdown(t, filepath.Join(spaceDir, "root.md"), fs.MarkdownDocument{
 		Frontmatter: fs.Frontmatter{
 			Title:                  "Root",
-			ConfluencePageID:       "1",
-			ConfluenceSpaceKey:     "ENG",
-			ConfluenceVersion:      1,
+			ID:                     "1",
+			Space:                  "ENG",
+			Version:                1,
 			ConfluenceLastModified: "2026-02-01T10:00:00Z",
 		},
 		Body: "Updated local content\n",
@@ -220,9 +220,9 @@ func TestRunPush_FileModeStillRequiresOnConflict(t *testing.T) {
 	writeMarkdown(t, rootFile, fs.MarkdownDocument{
 		Frontmatter: fs.Frontmatter{
 			Title:                  "Root",
-			ConfluencePageID:       "1",
-			ConfluenceSpaceKey:     "ENG",
-			ConfluenceVersion:      1,
+			ID:                     "1",
+			Space:                  "ENG",
+			Version:                1,
 			ConfluenceLastModified: "2026-02-01T10:00:00Z",
 		},
 		Body: "Updated local content\n",
@@ -259,6 +259,191 @@ func TestRunPush_FileModeStillRequiresOnConflict(t *testing.T) {
 	}
 }
 
+func TestRunPush_FileTargetDetectsWorkspaceChanges(t *testing.T) {
+	repo := t.TempDir()
+	spaceDir := preparePushRepoWithBaseline(t, repo)
+	rootFile := filepath.Join(spaceDir, "root.md")
+
+	writeMarkdown(t, rootFile, fs.MarkdownDocument{
+		Frontmatter: fs.Frontmatter{
+			Title:                  "Root",
+			ID:                     "1",
+			Space:                  "ENG",
+			Version:                1,
+			ConfluenceLastModified: "2026-02-01T10:00:00Z",
+		},
+		Body: "Updated local content\n",
+	})
+
+	fake := newCmdFakePushRemote(1)
+	oldFactory := newPushRemote
+	newPushRemote = func(_ *config.Config) (syncflow.PushRemote, error) { return fake, nil }
+	t.Cleanup(func() { newPushRemote = oldFactory })
+
+	setupEnv(t)
+	chdirRepo(t, spaceDir)
+
+	cmd := &cobra.Command{}
+	cmd.SetOut(&bytes.Buffer{})
+
+	if err := runPush(cmd, config.Target{Mode: config.TargetModeFile, Value: rootFile}, OnConflictCancel, false); err != nil {
+		t.Fatalf("runPush() unexpected error: %v", err)
+	}
+	if len(fake.updateCalls) != 1 {
+		t.Fatalf("expected one update call for file target push, got %d", len(fake.updateCalls))
+	}
+}
+
+func TestRunPush_DryRunDoesNotMutateFrontmatter(t *testing.T) {
+	repo := t.TempDir()
+	spaceDir := preparePushRepoWithBaseline(t, repo)
+
+	newFile := filepath.Join(spaceDir, "new-page.md")
+	writeMarkdown(t, newFile, fs.MarkdownDocument{
+		Frontmatter: fs.Frontmatter{
+			Title: "New page",
+			Space: "ENG",
+		},
+		Body: "new content\n",
+	})
+
+	fake := newCmdFakePushRemote(1)
+	oldFactory := newPushRemote
+	newPushRemote = func(_ *config.Config) (syncflow.PushRemote, error) { return fake, nil }
+	t.Cleanup(func() { newPushRemote = oldFactory })
+
+	setupEnv(t)
+	chdirRepo(t, spaceDir)
+	setAutomationFlags(t, true, true)
+
+	cmd := &cobra.Command{}
+	cmd.SetOut(&bytes.Buffer{})
+
+	if err := runPush(cmd, config.Target{Mode: config.TargetModeSpace, Value: ""}, OnConflictPullMerge, true); err != nil {
+		t.Fatalf("runPush dry-run error: %v", err)
+	}
+
+	doc, err := fs.ReadMarkdownDocument(newFile)
+	if err != nil {
+		t.Fatalf("read new page: %v", err)
+	}
+	if doc.Frontmatter.ID != "" {
+		t.Fatalf("dry-run mutated id: %q", doc.Frontmatter.ID)
+	}
+	if doc.Frontmatter.Version != 0 {
+		t.Fatalf("dry-run mutated version: %d", doc.Frontmatter.Version)
+	}
+}
+
+func TestRunPush_IncludesUntrackedAssetsFromWorkspaceSnapshot(t *testing.T) {
+	repo := t.TempDir()
+	spaceDir := preparePushRepoWithBaseline(t, repo)
+
+	writeMarkdown(t, filepath.Join(spaceDir, "root.md"), fs.MarkdownDocument{
+		Frontmatter: fs.Frontmatter{
+			Title:                  "Root",
+			ID:                     "1",
+			Space:                  "ENG",
+			Version:                1,
+			ConfluenceLastModified: "2026-02-01T10:00:00Z",
+		},
+		Body: "![asset](assets/new.png)\n",
+	})
+
+	assetPath := filepath.Join(spaceDir, "assets", "new.png")
+	if err := os.MkdirAll(filepath.Dir(assetPath), 0o755); err != nil {
+		t.Fatalf("mkdir assets dir: %v", err)
+	}
+	if err := os.WriteFile(assetPath, []byte("png"), 0o644); err != nil {
+		t.Fatalf("write asset: %v", err)
+	}
+
+	fake := newCmdFakePushRemote(1)
+	oldFactory := newPushRemote
+	newPushRemote = func(_ *config.Config) (syncflow.PushRemote, error) { return fake, nil }
+	t.Cleanup(func() { newPushRemote = oldFactory })
+
+	setupEnv(t)
+	chdirRepo(t, spaceDir)
+
+	cmd := &cobra.Command{}
+	cmd.SetOut(&bytes.Buffer{})
+
+	if err := runPush(cmd, config.Target{Mode: config.TargetModeSpace, Value: ""}, OnConflictCancel, false); err != nil {
+		t.Fatalf("runPush() unexpected error: %v", err)
+	}
+	if len(fake.uploadAttachmentCalls) != 1 {
+		t.Fatalf("expected one uploaded attachment, got %d", len(fake.uploadAttachmentCalls))
+	}
+}
+
+func TestRunPush_PreflightShowsPlanWithoutRemoteWrites(t *testing.T) {
+	repo := t.TempDir()
+	spaceDir := preparePushRepoWithBaseline(t, repo)
+
+	writeMarkdown(t, filepath.Join(spaceDir, "root.md"), fs.MarkdownDocument{
+		Frontmatter: fs.Frontmatter{
+			Title:                  "Root",
+			ID:                     "1",
+			Space:                  "ENG",
+			Version:                1,
+			ConfluenceLastModified: "2026-02-01T10:00:00Z",
+		},
+		Body: "Updated local content\n",
+	})
+	runGitForTest(t, repo, "add", ".")
+	runGitForTest(t, repo, "commit", "-m", "local change")
+
+	previousPreflight := flagPushPreflight
+	flagPushPreflight = true
+	t.Cleanup(func() { flagPushPreflight = previousPreflight })
+
+	factoryCalls := 0
+	oldFactory := newPushRemote
+	newPushRemote = func(_ *config.Config) (syncflow.PushRemote, error) {
+		factoryCalls++
+		return newCmdFakePushRemote(1), nil
+	}
+	t.Cleanup(func() { newPushRemote = oldFactory })
+
+	setupEnv(t)
+	chdirRepo(t, spaceDir)
+
+	cmd := &cobra.Command{}
+	out := &bytes.Buffer{}
+	cmd.SetOut(out)
+
+	if err := runPush(cmd, config.Target{Mode: config.TargetModeSpace, Value: ""}, "", false); err != nil {
+		t.Fatalf("runPush() preflight unexpected error: %v", err)
+	}
+	if factoryCalls != 0 {
+		t.Fatalf("preflight should not require remote factory here, got %d calls", factoryCalls)
+	}
+
+	text := out.String()
+	if !strings.Contains(text, "preflight for space ENG") {
+		t.Fatalf("preflight output missing header:\n%s", text)
+	}
+	if !strings.Contains(text, "changes: 1 (A:0 M:1 D:0)") {
+		t.Fatalf("preflight output missing change summary:\n%s", text)
+	}
+}
+
+func TestRunPush_PreflightRejectsDryRunCombination(t *testing.T) {
+	previousPreflight := flagPushPreflight
+	flagPushPreflight = true
+	t.Cleanup(func() { flagPushPreflight = previousPreflight })
+
+	cmd := &cobra.Command{}
+	err := runPush(cmd, config.Target{Mode: config.TargetModeSpace, Value: "ENG"}, "", true)
+	if err == nil {
+		t.Fatal("expected error when combining --preflight and --dry-run")
+	}
+	if !strings.Contains(err.Error(), "--preflight and --dry-run cannot be used together") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 func TestRunPush_SpaceModeAssumesPullMerge(t *testing.T) {
 	repo := t.TempDir()
 	spaceDir := preparePushRepoWithBaseline(t, repo)
@@ -266,9 +451,9 @@ func TestRunPush_SpaceModeAssumesPullMerge(t *testing.T) {
 	writeMarkdown(t, filepath.Join(spaceDir, "root.md"), fs.MarkdownDocument{
 		Frontmatter: fs.Frontmatter{
 			Title:                  "Root",
-			ConfluencePageID:       "1",
-			ConfluenceSpaceKey:     "ENG",
-			ConfluenceVersion:      1,
+			ID:                     "1",
+			Space:                  "ENG",
+			Version:                1,
 			ConfluenceLastModified: "2026-02-01T10:00:00Z",
 		},
 		Body: "Updated local content\n",
@@ -376,9 +561,9 @@ func TestRunPush_WorksWithoutGitRemoteConfigured(t *testing.T) {
 	writeMarkdown(t, filepath.Join(spaceDir, "root.md"), fs.MarkdownDocument{
 		Frontmatter: fs.Frontmatter{
 			Title:                  "Root",
-			ConfluencePageID:       "1",
-			ConfluenceSpaceKey:     "ENG",
-			ConfluenceVersion:      1,
+			ID:                     "1",
+			Space:                  "ENG",
+			Version:                1,
 			ConfluenceLastModified: "2026-02-01T10:00:00Z",
 		},
 		Body: "Updated local content\n",
@@ -412,9 +597,9 @@ func TestRunPush_FailureRetainsSnapshotAndSyncBranch(t *testing.T) {
 	writeMarkdown(t, filepath.Join(spaceDir, "root.md"), fs.MarkdownDocument{
 		Frontmatter: fs.Frontmatter{
 			Title:                  "Root",
-			ConfluencePageID:       "1",
-			ConfluenceSpaceKey:     "ENG",
-			ConfluenceVersion:      1,
+			ID:                     "1",
+			Space:                  "ENG",
+			Version:                1,
 			ConfluenceLastModified: "2026-02-01T10:00:00Z",
 		},
 		Body: "Updated local content that will fail\n",
@@ -470,9 +655,9 @@ func TestRunPush_PreservesOutOfScopeChanges(t *testing.T) {
 	writeMarkdown(t, filepath.Join(spaceDir, "root.md"), fs.MarkdownDocument{
 		Frontmatter: fs.Frontmatter{
 			Title:                  "Root",
-			ConfluencePageID:       "1",
-			ConfluenceSpaceKey:     "ENG",
-			ConfluenceVersion:      1,
+			ID:                     "1",
+			Space:                  "ENG",
+			Version:                1,
 			ConfluenceLastModified: "2026-02-01T10:00:00Z",
 		},
 		Body: "Updated local content\n",
@@ -504,8 +689,8 @@ func TestRunPush_PreservesOutOfScopeChanges(t *testing.T) {
 	}
 
 	doc, _ := fs.ReadMarkdownDocument(filepath.Join(spaceDir, "root.md"))
-	if doc.Frontmatter.ConfluenceVersion != 2 {
-		t.Errorf("expected version 2, got %d", doc.Frontmatter.ConfluenceVersion)
+	if doc.Frontmatter.Version != 2 {
+		t.Errorf("expected version 2, got %d", doc.Frontmatter.Version)
 	}
 
 	stashList := runGitForTest(t, repo, "stash", "list")
@@ -535,9 +720,9 @@ func preparePushRepoWithBaseline(t *testing.T, repo string) string {
 	writeMarkdown(t, filepath.Join(spaceDir, "root.md"), fs.MarkdownDocument{
 		Frontmatter: fs.Frontmatter{
 			Title:                  "Root",
-			ConfluencePageID:       "1",
-			ConfluenceSpaceKey:     "ENG",
-			ConfluenceVersion:      1,
+			ID:                     "1",
+			Space:                  "ENG",
+			Version:                1,
 			ConfluenceLastModified: "2026-02-01T10:00:00Z",
 		},
 		Body: "Baseline\n",

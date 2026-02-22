@@ -313,12 +313,10 @@ func Pull(ctx context.Context, remote PullRemote, opts PullOptions) (PullResult,
 
 		doc := fs.MarkdownDocument{
 			Frontmatter: fs.Frontmatter{
-				Title:                  page.Title,
-				ConfluencePageID:       page.ID,
-				ConfluenceSpaceKey:     opts.SpaceKey,
-				ConfluenceVersion:      page.Version,
-				ConfluenceLastModified: page.LastModified.UTC().Format(time.RFC3339),
-				ConfluenceParentPageID: page.ParentPageID,
+				Title:   page.Title,
+				ID:      page.ID,
+				Space:   opts.SpaceKey,
+				Version: page.Version,
 			},
 			Body: forward.Markdown,
 		}

@@ -7,7 +7,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -19,15 +18,13 @@ const (
 var (
 	// ImmutableFrontmatterKeys contains keys that cannot be changed manually.
 	ImmutableFrontmatterKeys = []string{
-		"confluence_page_id",
-		"confluence_space_key",
+		"id",
+		"space",
 	}
 
 	// MutableBySyncFrontmatterKeys contains keys that are managed by sync operations.
 	MutableBySyncFrontmatterKeys = []string{
-		"confluence_version",
-		"confluence_last_modified",
-		"confluence_parent_page_id",
+		"version",
 	}
 )
 
@@ -40,13 +37,95 @@ var (
 
 // Frontmatter holds known Confluence sync metadata keys plus optional custom keys.
 type Frontmatter struct {
-	Title                  string         `yaml:"title,omitempty"`
-	ConfluencePageID       string         `yaml:"confluence_page_id"`
-	ConfluenceSpaceKey     string         `yaml:"confluence_space_key"`
-	ConfluenceVersion      int            `yaml:"confluence_version"`
-	ConfluenceLastModified string         `yaml:"confluence_last_modified"`
-	ConfluenceParentPageID string         `yaml:"confluence_parent_page_id,omitempty"`
-	Extra                  map[string]any `yaml:",inline"`
+	Title   string
+	ID      string
+	Space   string
+	Version int
+
+	// Legacy metadata retained in-memory only for transitional behavior.
+	ConfluenceLastModified string `yaml:"-"`
+	ConfluenceParentPageID string `yaml:"-"`
+
+	Extra map[string]any
+}
+
+type frontmatterYAML struct {
+	Title   string `yaml:"title,omitempty"`
+	ID      string `yaml:"id,omitempty"`
+	Space   string `yaml:"space,omitempty"`
+	Version int    `yaml:"version,omitempty"`
+
+	LegacyPageID       string `yaml:"confluence_page_id,omitempty"`
+	LegacySpaceKey     string `yaml:"confluence_space_key,omitempty"`
+	LegacyVersion      int    `yaml:"confluence_version,omitempty"`
+	LegacyLastModified string `yaml:"confluence_last_modified,omitempty"`
+	LegacyParentPageID string `yaml:"confluence_parent_page_id,omitempty"`
+
+	Extra map[string]any `yaml:",inline"`
+}
+
+func (fm Frontmatter) MarshalYAML() (any, error) {
+	extra := map[string]any{}
+	for key, value := range fm.Extra {
+		switch key {
+		case "title", "id", "space", "version",
+			"confluence_page_id", "confluence_space_key", "confluence_version",
+			"confluence_last_modified", "confluence_parent_page_id":
+			continue
+		default:
+			extra[key] = value
+		}
+	}
+
+	return frontmatterYAML{
+		Title:   fm.Title,
+		ID:      fm.ID,
+		Space:   fm.Space,
+		Version: fm.Version,
+		Extra:   extra,
+	}, nil
+}
+
+func (fm *Frontmatter) UnmarshalYAML(value *yaml.Node) error {
+	var decoded frontmatterYAML
+	if err := value.Decode(&decoded); err != nil {
+		return err
+	}
+
+	fm.Title = strings.TrimSpace(decoded.Title)
+	fm.ID = strings.TrimSpace(decoded.ID)
+	fm.Space = strings.TrimSpace(decoded.Space)
+	fm.Version = decoded.Version
+
+	if fm.ID == "" {
+		fm.ID = strings.TrimSpace(decoded.LegacyPageID)
+	}
+	if fm.Space == "" {
+		fm.Space = strings.TrimSpace(decoded.LegacySpaceKey)
+	}
+	if fm.Version == 0 {
+		fm.Version = decoded.LegacyVersion
+	}
+
+	fm.ConfluenceLastModified = strings.TrimSpace(decoded.LegacyLastModified)
+	fm.ConfluenceParentPageID = strings.TrimSpace(decoded.LegacyParentPageID)
+
+	if decoded.Extra == nil {
+		fm.Extra = map[string]any{}
+		return nil
+	}
+
+	delete(decoded.Extra, "title")
+	delete(decoded.Extra, "id")
+	delete(decoded.Extra, "space")
+	delete(decoded.Extra, "version")
+	delete(decoded.Extra, "confluence_page_id")
+	delete(decoded.Extra, "confluence_space_key")
+	delete(decoded.Extra, "confluence_version")
+	delete(decoded.Extra, "confluence_last_modified")
+	delete(decoded.Extra, "confluence_parent_page_id")
+	fm.Extra = decoded.Extra
+	return nil
 }
 
 // MarkdownDocument represents a markdown file with YAML frontmatter.
@@ -192,35 +271,22 @@ func ReadFrontmatter(path string) (Frontmatter, error) {
 func ValidateFrontmatterSchema(fm Frontmatter) ValidationResult {
 	result := ValidationResult{}
 
-	// confluence_page_id is optional for new pages but must be valid if present
-	// confluence_space_key is always required
-	if strings.TrimSpace(fm.ConfluenceSpaceKey) == "" {
+	// id is optional for new pages but must be valid if present
+	// space is always required
+	if strings.TrimSpace(fm.Space) == "" {
 		result.Issues = append(result.Issues, ValidationIssue{
-			Field:   "confluence_space_key",
+			Field:   "space",
 			Code:    "required",
-			Message: "confluence_space_key is required",
+			Message: "space is required",
 		})
 	}
 
-	if strings.TrimSpace(fm.ConfluencePageID) != "" {
-		if fm.ConfluenceVersion <= 0 {
+	if strings.TrimSpace(fm.ID) != "" {
+		if fm.Version <= 0 {
 			result.Issues = append(result.Issues, ValidationIssue{
-				Field:   "confluence_version",
+				Field:   "version",
 				Code:    "invalid",
-				Message: "confluence_version must be greater than zero for existing pages",
-			})
-		}
-		if strings.TrimSpace(fm.ConfluenceLastModified) == "" {
-			result.Issues = append(result.Issues, ValidationIssue{
-				Field:   "confluence_last_modified",
-				Code:    "required",
-				Message: "confluence_last_modified is required for existing pages",
-			})
-		} else if _, err := time.Parse(time.RFC3339, fm.ConfluenceLastModified); err != nil {
-			result.Issues = append(result.Issues, ValidationIssue{
-				Field:   "confluence_last_modified",
-				Code:    "invalid",
-				Message: "confluence_last_modified must be RFC3339",
+				Message: "version must be greater than zero for existing pages",
 			})
 		}
 	}
@@ -232,18 +298,18 @@ func ValidateFrontmatterSchema(fm Frontmatter) ValidationResult {
 func ValidateImmutableFrontmatter(previous, current Frontmatter) ValidationResult {
 	result := ValidationResult{}
 
-	if strings.TrimSpace(previous.ConfluencePageID) != strings.TrimSpace(current.ConfluencePageID) {
+	if strings.TrimSpace(previous.ID) != strings.TrimSpace(current.ID) {
 		result.Issues = append(result.Issues, ValidationIssue{
-			Field:   "confluence_page_id",
+			Field:   "id",
 			Code:    "immutable",
-			Message: "confluence_page_id is immutable and cannot be changed manually",
+			Message: "id is immutable and cannot be changed manually",
 		})
 	}
-	if strings.TrimSpace(previous.ConfluenceSpaceKey) != strings.TrimSpace(current.ConfluenceSpaceKey) {
+	if strings.TrimSpace(previous.Space) != strings.TrimSpace(current.Space) {
 		result.Issues = append(result.Issues, ValidationIssue{
-			Field:   "confluence_space_key",
+			Field:   "space",
 			Code:    "immutable",
-			Message: "confluence_space_key is immutable and cannot be changed manually",
+			Message: "space is immutable and cannot be changed manually",
 		})
 	}
 

@@ -94,11 +94,6 @@ func runValidateTarget(out io.Writer, target config.Target) error {
 }
 
 func resolveValidateTargetContext(target config.Target) (validateTargetContext, error) {
-	cwd, err := os.Getwd()
-	if err != nil {
-		return validateTargetContext{}, err
-	}
-
 	if target.IsFile() {
 		abs, err := filepath.Abs(target.Value)
 		if err != nil {
@@ -114,9 +109,17 @@ func resolveValidateTargetContext(target config.Target) (validateTargetContext, 
 		}, nil
 	}
 
-	spaceDir, err := resolveSpaceDirFromTarget(cwd, target)
+	initialCtx, err := resolveInitialPullContext(target)
 	if err != nil {
 		return validateTargetContext{}, err
+	}
+	spaceDir := initialCtx.spaceDir
+	info, err := os.Stat(spaceDir)
+	if err != nil {
+		return validateTargetContext{}, fmt.Errorf("resolve space directory %s: %w", spaceDir, err)
+	}
+	if !info.IsDir() {
+		return validateTargetContext{}, fmt.Errorf("resolved space path is not a directory: %s", spaceDir)
 	}
 
 	files := make([]string, 0)
@@ -143,22 +146,6 @@ func resolveValidateTargetContext(target config.Target) (validateTargetContext, 
 	return validateTargetContext{spaceDir: spaceDir, files: files}, nil
 }
 
-func resolveSpaceDirFromTarget(cwd string, target config.Target) (string, error) {
-	if target.Value == "" {
-		return filepath.Abs(cwd)
-	}
-
-	if filepath.IsAbs(target.Value) {
-		return filepath.Abs(target.Value)
-	}
-
-	if info, err := os.Stat(target.Value); err == nil && info.IsDir() {
-		return filepath.Abs(target.Value)
-	}
-
-	return filepath.Abs(filepath.Join(cwd, target.Value))
-}
-
 func validateFile(path, spaceDir string, linkHook mdconverter.LinkParseHook, mediaHook mdconverter.MediaParseHook) []fs.ValidationIssue {
 	var issues []fs.ValidationIssue
 
@@ -179,23 +166,23 @@ func validateFile(path, spaceDir string, linkHook mdconverter.LinkParseHook, med
 	state, err := fs.LoadState(spaceDir)
 	if err == nil {
 		// We could collect space key from many files, but state is source of truth for "scoped" changes
-		// In fact, we should just check if doc.Frontmatter.ConfluenceSpaceKey is non-empty.
+		// In fact, we should just check if doc.Frontmatter.Space is non-empty.
 		// Detailed cross-file space key validation is complex if we have multiple spaces.
 		// Let's assume if it is valid by schema, we are mostly OK,
 		// but we can check it against state page_path_index if we want to be sure it belongs to this dir.
-		if doc.Frontmatter.ConfluenceSpaceKey == "" {
+		if doc.Frontmatter.Space == "" {
 			issues = append(issues, fs.ValidationIssue{
-				Field:   "confluence_space_key",
+				Field:   "space",
 				Code:    "required",
-				Message: "confluence_space_key is required",
+				Message: "space is required",
 			})
 		}
 
 		// If we have state, we can verify this page ID belongs to this space dir
-		if doc.Frontmatter.ConfluencePageID != "" {
+		if doc.Frontmatter.ID != "" {
 			found := false
 			for _, id := range state.PagePathIndex {
-				if id == doc.Frontmatter.ConfluencePageID {
+				if id == doc.Frontmatter.ID {
 					found = true
 					break
 				}

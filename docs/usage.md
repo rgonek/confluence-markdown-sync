@@ -129,19 +129,18 @@ Highlights:
 - strict conversion before remote writes,
 - isolated sync branch and worktree execution,
 - per-page commit metadata with Confluence trailers,
-- recovery refs retained on failures.
+- recovery refs retained on failures,
+- `--preflight` for a concise local push plan (change summary + validation) without remote writes.
 
 ## Metadata and State
 
 Markdown frontmatter keys:
 
 - immutable keys:
-  - `confluence_page_id`
-  - `confluence_space_key`
+  - `id`
+  - `space`
 - sync-managed keys:
-  - `confluence_version`
-  - `confluence_last_modified`
-  - `confluence_parent_page_id`
+  - `version`
 
 Local state file:
 

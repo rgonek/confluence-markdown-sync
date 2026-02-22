@@ -33,14 +33,12 @@ Compatibility and precedence:
 - **File Format**: Markdown (`.md`) with Frontmatter.
 - **Title Source of Truth**: Frontmatter `title` field. Fallback to first H1 header if missing.
 - **Frontmatter (required fields)**:
-  - `confluence_page_id`: Stable page ID for update/delete operations.
-  - `confluence_space_key`: Confluence space key for validation.
-  - `confluence_version`: Last synced remote version.
-  - `confluence_last_modified`: Last synced remote modified timestamp.
-  - `confluence_parent_page_id`: Optional parent ID for hierarchy rebuild.
+  - `id`: Stable page ID for update/delete operations.
+  - `space`: Confluence space key for validation.
+  - `version`: Last synced remote version.
 - **Frontmatter Mutability Rules**:
-  - Immutable: `confluence_page_id`, `confluence_space_key`.
-  - Mutable by sync only: `confluence_version`, `confluence_last_modified`, `confluence_parent_page_id`.
+  - Immutable: `id`, `space`.
+  - Mutable by sync only: `version`.
   - Manual or AI edits to immutable keys fail validation.
 - **State**:
     - **Per-Space State File**: `XXX/<SpaceKey>/.confluence-state.json`.

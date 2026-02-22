@@ -11,7 +11,6 @@ import (
 	"regexp"
 	"sort"
 	"strings"
-	"time"
 
 	"github.com/rgonek/confluence-markdown-sync/internal/confluence"
 	"github.com/rgonek/confluence-markdown-sync/internal/converter"
@@ -302,12 +301,13 @@ func pushUpsertPage(
 		return PushCommitPlan{}, fmt.Errorf("read markdown %s: %w", relPath, err)
 	}
 
-	pageID := strings.TrimSpace(doc.Frontmatter.ConfluencePageID)
-	if !strings.EqualFold(strings.TrimSpace(doc.Frontmatter.ConfluenceSpaceKey), strings.TrimSpace(opts.SpaceKey)) {
-		return PushCommitPlan{}, fmt.Errorf("%s belongs to space %q, expected %q", relPath, doc.Frontmatter.ConfluenceSpaceKey, opts.SpaceKey)
+	pageID := strings.TrimSpace(doc.Frontmatter.ID)
+	if !strings.EqualFold(strings.TrimSpace(doc.Frontmatter.Space), strings.TrimSpace(opts.SpaceKey)) {
+		return PushCommitPlan{}, fmt.Errorf("%s belongs to space %q, expected %q", relPath, doc.Frontmatter.Space, opts.SpaceKey)
 	}
 
-	localVersion := doc.Frontmatter.ConfluenceVersion
+	localVersion := doc.Frontmatter.Version
+	fallbackParentID := strings.TrimSpace(doc.Frontmatter.ConfluenceParentPageID)
 	var remotePage confluence.Page
 	if pageID != "" {
 		var ok bool
@@ -323,6 +323,7 @@ func pushUpsertPage(
 			remotePage = fetched
 			remotePageByID[pageID] = fetched
 		}
+		fallbackParentID = strings.TrimSpace(remotePage.ParentPageID)
 
 		if remotePage.Version > localVersion {
 			switch policy {
@@ -349,7 +350,7 @@ func pushUpsertPage(
 	} else {
 		// Create a placeholder page to get an ID for attachments
 		title := resolveLocalTitle(doc, relPath)
-		resolvedParentID := resolveParentIDFromHierarchy(relPath, "", doc.Frontmatter.ConfluenceParentPageID, pageIDByPath)
+		resolvedParentID := resolveParentIDFromHierarchy(relPath, "", fallbackParentID, pageIDByPath)
 		created, err := remote.CreatePage(ctx, confluence.PageUpsertInput{
 			SpaceID:      space.ID,
 			ParentPageID: resolvedParentID,
@@ -361,9 +362,9 @@ func pushUpsertPage(
 			return PushCommitPlan{}, fmt.Errorf("create placeholder page for %s: %w", relPath, err)
 		}
 		pageID = created.ID
-		doc.Frontmatter.ConfluencePageID = pageID
-		doc.Frontmatter.ConfluenceSpaceKey = opts.SpaceKey
-		doc.Frontmatter.ConfluenceVersion = created.Version
+		doc.Frontmatter.ID = pageID
+		doc.Frontmatter.Space = opts.SpaceKey
+		doc.Frontmatter.Version = created.Version
 		localVersion = created.Version
 		remotePage = created
 		remotePageByID[pageID] = created
@@ -452,7 +453,7 @@ func pushUpsertPage(
 	}
 
 	title := resolveLocalTitle(doc, relPath)
-	resolvedParentID := resolveParentIDFromHierarchy(relPath, pageID, doc.Frontmatter.ConfluenceParentPageID, pageIDByPath)
+	resolvedParentID := resolveParentIDFromHierarchy(relPath, pageID, fallbackParentID, pageIDByPath)
 	nextVersion := localVersion + 1
 	if policy == PushConflictPolicyForce && remotePage.Version >= nextVersion {
 		nextVersion = remotePage.Version + 1
@@ -471,11 +472,7 @@ func pushUpsertPage(
 	}
 
 	doc.Frontmatter.Title = title
-	doc.Frontmatter.ConfluenceVersion = updatedPage.Version
-	doc.Frontmatter.ConfluenceParentPageID = updatedPage.ParentPageID
-	if !updatedPage.LastModified.IsZero() {
-		doc.Frontmatter.ConfluenceLastModified = updatedPage.LastModified.UTC().Format(time.RFC3339)
-	}
+	doc.Frontmatter.Version = updatedPage.Version
 	if err := fs.WriteMarkdownDocument(absPath, doc); err != nil {
 		return PushCommitPlan{}, fmt.Errorf("write markdown %s: %w", relPath, err)
 	}

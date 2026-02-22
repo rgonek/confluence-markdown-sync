@@ -36,12 +36,10 @@ This repository uses ` + "`cms`" + ` (confluence-sync) to sync Confluence pages 
 ## Core Invariants
 - ` + "`push`" + ` must always run ` + "`validate`" + ` before any remote write.
 - Immutable frontmatter keys (do not edit manually):
-  - ` + "`confluence_page_id`" + `
-  - ` + "`confluence_space_key`" + `
+  - ` + "`id`" + `
+  - ` + "`space`" + `
 - Mutable-by-sync frontmatter keys (managed by ` + "`cms`" + ` only):
-  - ` + "`confluence_version`" + `
-  - ` + "`confluence_last_modified`" + `
-  - ` + "`confluence_parent_page_id`" + `
+  - ` + "`version`" + `
 
 ## Workflow
 - ` + "`cms pull [SPACE_KEY]`" + ` — fetch remote changes and update local Markdown files.
@@ -50,7 +48,7 @@ This repository uses ` + "`cms`" + ` (confluence-sync) to sync Confluence pages 
 - ` + "`cms diff [SPACE_KEY]`" + ` — compare local files with remote Confluence content.
 
 ## AI-Safe Rules
-- Do not modify ` + "`confluence_page_id`" + ` or ` + "`confluence_space_key`" + ` frontmatter fields.
+- Do not modify ` + "`id`" + ` or ` + "`space`" + ` frontmatter fields.
 - Do not delete or rename ` + "`.confluence-state.json`" + ` (it is gitignored; managed by ` + "`cms`" + `).
 - Do not commit ` + "`.env`" + ` files (they contain API credentials).
 `
@@ -86,7 +84,7 @@ ATLASSIAN_API_TOKEN=<your-api-token>
 ` + "```" + `
 
 ## Notes
-- Frontmatter fields ` + "`confluence_page_id`" + ` and ` + "`confluence_space_key`" + ` are immutable — do not edit them.
+- Frontmatter fields ` + "`id`" + ` and ` + "`space`" + ` are immutable — do not edit them.
 - ` + "`.confluence-state.json`" + ` is local state and is gitignored.
 - Recovery from a failed push is CLI-guided — no manual Git commands required.
 `

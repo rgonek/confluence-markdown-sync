@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -26,8 +27,8 @@ Body text.
 	if err != nil {
 		t.Fatalf("ParseMarkdownDocument() unexpected error: %v", err)
 	}
-	if doc.Frontmatter.ConfluencePageID != "12345" {
-		t.Fatalf("ConfluencePageID = %q, want 12345", doc.Frontmatter.ConfluencePageID)
+	if doc.Frontmatter.ID != "12345" {
+		t.Fatalf("ID = %q, want 12345", doc.Frontmatter.ID)
 	}
 	if doc.Frontmatter.Extra["custom_field"] != "custom" {
 		t.Fatalf("custom_field = %#v, want custom", doc.Frontmatter.Extra["custom_field"])
@@ -40,13 +41,19 @@ Body text.
 	if err != nil {
 		t.Fatalf("FormatMarkdownDocument() unexpected error: %v", err)
 	}
+	if strings.Contains(string(out), "confluence_page_id:") || strings.Contains(string(out), "confluence_space_key:") || strings.Contains(string(out), "confluence_version:") {
+		t.Fatalf("formatted output should use canonical keys, got:\n%s", string(out))
+	}
+	if !strings.Contains(string(out), "\nid:") || !strings.Contains(string(out), "\nspace:") || !strings.Contains(string(out), "\nversion:") {
+		t.Fatalf("formatted output missing canonical keys, got:\n%s", string(out))
+	}
 
 	parsedAgain, err := ParseMarkdownDocument(out)
 	if err != nil {
 		t.Fatalf("ParseMarkdownDocument(second pass) unexpected error: %v", err)
 	}
-	if parsedAgain.Frontmatter.ConfluenceSpaceKey != "DOCS" {
-		t.Fatalf("ConfluenceSpaceKey(second pass) = %q, want DOCS", parsedAgain.Frontmatter.ConfluenceSpaceKey)
+	if parsedAgain.Frontmatter.Space != "DOCS" {
+		t.Fatalf("Space(second pass) = %q, want DOCS", parsedAgain.Frontmatter.Space)
 	}
 }
 
@@ -56,11 +63,10 @@ func TestReadWriteMarkdownDocument(t *testing.T) {
 
 	doc := MarkdownDocument{
 		Frontmatter: Frontmatter{
-			Title:                  "Test",
-			ConfluencePageID:       "22",
-			ConfluenceSpaceKey:     "ENG",
-			ConfluenceVersion:      3,
-			ConfluenceLastModified: "2026-02-18T10:00:00Z",
+			Title:   "Test",
+			ID:      "22",
+			Space:   "ENG",
+			Version: 3,
 		},
 		Body: "# Body\n",
 	}
@@ -76,8 +82,8 @@ func TestReadWriteMarkdownDocument(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadMarkdownDocument() unexpected error: %v", err)
 	}
-	if got.Frontmatter.ConfluencePageID != "22" {
-		t.Fatalf("ConfluencePageID = %q, want 22", got.Frontmatter.ConfluencePageID)
+	if got.Frontmatter.ID != "22" {
+		t.Fatalf("ID = %q, want 22", got.Frontmatter.ID)
 	}
 }
 
@@ -95,10 +101,9 @@ func TestValidateFrontmatterSchema(t *testing.T) {
 	}
 
 	result = ValidateFrontmatterSchema(Frontmatter{
-		ConfluencePageID:       "10",
-		ConfluenceSpaceKey:     "OPS",
-		ConfluenceVersion:      2,
-		ConfluenceLastModified: "2026-02-18T10:00:00Z",
+		ID:      "10",
+		Space:   "OPS",
+		Version: 2,
 	})
 	if !result.IsValid() {
 		t.Fatalf("ValidateFrontmatterSchema() unexpected issues: %#v", result.Issues)
@@ -107,12 +112,12 @@ func TestValidateFrontmatterSchema(t *testing.T) {
 
 func TestValidateImmutableFrontmatter(t *testing.T) {
 	previous := Frontmatter{
-		ConfluencePageID:   "1",
-		ConfluenceSpaceKey: "ENG",
+		ID:    "1",
+		Space: "ENG",
 	}
 	current := Frontmatter{
-		ConfluencePageID:   "2",
-		ConfluenceSpaceKey: "OPS",
+		ID:    "2",
+		Space: "OPS",
 	}
 
 	result := ValidateImmutableFrontmatter(previous, current)

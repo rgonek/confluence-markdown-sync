@@ -454,3 +454,32 @@ func TestUploadAndDeleteAttachmentEndpoints(t *testing.T) {
 		t.Fatalf("delete calls = %d, want 1", deleteCalls)
 	}
 }
+
+func TestDeleteAttachment_InvalidLegacyIDReturnsNotFound(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodDelete {
+			t.Fatalf("method = %s, want DELETE", r.Method)
+		}
+		if r.URL.Path != "/wiki/api/v2/attachments/ffd70a27-0a48-48db-9662-24252c884152" {
+			t.Fatalf("path = %s, want legacy attachment delete path", r.URL.Path)
+		}
+
+		w.WriteHeader(http.StatusBadRequest)
+		io.WriteString(w, `{"errors":[{"status":400,"code":"INVALID_REQUEST_PARAMETER","title":"Provided value {ffd70a27-0a48-48db-9662-24252c884152} for 'id' is not the correct type. Expected type is ContentId","detail":""}]}`)
+	}))
+	t.Cleanup(server.Close)
+
+	client, err := NewClient(ClientConfig{
+		BaseURL:  server.URL,
+		Email:    "user@example.com",
+		APIToken: "token-123",
+	})
+	if err != nil {
+		t.Fatalf("NewClient() unexpected error: %v", err)
+	}
+
+	err = client.DeleteAttachment(context.Background(), "ffd70a27-0a48-48db-9662-24252c884152")
+	if !errors.Is(err, ErrNotFound) {
+		t.Fatalf("DeleteAttachment() error = %v, want ErrNotFound", err)
+	}
+}

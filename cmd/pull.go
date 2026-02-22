@@ -244,13 +244,13 @@ func resolveInitialPullContext(target config.Target) (initialPullContext, error)
 			return initialPullContext{}, fmt.Errorf("read target file %s: %w", target.Value, err)
 		}
 
-		spaceKey := strings.TrimSpace(doc.Frontmatter.ConfluenceSpaceKey)
+		spaceKey := strings.TrimSpace(doc.Frontmatter.Space)
 		if spaceKey == "" {
-			return initialPullContext{}, fmt.Errorf("target file %s missing confluence_space_key", target.Value)
+			return initialPullContext{}, fmt.Errorf("target file %s missing space", target.Value)
 		}
-		pageID := strings.TrimSpace(doc.Frontmatter.ConfluencePageID)
+		pageID := strings.TrimSpace(doc.Frontmatter.ID)
 		if pageID == "" {
-			return initialPullContext{}, fmt.Errorf("target file %s missing confluence_page_id", target.Value)
+			return initialPullContext{}, fmt.Errorf("target file %s missing id", target.Value)
 		}
 
 		return initialPullContext{
@@ -271,9 +271,9 @@ func resolveInitialPullContext(target config.Target) (initialPullContext, error)
 				// But best is to check if we can find ANY .md file and its space key.
 				for relPath := range state.PagePathIndex {
 					doc, err := fs.ReadMarkdownDocument(filepath.Join(cwd, filepath.FromSlash(relPath)))
-					if err == nil && doc.Frontmatter.ConfluenceSpaceKey != "" {
+					if err == nil && doc.Frontmatter.Space != "" {
 						return initialPullContext{
-							spaceKey: doc.Frontmatter.ConfluenceSpaceKey,
+							spaceKey: doc.Frontmatter.Space,
 							spaceDir: cwd,
 							fixedDir: true,
 						}, nil
@@ -305,9 +305,9 @@ func resolveInitialPullContext(target config.Target) (initialPullContext, error)
 			if err == nil {
 				for relPath := range state.PagePathIndex {
 					doc, err := fs.ReadMarkdownDocument(filepath.Join(spaceDir, filepath.FromSlash(relPath)))
-					if err == nil && doc.Frontmatter.ConfluenceSpaceKey != "" {
+					if err == nil && doc.Frontmatter.Space != "" {
 						return initialPullContext{
-							spaceKey: doc.Frontmatter.ConfluenceSpaceKey,
+							spaceKey: doc.Frontmatter.Space,
 							spaceDir: spaceDir,
 							fixedDir: true,
 						}, nil

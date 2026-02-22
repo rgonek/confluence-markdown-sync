@@ -447,6 +447,9 @@ func (c *Client) DeleteAttachment(ctx context.Context, attachmentID string) erro
 		if isHTTPStatus(err, http.StatusNotFound) {
 			return ErrNotFound
 		}
+		if isInvalidAttachmentIdentifierError(err) {
+			return ErrNotFound
+		}
 		return err
 	}
 	return nil
@@ -688,6 +691,18 @@ func (c *Client) do(req *http.Request, out any) error {
 func isHTTPStatus(err error, status int) bool {
 	var apiErr *APIError
 	return errors.As(err, &apiErr) && apiErr.StatusCode == status
+}
+
+func isInvalidAttachmentIdentifierError(err error) bool {
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) || apiErr.StatusCode != http.StatusBadRequest {
+		return false
+	}
+	body := strings.ToLower(strings.TrimSpace(apiErr.Body))
+	message := strings.ToLower(strings.TrimSpace(apiErr.Message))
+	combined := message + " " + body
+	return strings.Contains(combined, "invalid_request_parameter") &&
+		(strings.Contains(combined, "expected type is contentid") || strings.Contains(combined, "for 'id'"))
 }
 
 func decodeAPIErrorMessage(body []byte) string {

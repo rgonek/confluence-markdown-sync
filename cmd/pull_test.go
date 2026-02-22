@@ -29,9 +29,9 @@ func TestRunPull_RestoresScopedStashAndCreatesTag(t *testing.T) {
 	writeMarkdown(t, filepath.Join(spaceDir, "root.md"), fs.MarkdownDocument{
 		Frontmatter: fs.Frontmatter{
 			Title:                  "Root",
-			ConfluencePageID:       "1",
-			ConfluenceSpaceKey:     "ENG",
-			ConfluenceVersion:      1,
+			ID:                     "1",
+			Space:                  "ENG",
+			Version:                1,
 			ConfluenceLastModified: "2026-02-01T08:00:00Z",
 		},
 		Body: "old body\n",
@@ -125,9 +125,9 @@ func TestRunPull_NoopDoesNotCreateTag(t *testing.T) {
 	baselineDoc := fs.MarkdownDocument{
 		Frontmatter: fs.Frontmatter{
 			Title:                  "Root",
-			ConfluencePageID:       "1",
-			ConfluenceSpaceKey:     "ENG",
-			ConfluenceVersion:      2,
+			ID:                     "1",
+			Space:                  "ENG",
+			Version:                2,
 			ConfluenceLastModified: "2026-02-01T11:00:00Z",
 		},
 		Body: "same body\n",
@@ -283,9 +283,9 @@ func TestRunPull_RecreatesMissingSpaceDirWithoutRestoringDeletionStash(t *testin
 	writeMarkdown(t, filepath.Join(spaceDir, "root.md"), fs.MarkdownDocument{
 		Frontmatter: fs.Frontmatter{
 			Title:                  "Root",
-			ConfluencePageID:       "1",
-			ConfluenceSpaceKey:     "ENG",
-			ConfluenceVersion:      1,
+			ID:                     "1",
+			Space:                  "ENG",
+			Version:                1,
 			ConfluenceLastModified: "2026-02-01T08:00:00Z",
 		},
 		Body: "old body\n",
@@ -353,9 +353,9 @@ func TestRunPull_ForcePullRefreshesEntireSpace(t *testing.T) {
 	writeMarkdown(t, filepath.Join(spaceDir, "root.md"), fs.MarkdownDocument{
 		Frontmatter: fs.Frontmatter{
 			Title:                  "Root",
-			ConfluencePageID:       "1",
-			ConfluenceSpaceKey:     "ENG",
-			ConfluenceVersion:      1,
+			ID:                     "1",
+			Space:                  "ENG",
+			Version:                1,
 			ConfluenceLastModified: "2026-02-01T08:00:00Z",
 		},
 		Body: "old body\n",
@@ -438,9 +438,9 @@ func TestRunPull_ForceFlagRejectedForFileTarget(t *testing.T) {
 	writeMarkdown(t, filePath, fs.MarkdownDocument{
 		Frontmatter: fs.Frontmatter{
 			Title:                  "Root",
-			ConfluencePageID:       "1",
-			ConfluenceSpaceKey:     "ENG",
-			ConfluenceVersion:      1,
+			ID:                     "1",
+			Space:                  "ENG",
+			Version:                1,
 			ConfluenceLastModified: "2026-02-01T08:00:00Z",
 		},
 		Body: "body\n",
