@@ -2,8 +2,8 @@
 title: Mermaid and Plantuml
 confluence_page_id: "1703946"
 confluence_space_key: TD
-confluence_version: 4
-confluence_last_modified: "2026-02-22T15:38:30Z"
+confluence_version: 5
+confluence_last_modified: "2026-02-22T18:39:13Z"
 confluence_parent_page_id: "1376436"
 ---
 ## Mermaid
@@ -103,7 +103,7 @@ confluence_parent_page_id: "1376436"
       "layout": "extension",
       "localId": "7cc1691a-19db-4c4e-a261-e148acaadce7"
     },
-    "text": "Mermaid Diagram E2E"
+    "text": "Mermaid Diagram E2E updated"
   }
 }
 ```
@@ -259,7 +259,7 @@ confluence_parent_page_id: "1376436"
       "extensionTitle": "PlantUML Diagram",
       "forgeEnvironment": "PRODUCTION",
       "guestParams": {
-        "diagramCaption": "test test e2e",
+        "diagramCaption": "test test e2e updated",
         "plantumlCode": "@startuml\n!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Context.puml\n\n' Title for the diagram\ntitle System Context Diagram for Simple E-Commerce System\n\n' Define the people/actors\nPerson(customer, \"Customer\", \"A customer who wants to buy products online.\")\n\n' Define the systems\nSystem(ecommerceSystem, \"E-Commerce System\", \"Allows customers to view products, manage their cart, and checkout.\")\nSystem_Ext(paymentSystem, \"Payment Gateway\", \"Third-party system that processes credit card payments.\")\nSystem_Ext(emailSystem, \"Email System\", \"External system that sends order confirmation emails.\")\n\n' Define the relationships\nRel(customer, ecommerceSystem, \"Browses products and makes purchases using\")\nRel(ecommerceSystem, paymentSystem, \"Processes payments using\")\nRel(ecommerceSystem, emailSystem, \"Sends emails using\")\nRel(emailSystem, customer, \"Sends order confirmations to\")\n\n@enduml"
       },
       "layout": "extension",
