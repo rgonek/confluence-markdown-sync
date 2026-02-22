@@ -29,6 +29,8 @@ The agent manages the full sync cycle.
   - `space`
 - Mutable-by-sync frontmatter keys:
   - `version`
+- User-editable frontmatter keys:
+  - `status` (can be `draft` or `current`. Omitted means `current`. Cannot be set back to `draft` once published remotely).
 - Remote deletions are hard-deleted locally during `pull` (recovery is via Git history).
 - `.confluence-state.json` is local state and must stay gitignored.
 
@@ -80,9 +82,12 @@ Validation failures must stop `push` immediately.
 
 ## Interactivity And Automation Requirements
 - `pull` and `push` support `--yes` and `--non-interactive`.
-- `pull` supports `--skip-missing-assets` and `--force` (`-f`) for full-space refresh.
+- `pull` supports `--skip-missing-assets`, `--force` (`-f`) for full-space refresh, and `--discard-local` to overwrite local changes.
 - `push` supports `--on-conflict=pull-merge|force|cancel` for non-interactive conflict policy.
 - `push` supports `--dry-run` to print simulated API requests and ADF output without modifying local or remote state.
+- `pull` provides interactive conflict resolution (Keep Both/Remote/Local) when automatic merge fails.
+- `push` with `--on-conflict=pull-merge` automatically triggers `pull` on version conflicts.
+
 - `--yes` auto-approves safety confirmations but does not choose remote-ahead conflict strategy.
 - `--non-interactive` must fail fast when a required decision is missing.
 - Safety confirmation is required when an operation affects more than 10 markdown files or includes delete operations.

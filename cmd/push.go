@@ -476,10 +476,20 @@ func runPush(cmd *cobra.Command, target config.Target, onConflict string, dryRun
 	})
 	if err != nil {
 		if stashRef != "" {
+			// Restore workspace before reporting error or attempting pull-merge
 			_ = gitClient.StashPop(stashRef)
 		}
 		var conflictErr *syncflow.PushConflictError
 		if errors.As(err, &conflictErr) {
+			if onConflict == OnConflictPullMerge {
+				fmt.Fprintf(out, "conflict detected for %s; policy is %s, attempting automatic pull-merge...\n", conflictErr.Path, onConflict)
+				// Use the original target for pull
+				if pullErr := runPull(cmd, target); pullErr != nil {
+					return fmt.Errorf("automatic pull-merge failed: %w", pullErr)
+				}
+				fmt.Fprintln(out, "automatic pull-merge completed. If there were no content conflicts, you can now retry your push.")
+				return nil
+			}
 			return formatPushConflictError(conflictErr)
 		}
 		return err
@@ -842,8 +852,9 @@ func pushHasDeleteChange(changes []syncflow.PushFileChange) bool {
 func formatPushConflictError(conflictErr *syncflow.PushConflictError) error {
 	switch conflictErr.Policy {
 	case syncflow.PushConflictPolicyPullMerge:
+		// This should generally be handled by the caller in runPush, but fallback here
 		return fmt.Errorf(
-			"conflict for %s (remote v%d > local v%d): pull-merge policy selected; run cms pull and merge local changes before retrying push",
+			"conflict for %s (remote v%d > local v%d): run 'cms pull' to merge remote changes into your local workspace before retrying push",
 			conflictErr.Path,
 			conflictErr.RemoteVersion,
 			conflictErr.LocalVersion,
@@ -852,7 +863,7 @@ func formatPushConflictError(conflictErr *syncflow.PushConflictError) error {
 		return conflictErr
 	default:
 		return fmt.Errorf(
-			"conflict for %s (remote v%d > local v%d): rerun with --on-conflict=force to overwrite or --on-conflict=pull-merge to reconcile",
+			"conflict for %s (remote v%d > local v%d): rerun with --on-conflict=force to overwrite remote, or run 'cms pull' to merge",
 			conflictErr.Path,
 			conflictErr.RemoteVersion,
 			conflictErr.LocalVersion,

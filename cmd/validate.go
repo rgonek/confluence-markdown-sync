@@ -86,7 +86,7 @@ func runValidateTarget(out io.Writer, target config.Target) error {
 	}
 
 	if hasErrors {
-		return fmt.Errorf("validation failed")
+		return fmt.Errorf("validation failed: please fix the issues listed above before retrying")
 	}
 
 	fmt.Fprintln(out, "Validation successful")

@@ -2,6 +2,7 @@ package sync
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"mime"
@@ -31,7 +32,7 @@ type PushRemote interface {
 	ArchivePages(ctx context.Context, pageIDs []string) (confluence.ArchiveResult, error)
 	DeletePage(ctx context.Context, pageID string, hardDelete bool) error
 	UploadAttachment(ctx context.Context, input confluence.AttachmentUploadInput) (confluence.Attachment, error)
-	DeleteAttachment(ctx context.Context, attachmentID string) error
+	DeleteAttachment(ctx context.Context, attachmentID string, pageID string) error
 }
 
 // PushConflictPolicy controls remote-ahead conflict behavior.
@@ -254,7 +255,7 @@ func pushDeletePage(
 	for _, assetPath := range stalePaths {
 		attachmentID := state.AttachmentIndex[assetPath]
 		if strings.TrimSpace(attachmentID) != "" {
-			if err := remote.DeleteAttachment(ctx, attachmentID); err != nil && !errors.Is(err, confluence.ErrNotFound) {
+			if err := remote.DeleteAttachment(ctx, attachmentID, pageID); err != nil && !errors.Is(err, confluence.ErrNotFound) {
 				return PushCommitPlan{}, fmt.Errorf("delete attachment %s: %w", attachmentID, err)
 			}
 		}
@@ -310,23 +311,23 @@ func pushUpsertPage(
 	fallbackParentID := strings.TrimSpace(doc.Frontmatter.ConfluenceParentPageID)
 	var remotePage confluence.Page
 	if pageID != "" {
-		var ok bool
-		remotePage, ok = remotePageByID[pageID]
-		if !ok {
-			fetched, fetchErr := remote.GetPage(ctx, pageID)
-			if fetchErr != nil {
-				if errors.Is(fetchErr, confluence.ErrNotFound) {
-					return PushCommitPlan{}, fmt.Errorf("remote page %s for %s was not found", pageID, relPath)
-				}
-				return PushCommitPlan{}, fmt.Errorf("fetch page %s: %w", pageID, fetchErr)
+		// Always fetch the latest version specifically for the page we're about to update
+		// to avoid eventual consistency issues with space-wide listing.
+		fetched, fetchErr := remote.GetPage(ctx, pageID)
+		if fetchErr != nil {
+			if errors.Is(fetchErr, confluence.ErrNotFound) {
+				return PushCommitPlan{}, fmt.Errorf("remote page %s for %s was not found", pageID, relPath)
 			}
-			remotePage = fetched
-			remotePageByID[pageID] = fetched
+			return PushCommitPlan{}, fmt.Errorf("fetch page %s: %w", pageID, fetchErr)
 		}
+		remotePage = fetched
+		remotePageByID[pageID] = fetched
+
 		fallbackParentID = strings.TrimSpace(remotePage.ParentPageID)
 
 		if remotePage.Version > localVersion {
 			switch policy {
+
 			case PushConflictPolicyForce:
 				// Continue and overwrite on top of remote head.
 			case PushConflictPolicyPullMerge, PushConflictPolicyCancel:
@@ -434,7 +435,7 @@ func pushUpsertPage(
 		if _, keep := referencedIDs[attachmentID]; keep {
 			continue
 		}
-		if err := remote.DeleteAttachment(ctx, attachmentID); err != nil && !errors.Is(err, confluence.ErrNotFound) {
+		if err := remote.DeleteAttachment(ctx, attachmentID, pageID); err != nil && !errors.Is(err, confluence.ErrNotFound) {
 			return PushCommitPlan{}, fmt.Errorf("delete stale attachment %s: %w", attachmentID, err)
 		}
 		delete(state.AttachmentIndex, stalePath)
@@ -459,13 +460,19 @@ func pushUpsertPage(
 		nextVersion = remotePage.Version + 1
 	}
 
+	// Post-process ADF to ensure required attributes for Confluence v2 API
+	finalADF, err := ensureADFMediaCollection(reverse.ADF, pageID)
+	if err != nil {
+		return PushCommitPlan{}, fmt.Errorf("post-process ADF for %s: %w", relPath, err)
+	}
+
 	updatedPage, err := remote.UpdatePage(ctx, pageID, confluence.PageUpsertInput{
 		SpaceID:      space.ID,
 		ParentPageID: resolvedParentID,
 		Title:        title,
 		Status:       "current",
 		Version:      nextVersion,
-		BodyADF:      reverse.ADF,
+		BodyADF:      finalADF,
 	})
 	if err != nil {
 		return PushCommitPlan{}, fmt.Errorf("update page %s: %w", pageID, err)
@@ -740,4 +747,64 @@ func listAllPushPages(ctx context.Context, remote PushRemote, opts confluence.Pa
 		cursor = pageResult.NextCursor
 	}
 	return result, nil
+}
+
+// ensureADFMediaCollection post-processes the ADF JSON to add required 'collection'
+// attributes to 'media' nodes, which is often needed for Confluence v2 API storage conversion.
+func ensureADFMediaCollection(adfJSON []byte, pageID string) ([]byte, error) {
+	if len(adfJSON) == 0 {
+		return adfJSON, nil
+	}
+	if strings.TrimSpace(pageID) == "" {
+		return adfJSON, nil
+	}
+
+	var root any
+	if err := json.Unmarshal(adfJSON, &root); err != nil {
+		return nil, fmt.Errorf("unmarshal ADF: %w", err)
+	}
+
+	modified := walkAndFixMediaNodes(root, pageID)
+	if !modified {
+		return adfJSON, nil
+	}
+
+	out, err := json.Marshal(root)
+	if err != nil {
+		return nil, fmt.Errorf("marshal ADF: %w", err)
+	}
+	return out, nil
+}
+
+func walkAndFixMediaNodes(node any, pageID string) bool {
+	modified := false
+	switch n := node.(type) {
+	case map[string]any:
+		if nodeType, ok := n["type"].(string); ok && nodeType == "media" {
+			if attrs, ok := n["attrs"].(map[string]any); ok {
+				// If we have an id but no collection, add it
+				_, hasID := attrs["id"]
+				if !hasID {
+					_, hasID = attrs["attachmentId"]
+				}
+				collection, hasCollection := attrs["collection"].(string)
+				if hasID && (!hasCollection || collection == "") {
+					attrs["collection"] = "contentId-" + pageID
+					modified = true
+				}
+			}
+		}
+		for _, v := range n {
+			if walkAndFixMediaNodes(v, pageID) {
+				modified = true
+			}
+		}
+	case []any:
+		for _, item := range n {
+			if walkAndFixMediaNodes(item, pageID) {
+				modified = true
+			}
+		}
+	}
+	return modified
 }

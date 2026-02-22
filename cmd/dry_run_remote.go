@@ -117,7 +117,7 @@ func (d *dryRunPushRemote) UploadAttachment(ctx context.Context, input confluenc
 	}, nil
 }
 
-func (d *dryRunPushRemote) DeleteAttachment(ctx context.Context, attachmentID string) error {
-	fmt.Fprintf(d.out, "[DRY-RUN] DELETE ATTACHMENT (DELETE %s/wiki/api/v2/attachments/%s)\n\n", d.domain, attachmentID)
+func (d *dryRunPushRemote) DeleteAttachment(ctx context.Context, attachmentID string, pageID string) error {
+	fmt.Fprintf(d.out, "[DRY-RUN] DELETE ATTACHMENT (DELETE %s/wiki/api/v2/attachments/%s, page %s)\n\n", d.domain, attachmentID, pageID)
 	return nil
 }

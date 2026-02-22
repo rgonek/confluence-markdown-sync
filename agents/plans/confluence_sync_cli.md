@@ -36,10 +36,14 @@ Compatibility and precedence:
   - `id`: Stable page ID for update/delete operations.
   - `space`: Confluence space key for validation.
   - `version`: Last synced remote version.
+- **Frontmatter (optional fields)**:
+  - `status`: Target page status (`draft` or `current`). Defaults to `current` if omitted. When pulling, if the remote page is published, this key is omitted to keep frontmatter clean.
 - **Frontmatter Mutability Rules**:
   - Immutable: `id`, `space`.
   - Mutable by sync only: `version`.
+  - Mutable by user: `status` (only allowed transitions: missing/`draft` -> `current`).
   - Manual or AI edits to immutable keys fail validation.
+  - Changing `status` from `current` to `draft` on a page that is already published remotely fails validation (Confluence API limitation: cannot unpublish pages).
 - **State**:
     - **Per-Space State File**: `XXX/<SpaceKey>/.confluence-state.json`.
     - **State Keys**:
@@ -227,12 +231,14 @@ Compatibility and precedence:
 | Command | Arguments | Description |
 | :--- | :--- | :--- |
 | `init` | none | Checks git installed. Initializes local repo on branch `main` if needed (or uses current branch), creates `.gitignore` (ignoring `.confluence-state.json`, `.env`), verifies config/prompts for env vars, creates `AGENTS.md` and `README.md`. |
-| `pull` | `[TARGET]` | Pulls entire space or a single file. If `TARGET` ends with `.md`, treat as file path; otherwise treat as `SPACE_KEY`. Commits changes, updates state watermark, and manages dirty workspace restoration without requiring user Git commands. |
-| `push` | `[TARGET]` | Pushes all changes in space or one file. If `TARGET` ends with `.md`, treat as file path; otherwise treat as `SPACE_KEY`. Includes uncommitted local changes through an internal workspace snapshot. |
+| `pull` | `[TARGET]` | Pulls entire space or a single file. If `TARGET` ends with `.md`, treat as file path; otherwise treat as `SPACE_KEY`. Commits changes, updates state watermark, and manages dirty workspace restoration. Provides interactive conflict resolution when auto-merge fails. Supports `--discard-local` to overwrite local changes. |
+| `push` | `[TARGET]` | Pushes all changes in space or one file. If `TARGET` ends with `.md`, treat as file path; otherwise treat as `SPACE_KEY`. Includes uncommitted local changes through an internal workspace snapshot. Automatically triggers `pull` on version conflicts if `--on-conflict=pull-merge` is used. |
+
 | `validate` | `[TARGET]` | Validates sync invariants before push: frontmatter schema, immutable key integrity, links/assets, and Markdown->ADF conversion. |
 | `diff` | `[TARGET]` | Shows file- or space-scoped diff against Confluence. If `TARGET` ends with `.md`, treat as file path; otherwise treat as `SPACE_KEY`. |
 
-Automation support for `pull`/`push`: `--yes`, `--non-interactive`; `pull` additionally supports `--skip-missing-assets` and `--force`; `push` additionally supports `--on-conflict=pull-merge|force|cancel`.
+Automation support for `pull`/`push`: `--yes`, `--non-interactive`; `pull` additionally supports `--skip-missing-assets`, `--force`, and `--discard-local`; `push` additionally supports `--on-conflict=pull-merge|force|cancel`.
+
 
 ## 4. Delivery Plan (PR-by-PR)
 

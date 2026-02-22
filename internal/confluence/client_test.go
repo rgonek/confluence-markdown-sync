@@ -443,7 +443,7 @@ func TestUploadAndDeleteAttachmentEndpoints(t *testing.T) {
 		t.Fatalf("page ID = %q, want 42", attachment.PageID)
 	}
 
-	if err := client.DeleteAttachment(context.Background(), "att-9"); err != nil {
+	if err := client.DeleteAttachment(context.Background(), "att-9", "42"); err != nil {
 		t.Fatalf("DeleteAttachment() unexpected error: %v", err)
 	}
 
@@ -478,7 +478,7 @@ func TestDeleteAttachment_InvalidLegacyIDReturnsNotFound(t *testing.T) {
 		t.Fatalf("NewClient() unexpected error: %v", err)
 	}
 
-	err = client.DeleteAttachment(context.Background(), "ffd70a27-0a48-48db-9662-24252c884152")
+	err = client.DeleteAttachment(context.Background(), "ffd70a27-0a48-48db-9662-24252c884152", "123")
 	if !errors.Is(err, ErrNotFound) {
 		t.Fatalf("DeleteAttachment() error = %v, want ErrNotFound", err)
 	}

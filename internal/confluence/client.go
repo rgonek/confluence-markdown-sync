@@ -427,10 +427,16 @@ func (c *Client) UploadAttachment(ctx context.Context, input AttachmentUploadInp
 }
 
 // DeleteAttachment deletes a Confluence attachment.
-func (c *Client) DeleteAttachment(ctx context.Context, attachmentID string) error {
+func (c *Client) DeleteAttachment(ctx context.Context, attachmentID string, pageID string) error {
 	id := strings.TrimSpace(attachmentID)
 	if id == "" {
 		return errors.New("attachment ID is required")
+	}
+
+	if isUUID(id) && pageID != "" {
+		if resolvedID, err := c.resolveAttachmentIDByFileID(ctx, id, pageID); err == nil {
+			id = resolvedID
+		}
 	}
 
 	req, err := c.newRequest(

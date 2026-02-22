@@ -37,11 +37,18 @@ func TestRunPush_UnresolvedValidationStopsBeforeRemoteWrites(t *testing.T) {
 
 	factoryCalls := 0
 	oldFactory := newPushRemote
+	oldPullFactory := newPullRemote
 	newPushRemote = func(_ *config.Config) (syncflow.PushRemote, error) {
 		factoryCalls++
 		return &cmdFakePushRemote{}, nil
 	}
-	t.Cleanup(func() { newPushRemote = oldFactory })
+	newPullRemote = func(_ *config.Config) (syncflow.PullRemote, error) {
+		return &cmdFakePushRemote{}, nil
+	}
+	t.Cleanup(func() {
+		newPushRemote = oldFactory
+		newPullRemote = oldPullFactory
+	})
 
 	setupEnv(t)
 	chdirRepo(t, spaceDir)
@@ -114,9 +121,14 @@ func TestRunPush_ConflictPolicies(t *testing.T) {
 			runGitForTest(t, repo, "commit", "-m", "local change")
 
 			fake := newCmdFakePushRemote(3)
-			oldFactory := newPushRemote
+			oldPushFactory := newPushRemote
+			oldPullFactory := newPullRemote
 			newPushRemote = func(_ *config.Config) (syncflow.PushRemote, error) { return fake, nil }
-			t.Cleanup(func() { newPushRemote = oldFactory })
+			newPullRemote = func(_ *config.Config) (syncflow.PullRemote, error) { return fake, nil }
+			t.Cleanup(func() {
+				newPushRemote = oldPushFactory
+				newPullRemote = oldPullFactory
+			})
 
 			setupEnv(t)
 			chdirRepo(t, spaceDir)
@@ -175,9 +187,14 @@ func TestRunPush_WritesStructuredCommitTrailers(t *testing.T) {
 
 	fake := newCmdFakePushRemote(1)
 	fake.webURL = "https://example.atlassian.net/wiki/pages/1"
-	oldFactory := newPushRemote
+	oldPushFactory := newPushRemote
+	oldPullFactory := newPullRemote
 	newPushRemote = func(_ *config.Config) (syncflow.PushRemote, error) { return fake, nil }
-	t.Cleanup(func() { newPushRemote = oldFactory })
+	newPullRemote = func(_ *config.Config) (syncflow.PullRemote, error) { return fake, nil }
+	t.Cleanup(func() {
+		newPushRemote = oldPushFactory
+		newPullRemote = oldPullFactory
+	})
 
 	setupEnv(t)
 	chdirRepo(t, spaceDir)
@@ -231,12 +248,19 @@ func TestRunPush_FileModeStillRequiresOnConflict(t *testing.T) {
 	runGitForTest(t, repo, "commit", "-m", "local change")
 
 	factoryCalls := 0
-	oldFactory := newPushRemote
+	oldPushFactory := newPushRemote
+	oldPullFactory := newPullRemote
 	newPushRemote = func(_ *config.Config) (syncflow.PushRemote, error) {
 		factoryCalls++
 		return newCmdFakePushRemote(1), nil
 	}
-	t.Cleanup(func() { newPushRemote = oldFactory })
+	newPullRemote = func(_ *config.Config) (syncflow.PullRemote, error) {
+		return newCmdFakePushRemote(1), nil
+	}
+	t.Cleanup(func() {
+		newPushRemote = oldPushFactory
+		newPullRemote = oldPullFactory
+	})
 
 	setupEnv(t)
 	chdirRepo(t, spaceDir)
@@ -276,9 +300,14 @@ func TestRunPush_FileTargetDetectsWorkspaceChanges(t *testing.T) {
 	})
 
 	fake := newCmdFakePushRemote(1)
-	oldFactory := newPushRemote
+	oldPushFactory := newPushRemote
+	oldPullFactory := newPullRemote
 	newPushRemote = func(_ *config.Config) (syncflow.PushRemote, error) { return fake, nil }
-	t.Cleanup(func() { newPushRemote = oldFactory })
+	newPullRemote = func(_ *config.Config) (syncflow.PullRemote, error) { return fake, nil }
+	t.Cleanup(func() {
+		newPushRemote = oldPushFactory
+		newPullRemote = oldPullFactory
+	})
 
 	setupEnv(t)
 	chdirRepo(t, spaceDir)
@@ -308,9 +337,14 @@ func TestRunPush_DryRunDoesNotMutateFrontmatter(t *testing.T) {
 	})
 
 	fake := newCmdFakePushRemote(1)
-	oldFactory := newPushRemote
+	oldPushFactory := newPushRemote
+	oldPullFactory := newPullRemote
 	newPushRemote = func(_ *config.Config) (syncflow.PushRemote, error) { return fake, nil }
-	t.Cleanup(func() { newPushRemote = oldFactory })
+	newPullRemote = func(_ *config.Config) (syncflow.PullRemote, error) { return fake, nil }
+	t.Cleanup(func() {
+		newPushRemote = oldPushFactory
+		newPullRemote = oldPullFactory
+	})
 
 	setupEnv(t)
 	chdirRepo(t, spaceDir)
@@ -359,9 +393,14 @@ func TestRunPush_IncludesUntrackedAssetsFromWorkspaceSnapshot(t *testing.T) {
 	}
 
 	fake := newCmdFakePushRemote(1)
-	oldFactory := newPushRemote
+	oldPushFactory := newPushRemote
+	oldPullFactory := newPullRemote
 	newPushRemote = func(_ *config.Config) (syncflow.PushRemote, error) { return fake, nil }
-	t.Cleanup(func() { newPushRemote = oldFactory })
+	newPullRemote = func(_ *config.Config) (syncflow.PullRemote, error) { return fake, nil }
+	t.Cleanup(func() {
+		newPushRemote = oldPushFactory
+		newPullRemote = oldPullFactory
+	})
 
 	setupEnv(t)
 	chdirRepo(t, spaceDir)
@@ -399,12 +438,19 @@ func TestRunPush_PreflightShowsPlanWithoutRemoteWrites(t *testing.T) {
 	t.Cleanup(func() { flagPushPreflight = previousPreflight })
 
 	factoryCalls := 0
-	oldFactory := newPushRemote
+	oldPushFactory := newPushRemote
+	oldPullFactory := newPullRemote
 	newPushRemote = func(_ *config.Config) (syncflow.PushRemote, error) {
 		factoryCalls++
 		return newCmdFakePushRemote(1), nil
 	}
-	t.Cleanup(func() { newPushRemote = oldFactory })
+	newPullRemote = func(_ *config.Config) (syncflow.PullRemote, error) {
+		return newCmdFakePushRemote(1), nil
+	}
+	t.Cleanup(func() {
+		newPushRemote = oldPushFactory
+		newPullRemote = oldPullFactory
+	})
 
 	setupEnv(t)
 	chdirRepo(t, spaceDir)
@@ -501,12 +547,19 @@ func TestRunPush_NonInteractiveRequiresYesForDeleteConfirmation(t *testing.T) {
 	}
 
 	factoryCalls := 0
-	oldFactory := newPushRemote
+	oldPushFactory := newPushRemote
+	oldPullFactory := newPullRemote
 	newPushRemote = func(_ *config.Config) (syncflow.PushRemote, error) {
 		factoryCalls++
 		return newCmdFakePushRemote(1), nil
 	}
-	t.Cleanup(func() { newPushRemote = oldFactory })
+	newPullRemote = func(_ *config.Config) (syncflow.PullRemote, error) {
+		return newCmdFakePushRemote(1), nil
+	}
+	t.Cleanup(func() {
+		newPushRemote = oldPushFactory
+		newPullRemote = oldPullFactory
+	})
 
 	setupEnv(t)
 	chdirRepo(t, spaceDir)
@@ -535,9 +588,14 @@ func TestRunPush_YesBypassesDeleteConfirmation(t *testing.T) {
 	}
 
 	fake := newCmdFakePushRemote(1)
-	oldFactory := newPushRemote
+	oldPushFactory := newPushRemote
+	oldPullFactory := newPullRemote
 	newPushRemote = func(_ *config.Config) (syncflow.PushRemote, error) { return fake, nil }
-	t.Cleanup(func() { newPushRemote = oldFactory })
+	newPullRemote = func(_ *config.Config) (syncflow.PullRemote, error) { return fake, nil }
+	t.Cleanup(func() {
+		newPushRemote = oldPushFactory
+		newPullRemote = oldPullFactory
+	})
 
 	setupEnv(t)
 	chdirRepo(t, spaceDir)
@@ -576,9 +634,14 @@ func TestRunPush_WorksWithoutGitRemoteConfigured(t *testing.T) {
 	}
 
 	fake := newCmdFakePushRemote(1)
-	oldFactory := newPushRemote
+	oldPushFactory := newPushRemote
+	oldPullFactory := newPullRemote
 	newPushRemote = func(_ *config.Config) (syncflow.PushRemote, error) { return fake, nil }
-	t.Cleanup(func() { newPushRemote = oldFactory })
+	newPullRemote = func(_ *config.Config) (syncflow.PullRemote, error) { return fake, nil }
+	t.Cleanup(func() {
+		newPushRemote = oldPushFactory
+		newPullRemote = oldPullFactory
+	})
 
 	setupEnv(t)
 	chdirRepo(t, spaceDir)
@@ -610,9 +673,14 @@ func TestRunPush_FailureRetainsSnapshotAndSyncBranch(t *testing.T) {
 	fake := newCmdFakePushRemote(1)
 	failingFake := &failingPushRemote{cmdFakePushRemote: fake}
 
-	oldFactory := newPushRemote
+	oldPushFactory := newPushRemote
+	oldPullFactory := newPullRemote
 	newPushRemote = func(_ *config.Config) (syncflow.PushRemote, error) { return failingFake, nil }
-	t.Cleanup(func() { newPushRemote = oldFactory })
+	newPullRemote = func(_ *config.Config) (syncflow.PullRemote, error) { return failingFake, nil }
+	t.Cleanup(func() {
+		newPushRemote = oldPushFactory
+		newPullRemote = oldPullFactory
+	})
 
 	setupEnv(t)
 	chdirRepo(t, spaceDir)
@@ -664,9 +732,14 @@ func TestRunPush_PreservesOutOfScopeChanges(t *testing.T) {
 	})
 
 	fake := newCmdFakePushRemote(1)
-	oldFactory := newPushRemote
+	oldPushFactory := newPushRemote
+	oldPullFactory := newPullRemote
 	newPushRemote = func(_ *config.Config) (syncflow.PushRemote, error) { return fake, nil }
-	t.Cleanup(func() { newPushRemote = oldFactory })
+	newPullRemote = func(_ *config.Config) (syncflow.PullRemote, error) { return fake, nil }
+	t.Cleanup(func() {
+		newPushRemote = oldPushFactory
+		newPullRemote = oldPullFactory
+	})
 
 	setupEnv(t)
 	chdirRepo(t, spaceDir)
@@ -846,7 +919,19 @@ func (f *cmdFakePushRemote) UploadAttachment(_ context.Context, input confluence
 	return confluence.Attachment{ID: id, PageID: input.PageID, Filename: input.Filename}, nil
 }
 
-func (f *cmdFakePushRemote) DeleteAttachment(_ context.Context, attachmentID string) error {
+func (f *cmdFakePushRemote) GetFolder(_ context.Context, folderID string) (confluence.Folder, error) {
+	return confluence.Folder{}, confluence.ErrNotFound
+}
+
+func (f *cmdFakePushRemote) ListChanges(_ context.Context, _ confluence.ChangeListOptions) (confluence.ChangeListResult, error) {
+	return confluence.ChangeListResult{}, nil
+}
+
+func (f *cmdFakePushRemote) DownloadAttachment(_ context.Context, attachmentID string, pageID string) ([]byte, error) {
+	return []byte("fake-bytes"), nil
+}
+
+func (f *cmdFakePushRemote) DeleteAttachment(_ context.Context, attachmentID string, _ string) error {
 	f.deleteAttachmentCalls = append(f.deleteAttachmentCalls, attachmentID)
 	return nil
 }

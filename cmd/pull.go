@@ -18,7 +18,8 @@ import (
 )
 
 var (
-	flagPullForce = false
+	flagPullForce        = false
+	flagPullDiscardLocal = false
 
 	newPullRemote = func(cfg *config.Config) (syncflow.PullRemote, error) {
 		return confluence.NewClient(confluence.ClientConfig{
@@ -61,6 +62,7 @@ If omitted, the space is inferred from the current directory name.`,
 	cmd.Flags().BoolVar(&flagNonInteractive, "non-interactive", false, "Disable prompts; fail fast when a decision is required")
 	cmd.Flags().BoolVarP(&flagSkipMissingAssets, "skip-missing-assets", "s", false, "Continue if an attachment is missing (not found)")
 	cmd.Flags().BoolVarP(&flagPullForce, "force", "f", false, "Force full space pull and refresh all tracked pages")
+	cmd.Flags().BoolVar(&flagPullDiscardLocal, "discard-local", false, "Discard local uncommitted changes if they conflict with remote updates")
 	return cmd
 }
 
@@ -148,6 +150,11 @@ func runPull(cmd *cobra.Command, target config.Target) (runErr error) {
 		}
 		if stashRef != "" {
 			defer func() {
+				if flagPullDiscardLocal {
+					fmt.Fprintf(out, "Discarding local changes (dropped stash %s)\n", stashRef)
+					_, _ = runGit(repoRoot, "stash", "drop", stashRef)
+					return
+				}
 				restoreErr := applyAndDropStash(repoRoot, stashRef)
 				if restoreErr != nil {
 					runErr = errors.Join(runErr, restoreErr)
@@ -487,13 +494,63 @@ func applyAndDropStash(repoRoot, stashRef string) error {
 	if stashRef == "" {
 		return nil
 	}
-	if _, err := runGit(repoRoot, "stash", "apply", "--index", stashRef); err != nil {
-		return fmt.Errorf("failed to restore stashed changes (%s): %w", stashRef, err)
+	out, err := runGit(repoRoot, "stash", "apply", "--index", stashRef)
+	if err != nil {
+		// Check if it's a conflict
+		if strings.Contains(err.Error(), "conflict") || strings.Contains(out, "CONFLICT") {
+			return handlePullConflict(repoRoot, stashRef)
+		}
+		return fmt.Errorf("local changes could not be automatically merged with remote updates. Please resolve the conflicts in the affected files and then run 'git stash drop %s' to clean up. Error: %w", stashRef, err)
 	}
 	if _, err := runGit(repoRoot, "stash", "drop", stashRef); err != nil {
 		return fmt.Errorf("restored stash but failed to drop %s: %w", stashRef, err)
 	}
 	return nil
+}
+
+func handlePullConflict(repoRoot, stashRef string) error {
+	if flagNonInteractive || flagYes {
+		return fmt.Errorf("local changes could not be automatically merged with remote updates (CONFLICT). Please resolve the conflicts in the affected files and then run 'git stash drop %s' to clean up.", stashRef)
+	}
+
+	fmt.Println("\n⚠️  CONFLICT DETECTED")
+	fmt.Println("Local changes could not be automatically merged with remote updates.")
+	fmt.Println("How would you like to proceed?")
+	fmt.Println(" [1] Keep both (add conflict markers to files) - RECOMMENDED")
+	fmt.Println(" [2] Use Remote version (discard my local changes for these files)")
+	fmt.Println(" [3] Use Local version (overwrite remote updates with my local changes)")
+	fmt.Print("\nChoice [1/2/3]: ")
+
+	var choice string
+	fmt.Scanln(&choice)
+
+	switch strings.TrimSpace(choice) {
+	case "2":
+		fmt.Println("Discarding local changes...")
+		// We already pulled remote, so we just need to reset the conflicted files or drop the stash.
+		// Actually, stash apply already modified the files with markers.
+		// We should checkout from HEAD.
+		_, err := runGit(repoRoot, "checkout", "HEAD", "--", ".")
+		if err != nil {
+			return fmt.Errorf("failed to discard local changes: %w", err)
+		}
+		_, _ = runGit(repoRoot, "stash", "drop", stashRef)
+		fmt.Println("Local changes discarded. Remote version kept.")
+		return nil
+	case "3":
+		fmt.Println("Keeping local version...")
+		// Checkout from stash
+		_, err := runGit(repoRoot, "checkout", stashRef, "--", ".")
+		if err != nil {
+			return fmt.Errorf("failed to keep local version: %w", err)
+		}
+		_, _ = runGit(repoRoot, "stash", "drop", stashRef)
+		fmt.Println("Remote updates overwritten by local version.")
+		return nil
+	default:
+		fmt.Printf("Conflict markers kept. Please resolve them manually and then run 'git stash drop %s'\n", stashRef)
+		return nil // Return nil because the user "handled" it by choosing to keep markers
+	}
 }
 
 func gitHasScopedStagedChanges(repoRoot, scopePath string) (bool, error) {
