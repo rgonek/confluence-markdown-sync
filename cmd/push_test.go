@@ -89,9 +89,10 @@ func TestRunPush_ConflictPolicies(t *testing.T) {
 			wantUpdates:     0,
 		},
 		{
-			name:            "pull-merge",
-			policy:          OnConflictPullMerge,
-			wantErrContains: "pull-merge policy selected",
+			name:   "pull-merge",
+			policy: OnConflictPullMerge,
+			// No error expected because it auto-pulls and returns nil
+			wantErrContains: "",
 			wantUpdates:     0,
 		},
 		{
@@ -161,7 +162,7 @@ func TestRunPush_ConflictPolicies(t *testing.T) {
 			}
 
 			headAfter := strings.TrimSpace(runGitForTest(t, repo, "rev-parse", "HEAD"))
-			if tc.wantUpdates == 0 && headBefore != headAfter {
+			if tc.wantUpdates == 0 && tc.policy != OnConflictPullMerge && headBefore != headAfter {
 				t.Fatalf("HEAD changed for conflict case %q", tc.name)
 			}
 		})
@@ -510,12 +511,19 @@ func TestRunPush_SpaceModeAssumesPullMerge(t *testing.T) {
 	// Set remote version to 2 to trigger a conflict
 	fake := newCmdFakePushRemote(2)
 	factoryCalls := 0
-	oldFactory := newPushRemote
+	oldPushFactory := newPushRemote
+	oldPullFactory := newPullRemote
 	newPushRemote = func(_ *config.Config) (syncflow.PushRemote, error) {
 		factoryCalls++
 		return fake, nil
 	}
-	t.Cleanup(func() { newPushRemote = oldFactory })
+	newPullRemote = func(_ *config.Config) (syncflow.PullRemote, error) {
+		return fake, nil
+	}
+	t.Cleanup(func() {
+		newPushRemote = oldPushFactory
+		newPullRemote = oldPullFactory
+	})
 
 	setupEnv(t)
 	chdirRepo(t, spaceDir)
@@ -525,13 +533,11 @@ func TestRunPush_SpaceModeAssumesPullMerge(t *testing.T) {
 	cmd.SetOut(&bytes.Buffer{})
 
 	// Pass empty onConflict; should default to pull-merge for space mode
+	// and return nil (success) after auto-pulling
 	err := runPush(cmd, config.Target{Mode: config.TargetModeSpace, Value: ""}, "", false)
 
-	if err == nil {
-		t.Fatal("runPush() expected conflict error (pull-merge policy)")
-	}
-	if !strings.Contains(err.Error(), "pull-merge policy selected") {
-		t.Fatalf("expected pull-merge conflict error, got: %v", err)
+	if err != nil {
+		t.Fatalf("runPush() unexpected error with default pull-merge policy: %v", err)
 	}
 	if factoryCalls == 0 {
 		t.Fatal("expected remote factory to be called")
@@ -843,6 +849,7 @@ func newCmdFakePushRemote(remoteVersion int) *cmdFakePushRemote {
 		Version:      remoteVersion,
 		LastModified: time.Date(2026, time.February, 1, 10, 0, 0, 0, time.UTC),
 		WebURL:       "https://example.atlassian.net/wiki/pages/1",
+		BodyADF:      []byte(`{"version":1,"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"remote content"}]}]}`),
 	}
 	return &cmdFakePushRemote{
 		space: confluence.Space{ID: "space-1", Key: "ENG", Name: "Engineering"},
@@ -924,7 +931,11 @@ func (f *cmdFakePushRemote) GetFolder(_ context.Context, folderID string) (confl
 }
 
 func (f *cmdFakePushRemote) ListChanges(_ context.Context, _ confluence.ChangeListOptions) (confluence.ChangeListResult, error) {
-	return confluence.ChangeListResult{}, nil
+	return confluence.ChangeListResult{
+		Changes: []confluence.Change{
+			{PageID: "1", SpaceKey: "ENG", Version: 1, LastModified: time.Now().UTC()},
+		},
+	}, nil
 }
 
 func (f *cmdFakePushRemote) DownloadAttachment(_ context.Context, attachmentID string, pageID string) ([]byte, error) {

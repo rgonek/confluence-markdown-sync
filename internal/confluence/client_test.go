@@ -457,6 +457,13 @@ func TestUploadAndDeleteAttachmentEndpoints(t *testing.T) {
 
 func TestDeleteAttachment_InvalidLegacyIDReturnsNotFound(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			// Resolve UUID first
+			w.Header().Set("Content-Type", "application/json")
+			io.WriteString(w, `{"results":[]}`) // Doesn't matter for this test as we want it to fall through or fail
+			return
+		}
+
 		if r.Method != http.MethodDelete {
 			t.Fatalf("method = %s, want DELETE", r.Method)
 		}

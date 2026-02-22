@@ -9,9 +9,14 @@ GOFLAGS    :=
 build:
 	$(GO) build $(GOFLAGS) -o $(BINARY) $(MAIN)
 
-## test: run all tests
+## test: run all unit tests
 test:
 	$(GO) test ./...
+
+## test-e2e: run all end-to-end tests (requires credentials)
+test-e2e: build
+	$(GO) test -v -tags=e2e ./cmd -run TestWorkflow
+
 
 ## fmt: format all Go source files
 fmt:
