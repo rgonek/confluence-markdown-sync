@@ -1,10 +1,8 @@
 ---
 title: With page link
-confluence_page_id: "3178499"
-confluence_space_key: TD
-confluence_version: 4
-confluence_last_modified: "2026-02-22T18:46:31Z"
-confluence_parent_page_id: "1376436"
+id: "3178499"
+space: TD
+version: 4
 ---
 Link below
 

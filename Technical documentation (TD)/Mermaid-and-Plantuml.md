@@ -1,10 +1,8 @@
 ---
 title: Mermaid and Plantuml
-confluence_page_id: "1703946"
-confluence_space_key: TD
-confluence_version: 5
-confluence_last_modified: "2026-02-22T18:39:13Z"
-confluence_parent_page_id: "1376436"
+id: "1703946"
+space: TD
+version: 5
 ---
 ## Mermaid
 
