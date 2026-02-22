@@ -10,5 +10,5 @@ confluence_parent_page_id: "1376436"
 
 Child test page for create/delete coverage.
 
-- [Back to page A](Z-CMS-E2E-Temp-20260222.md)
+- [Back to page A](https://placeholder.invalid/page/Z-CMS-E2E-Temp-20260222.md)
 - [Live nested child](Test-live-doc/qweqwe.md)
