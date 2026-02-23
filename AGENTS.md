@@ -94,7 +94,9 @@ Validation failures must stop `push` immediately.
 
 ## Testing Expectations
 - Add or update tests for any changed invariant.
-- **Agent Sandbox**: Use the `workspace/` or `test-output/` directories (both gitignored) for manual or agentic integration tests.
+- **NEVER perform real tests (e.g. `conf pull` or `conf push`) targeting real Confluence spaces within the repository root.** This prevents accidental commits of synced Markdown content.
+- **Agent Sandbox**: Use a temporary directory *outside* of the repository for full end-to-end integration tests with real data.
+- If you must use a subdirectory for small tests, use the `workspace/` or `test-output/` directories (both gitignored).
 - **Cleanup**: Always delete test content from `workspace/` or `test-output/` after completing a test session to keep the environment clean.
 - Prioritize:
 

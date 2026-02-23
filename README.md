@@ -37,6 +37,7 @@ conf init
 `conf pull` mirrors Confluence hierarchy locally by placing folders and child pages in nested directories. Pages with children use `<Page>/<Page>.md` so they are distinct from pure folders.
 
 ## Quick flow 🔄
+> ⚠️ **IMPORTANT**: If you are developing `conf` itself, NEVER run sync commands against real Confluence spaces in the repository root. This prevents accidental commits of synced documentation. Use a separate sandbox folder.
 
 ```powershell
 # 1) Pull a Confluence space
