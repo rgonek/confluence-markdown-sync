@@ -33,7 +33,12 @@ To prevent human confusion ("I set it to draft, why is it still live on the inte
 ## 5. Sync Loop Updates
 
 ### `conf pull`
-- Ensure the API client fetches both `current` and `draft` statuses when listing pages in a space. (Currently, the API defaults to `current` and `archived` if not specified).
+- Fetch only `current` status when listing pages in a space. (Confluence v2 API does not support `draft` in the space list filter).
+- After listing, identify any locally tracked pages (from state) that are missing from the remote `current` list.
+- For each missing page, explicitly fetch it by ID. 
+  - If the page exists and is a `draft` (and belongs to the target space), include it in the pull result.
+  - If the page exists and is `current` (e.g. was moved/published but missed in the list), include it.
+  - If the page is not found (404), treat it as deleted.
 - Ensure the `Pull` orchestration saves the correct status in the frontmatter (omitting if `current`).
 
 ### `conf push`
@@ -51,7 +56,11 @@ To prevent human confusion ("I set it to draft, why is it still live on the inte
    - Remove hardcoded `"status": "current"` strings.
    - Inject `doc.Frontmatter.Status` into `PageUpsertInput`.
 4. **Update `internal/confluence/client.go`:**
-   - Modify `ListPages` to ensure it requests drafts if appropriate, or ensure the sync loop correctly identifies draft pages.
-5. **Add Tests:**
+   - Update `ListPages` to use `current` by default if no status is specified, and ensure it correctly passes the status parameter.
+5. **Update `internal/sync/pull.go`:**
+   - Modify `listAllPages` to only fetch `current`.
+   - Add logic to "recover" draft pages that are known locally by fetching them individually.
+6. **Add Tests:**
    - Add unit tests for the new frontmatter validation rules.
    - Add integration tests for creating a draft and then publishing it.
+   - Add integration tests for pulling a space that contains both published pages and drafts.

@@ -119,11 +119,16 @@ func Pull(ctx context.Context, remote PullRemote, opts PullOptions) (PullResult,
 	pages, err := listAllPages(ctx, remote, confluence.PageListOptions{
 		SpaceID:  space.ID,
 		SpaceKey: opts.SpaceKey,
-		Status:   "current,draft",
+		Status:   "current",
 		Limit:    pullPageBatchSize,
 	})
 	if err != nil {
 		return PullResult{}, fmt.Errorf("list pages: %w", err)
+	}
+
+	pages, err = recoverMissingPages(ctx, remote, space.ID, state.PagePathIndex, pages)
+	if err != nil {
+		return PullResult{}, fmt.Errorf("recover missing pages: %w", err)
 	}
 
 	folderByID, folderDiags, err := resolveFolderHierarchyFromPages(ctx, remote, pages)
@@ -1042,6 +1047,52 @@ func cloneStringMap(in map[string]string) map[string]string {
 		out[normalizeRelPath(key)] = value
 	}
 	return out
+}
+
+type recoveryRemote interface {
+	GetPage(ctx context.Context, pageID string) (confluence.Page, error)
+}
+
+func recoverMissingPages(ctx context.Context, remote recoveryRemote, spaceID string, localPageIDs map[string]string, remotePages []confluence.Page) ([]confluence.Page, error) {
+	remoteByID := make(map[string]struct{}, len(remotePages))
+	for _, p := range remotePages {
+		remoteByID[p.ID] = struct{}{}
+	}
+
+	result := remotePages
+	processedIDs := make(map[string]struct{})
+	for _, id := range localPageIDs {
+		if id == "" {
+			continue
+		}
+		if _, exists := remoteByID[id]; exists {
+			continue
+		}
+		if _, processed := processedIDs[id]; processed {
+			continue
+		}
+		processedIDs[id] = struct{}{}
+
+		// Fetch missing page individually
+		page, err := remote.GetPage(ctx, id)
+		if err != nil {
+			if errors.Is(err, confluence.ErrNotFound) {
+				continue // Truly deleted
+			}
+			var apiErr *confluence.APIError
+			if errors.As(err, &apiErr) && apiErr.StatusCode == 404 {
+				continue
+			}
+			return nil, err
+		}
+
+		// If it belongs to the same space, include it (including drafts)
+		if page.SpaceID == spaceID {
+			result = append(result, page)
+			remoteByID[id] = struct{}{}
+		}
+	}
+	return result, nil
 }
 
 func sortedStringKeys[V any](in map[string]V) []string {

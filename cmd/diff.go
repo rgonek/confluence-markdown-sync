@@ -111,7 +111,13 @@ func runDiff(cmd *cobra.Command, target config.Target) error {
 		return fmt.Errorf("list pages: %w", err)
 	}
 
+	pages, err = recoverMissingPagesForDiff(ctx, remote, space.ID, state.PagePathIndex, pages)
+	if err != nil {
+		return fmt.Errorf("recover missing pages: %w", err)
+	}
+
 	folderByID, folderDiags, err := resolveDiffFolderHierarchyFromPages(ctx, remote, pages)
+
 	if err != nil {
 		return err
 	}
@@ -438,6 +444,46 @@ func listAllDiffPages(ctx context.Context, remote syncflow.PullRemote, opts conf
 			break
 		}
 		cursor = pageResult.NextCursor
+	}
+	return result, nil
+}
+
+func recoverMissingPagesForDiff(ctx context.Context, remote syncflow.PullRemote, spaceID string, localPageIDs map[string]string, remotePages []confluence.Page) ([]confluence.Page, error) {
+	remoteByID := make(map[string]struct{}, len(remotePages))
+	for _, p := range remotePages {
+		remoteByID[p.ID] = struct{}{}
+	}
+
+	result := remotePages
+	processedIDs := make(map[string]struct{})
+	for _, id := range localPageIDs {
+		if id == "" {
+			continue
+		}
+		if _, exists := remoteByID[id]; exists {
+			continue
+		}
+		if _, processed := processedIDs[id]; processed {
+			continue
+		}
+		processedIDs[id] = struct{}{}
+
+		page, err := remote.GetPage(ctx, id)
+		if err != nil {
+			if errors.Is(err, confluence.ErrNotFound) {
+				continue
+			}
+			var apiErr *confluence.APIError
+			if errors.As(err, &apiErr) && apiErr.StatusCode == 404 {
+				continue
+			}
+			return nil, err
+		}
+
+		if page.SpaceID == spaceID {
+			result = append(result, page)
+			remoteByID[id] = struct{}{}
+		}
 	}
 	return result, nil
 }

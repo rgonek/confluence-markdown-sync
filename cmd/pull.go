@@ -606,8 +606,25 @@ func estimatePullImpactWithSpace(
 
 	deletedIDs := map[string]struct{}{}
 	for _, pageID := range state.PagePathIndex {
+		if pageID == "" {
+			continue
+		}
 		if _, exists := pageByID[pageID]; !exists {
-			deletedIDs[pageID] = struct{}{}
+			// Check if it's a draft before assuming deletion
+			page, err := remote.GetPage(ctx, pageID)
+			if err != nil {
+				if errors.Is(err, confluence.ErrNotFound) {
+					deletedIDs[pageID] = struct{}{}
+					continue
+				}
+				// If we can't check, assume it's still there to be safe (don't mark as deleted in estimate)
+				continue
+			}
+			if page.SpaceID != space.ID {
+				deletedIDs[pageID] = struct{}{}
+				continue
+			}
+			// It exists in the same space, probably a draft or just missing from list
 		}
 	}
 
