@@ -21,7 +21,7 @@ func NewForwardLinkHook(sourcePath string, pagePathByID map[string]string, curre
 	return func(ctx context.Context, in adfconv.LinkRenderInput) (adfconv.LinkRenderOutput, error) {
 		pageID := in.Meta.PageID
 		if pageID == "" {
-			pageID = extractPageID(in.Href)
+			pageID = ExtractPageID(in.Href)
 		}
 
 		// If page ID is present, try to resolve to local path
@@ -60,7 +60,8 @@ func NewForwardLinkHook(sourcePath string, pagePathByID map[string]string, curre
 	}
 }
 
-func extractPageID(href string) string {
+// ExtractPageID parses a Confluence URL to extract the page ID.
+func ExtractPageID(href string) string {
 	if href == "" {
 		return ""
 	}

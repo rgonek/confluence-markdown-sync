@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -76,7 +77,36 @@ func SaveState(spaceDir string, state SpaceState) error {
 	return os.WriteFile(StatePath(spaceDir), raw, 0o644)
 }
 
+// FindAllStateFiles scans root for all .confluence-state.json files.
+// It returns a map of space directory -> SpaceState.
+func FindAllStateFiles(root string) (map[string]SpaceState, error) {
+	states := make(map[string]SpaceState)
+	err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			// Skip hidden directories (like .git)
+			if d.Name() != "." && strings.HasPrefix(d.Name(), ".") {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if d.Name() == StateFileName {
+			dir := filepath.Dir(path)
+			state, err := LoadState(dir)
+			if err != nil {
+				return err
+			}
+			states[dir] = state
+		}
+		return nil
+	})
+	return states, err
+}
+
 func (s *SpaceState) normalize() {
+
 	if s.PagePathIndex == nil {
 		s.PagePathIndex = map[string]string{}
 	}

@@ -36,5 +36,6 @@ func init() {
 		newValidateCmd(),
 		newDiffCmd(),
 		newAgentsCmd(),
+		newRelinkCmd(),
 	)
 }
