@@ -326,6 +326,8 @@ Done criteria:
 ```
 confluence-markdown-sync/
 ├── cmd/
+│   ├── conf/
+│   │   └── main.go
 │   ├── root.go
 │   ├── pull.go
 │   ├── push.go
@@ -342,5 +344,5 @@ confluence-markdown-sync/
 ├── Makefile
 ├── go.mod
 ├── go.sum
-└── main.go
+
 ```

@@ -16,12 +16,12 @@ Write docs like code. Publish to Confluence with confidence. ✍️
 ```powershell
 git clone https://github.com/rgonek/confluence-markdown-sync.git
 cd confluence-markdown-sync
-go build -o conf .
+go build -o conf ./cmd/conf
 ```
 
 ### Install with Go ⚡
 ```powershell
-go install github.com/rgonek/confluence-markdown-sync@latest
+go install github.com/rgonek/confluence-markdown-sync/cmd/conf@latest
 ```
 
 ## Init a workspace 🚀

@@ -1,5 +1,5 @@
 BINARY     := conf
-MAIN       := .
+MAIN       := ./cmd/conf
 GO         := go
 GOFLAGS    :=
 
