@@ -27,6 +27,12 @@ type PushRemote interface {
 	GetSpace(ctx context.Context, spaceKey string) (confluence.Space, error)
 	ListPages(ctx context.Context, opts confluence.PageListOptions) (confluence.PageListResult, error)
 	GetPage(ctx context.Context, pageID string) (confluence.Page, error)
+	GetContentStatus(ctx context.Context, pageID string) (string, error)
+	SetContentStatus(ctx context.Context, pageID string, statusName string) error
+	DeleteContentStatus(ctx context.Context, pageID string) error
+	GetLabels(ctx context.Context, pageID string) ([]string, error)
+	AddLabels(ctx context.Context, pageID string, labels []string) error
+	RemoveLabel(ctx context.Context, pageID string, labelName string) error
 	CreatePage(ctx context.Context, input confluence.PageUpsertInput) (confluence.Page, error)
 	UpdatePage(ctx context.Context, pageID string, input confluence.PageUpsertInput) (confluence.Page, error)
 	ArchivePages(ctx context.Context, pageIDs []string) (confluence.ArchiveResult, error)

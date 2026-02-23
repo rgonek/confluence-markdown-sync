@@ -549,6 +549,14 @@ func (f *cmdFakePullRemote) GetPage(_ context.Context, pageID string) (confluenc
 	return page, nil
 }
 
+func (f *cmdFakePullRemote) GetContentStatus(_ context.Context, pageID string) (string, error) {
+	return "", nil
+}
+
+func (f *cmdFakePullRemote) GetLabels(_ context.Context, pageID string) ([]string, error) {
+	return nil, nil
+}
+
 func (f *cmdFakePullRemote) DownloadAttachment(_ context.Context, attachmentID string, pageID string, out io.Writer) error {
 	raw, ok := f.attachments[attachmentID]
 	if !ok {

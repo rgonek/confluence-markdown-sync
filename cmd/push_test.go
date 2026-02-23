@@ -912,6 +912,30 @@ func (f *cmdFakePushRemote) GetPage(_ context.Context, pageID string) (confluenc
 	return page, nil
 }
 
+func (f *cmdFakePushRemote) GetContentStatus(_ context.Context, pageID string) (string, error) {
+	return "", nil
+}
+
+func (f *cmdFakePushRemote) SetContentStatus(_ context.Context, pageID string, statusName string) error {
+	return nil
+}
+
+func (f *cmdFakePushRemote) DeleteContentStatus(_ context.Context, pageID string) error {
+	return nil
+}
+
+func (f *cmdFakePushRemote) GetLabels(_ context.Context, pageID string) ([]string, error) {
+	return nil, nil
+}
+
+func (f *cmdFakePushRemote) AddLabels(_ context.Context, pageID string, labels []string) error {
+	return nil
+}
+
+func (f *cmdFakePushRemote) RemoveLabel(_ context.Context, pageID string, labelName string) error {
+	return nil
+}
+
 func (f *cmdFakePushRemote) CreatePage(_ context.Context, input confluence.PageUpsertInput) (confluence.Page, error) {
 	id := fmt.Sprintf("new-page-%d", len(f.pagesByID)+1)
 	created := confluence.Page{

@@ -29,6 +29,36 @@ func (d *dryRunPushRemote) GetPage(ctx context.Context, pageID string) (confluen
 	return d.inner.GetPage(ctx, pageID)
 }
 
+func (d *dryRunPushRemote) GetContentStatus(ctx context.Context, pageID string) (string, error) {
+	return d.inner.GetContentStatus(ctx, pageID)
+}
+
+func (d *dryRunPushRemote) SetContentStatus(ctx context.Context, pageID string, statusName string) error {
+	fmt.Fprintf(d.out, "[DRY-RUN] SET CONTENT STATUS (PUT %s/wiki/rest/api/content/%s/state)\n", d.domain, pageID)
+	fmt.Fprintf(d.out, "  Name: %s\n\n", statusName)
+	return nil
+}
+
+func (d *dryRunPushRemote) DeleteContentStatus(ctx context.Context, pageID string) error {
+	fmt.Fprintf(d.out, "[DRY-RUN] DELETE CONTENT STATUS (DELETE %s/wiki/rest/api/content/%s/state)\n\n", d.domain, pageID)
+	return nil
+}
+
+func (d *dryRunPushRemote) GetLabels(ctx context.Context, pageID string) ([]string, error) {
+	return d.inner.GetLabels(ctx, pageID)
+}
+
+func (d *dryRunPushRemote) AddLabels(ctx context.Context, pageID string, labels []string) error {
+	fmt.Fprintf(d.out, "[DRY-RUN] ADD LABELS (POST %s/wiki/rest/api/content/%s/label)\n", d.domain, pageID)
+	fmt.Fprintf(d.out, "  Labels: %v\n\n", labels)
+	return nil
+}
+
+func (d *dryRunPushRemote) RemoveLabel(ctx context.Context, pageID string, labelName string) error {
+	fmt.Fprintf(d.out, "[DRY-RUN] REMOVE LABEL (DELETE %s/wiki/rest/api/content/%s/label?name=%s)\n\n", d.domain, pageID, labelName)
+	return nil
+}
+
 func (d *dryRunPushRemote) CreatePage(ctx context.Context, input confluence.PageUpsertInput) (confluence.Page, error) {
 	fmt.Fprintf(d.out, "[DRY-RUN] CREATE PAGE (POST %s/wiki/api/v2/pages)\n", d.domain)
 	fmt.Fprintf(d.out, "  Title: %s\n", input.Title)
