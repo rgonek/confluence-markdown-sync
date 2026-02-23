@@ -311,7 +311,7 @@ func (c *Client) DownloadAttachment(ctx context.Context, attachmentID string, pa
 	}
 
 	downloadCtx := ctx
-	if _, ok := ctx.Deadline(); !ok {
+	if deadline, ok := ctx.Deadline(); !ok || time.Until(deadline) < 30*time.Minute {
 		var cancel context.CancelFunc
 		downloadCtx, cancel = context.WithTimeout(ctx, 30*time.Minute)
 		defer cancel()

@@ -137,6 +137,10 @@ func Pull(ctx context.Context, remote PullRemote, opts PullOptions) (PullResult,
 		return PullResult{}, fmt.Errorf("recover missing pages: %w", err)
 	}
 
+	if opts.Progress != nil {
+		opts.Progress.SetTotal(len(pages))
+	}
+
 	folderByID, folderDiags, err := resolveFolderHierarchyFromPages(ctx, remote, pages)
 	if err != nil {
 		return PullResult{}, err
@@ -188,10 +192,10 @@ func Pull(ctx context.Context, remote PullRemote, opts PullOptions) (PullResult,
 	for _, pageID := range changedPageIDs {
 		page, err := remote.GetPage(ctx, pageID)
 		if err != nil {
+			if opts.Progress != nil {
+				opts.Progress.Add(1)
+			}
 			if errors.Is(err, confluence.ErrNotFound) {
-				if opts.Progress != nil {
-					opts.Progress.Add(1)
-				}
 				continue
 			}
 			return PullResult{}, fmt.Errorf("fetch page %s: %w", pageID, err)
@@ -209,6 +213,12 @@ func Pull(ctx context.Context, remote PullRemote, opts PullOptions) (PullResult,
 	}
 
 	attachmentIndex := cloneStringMap(state.AttachmentIndex)
+	// Build reverse index for O(1) lookups during planning
+	pathByAttachmentID := make(map[string]string, len(attachmentIndex))
+	for relPath, id := range attachmentIndex {
+		pathByAttachmentID[id] = relPath
+	}
+
 	attachmentPathByID := map[string]string{}
 	attachmentPageByID := map[string]string{}
 	staleAttachmentPaths := map[string]struct{}{}
@@ -217,6 +227,13 @@ func Pull(ctx context.Context, remote PullRemote, opts PullOptions) (PullResult,
 	for _, pageID := range deletedPageIDs {
 		for _, removedPath := range removeAttachmentsForPage(attachmentIndex, pageID) {
 			staleAttachmentPaths[removedPath] = struct{}{}
+			// Sync reverse index
+			for id, p := range pathByAttachmentID {
+				if p == removedPath {
+					delete(pathByAttachmentID, id)
+					break
+				}
+			}
 		}
 	}
 
@@ -229,6 +246,13 @@ func Pull(ctx context.Context, remote PullRemote, opts PullOptions) (PullResult,
 		refs := collectAttachmentRefs(page.BodyADF, page.ID)
 		for _, removedPath := range removeStaleAttachmentsForPage(attachmentIndex, page.ID, refs) {
 			staleAttachmentPaths[removedPath] = struct{}{}
+			// Sync reverse index
+			for id, p := range pathByAttachmentID {
+				if p == removedPath {
+					delete(pathByAttachmentID, id)
+					break
+				}
+			}
 		}
 
 		refIDs := make([]string, 0, len(refs))
@@ -241,14 +265,15 @@ func Pull(ctx context.Context, remote PullRemote, opts PullOptions) (PullResult,
 			ref := refs[attachmentID]
 			relAssetPath := buildAttachmentPath(ref)
 
-			for existingPath, existingID := range attachmentIndex {
-				if existingID == ref.AttachmentID && existingPath != relAssetPath {
-					delete(attachmentIndex, existingPath)
-					staleAttachmentPaths[existingPath] = struct{}{}
-				}
+			// Optimized: check if this attachment ID was already at a different path
+			if existingPath, found := pathByAttachmentID[ref.AttachmentID]; found && existingPath != relAssetPath {
+				delete(attachmentIndex, existingPath)
+				delete(pathByAttachmentID, ref.AttachmentID)
+				staleAttachmentPaths[existingPath] = struct{}{}
 			}
 
 			attachmentIndex[relAssetPath] = ref.AttachmentID
+			pathByAttachmentID[ref.AttachmentID] = relAssetPath
 			attachmentPathByID[ref.AttachmentID] = filepath.Join(spaceDir, filepath.FromSlash(relAssetPath))
 			attachmentPageByID[ref.AttachmentID] = ref.PageID
 		}
@@ -260,6 +285,9 @@ func Pull(ctx context.Context, remote PullRemote, opts PullOptions) (PullResult,
 	if opts.Progress != nil {
 		opts.Progress.SetDescription("Downloading assets")
 		opts.Progress.SetTotal(len(assetIDs))
+		if len(assetIDs) == 0 {
+			opts.Progress.SetCurrentItem("")
+		}
 	}
 
 	for _, attachmentID := range assetIDs {
@@ -344,6 +372,9 @@ func Pull(ctx context.Context, remote PullRemote, opts PullOptions) (PullResult,
 	if opts.Progress != nil {
 		opts.Progress.SetDescription("Writing markdown")
 		opts.Progress.SetTotal(len(changedPageIDsSorted))
+		if len(changedPageIDsSorted) == 0 {
+			opts.Progress.SetCurrentItem("")
+		}
 	}
 
 	for _, pageID := range changedPageIDsSorted {
