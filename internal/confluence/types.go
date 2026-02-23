@@ -15,7 +15,7 @@ type Service interface {
 	GetPage(ctx context.Context, pageID string) (Page, error)
 	DownloadAttachment(ctx context.Context, attachmentID string, pageID string) ([]byte, error)
 	UploadAttachment(ctx context.Context, input AttachmentUploadInput) (Attachment, error)
-	DeleteAttachment(ctx context.Context, attachmentID string) error
+	DeleteAttachment(ctx context.Context, attachmentID string, pageID string) error
 	CreatePage(ctx context.Context, input PageUpsertInput) (Page, error)
 	UpdatePage(ctx context.Context, pageID string, input PageUpsertInput) (Page, error)
 	ListChanges(ctx context.Context, opts ChangeListOptions) (ChangeListResult, error)

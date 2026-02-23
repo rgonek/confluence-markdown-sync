@@ -5,7 +5,7 @@ This document outlines the plan for building a CLI tool in Go that synchronizes 
 
 This design uses Git as a local history engine only (no Git remote required). The CLI owns Git operations (branches, worktrees, tags, snapshots), so users should not need to run Git commands directly.
 
-**Binary Name:** `cms`
+**Binary Name:** `conf`
 
 **Key Libraries:**
 - `github.com/rgonek/jira-adf-converter/converter`: Forward conversion (ADF JSON -> Markdown) via `converter.New(converter.Config)` and `ConvertWithContext(...)`, returning `converter.Result{Markdown, Warnings}`.
@@ -23,25 +23,27 @@ Authentication will be handled via environment variables or a local `.env` file:
 - `ATLASSIAN_API_TOKEN`: The API token generated from Atlassian account settings.
 
 Compatibility and precedence:
-- `cms` may accept legacy `CONFLUENCE_*` variables for backward compatibility.
+- `conf` may accept legacy `CONFLUENCE_*` variables for backward compatibility.
 - Resolution order: `CONFLUENCE_*` (if set) -> `ATLASSIAN_*` -> `.env` file -> error.
 
 ### 2.2 Data Mapping & Storage
 - **Directory Structure**:
-  - **Root (`XXX`)**: The directory where `cms init` is run. Contains `.git`.
+  - **Root (`XXX`)**: The directory where `conf init` is run. Contains `.git`.
   - **Space Directory (`XXX/<SpaceKey>`)**: All pages for a space reside here.
 - **File Format**: Markdown (`.md`) with Frontmatter.
 - **Title Source of Truth**: Frontmatter `title` field. Fallback to first H1 header if missing.
 - **Frontmatter (required fields)**:
-  - `confluence_page_id`: Stable page ID for update/delete operations.
-  - `confluence_space_key`: Confluence space key for validation.
-  - `confluence_version`: Last synced remote version.
-  - `confluence_last_modified`: Last synced remote modified timestamp.
-  - `confluence_parent_page_id`: Optional parent ID for hierarchy rebuild.
+  - `id`: Stable page ID for update/delete operations.
+  - `space`: Confluence space key for validation.
+  - `version`: Last synced remote version.
+- **Frontmatter (optional fields)**:
+  - `status`: Target page status (`draft` or `current`). Defaults to `current` if omitted. When pulling, if the remote page is published, this key is omitted to keep frontmatter clean.
 - **Frontmatter Mutability Rules**:
-  - Immutable: `confluence_page_id`, `confluence_space_key`.
-  - Mutable by sync only: `confluence_version`, `confluence_last_modified`, `confluence_parent_page_id`.
+  - Immutable: `id`, `space`.
+  - Mutable by sync only: `version`.
+  - Mutable by user: `status` (only allowed transitions: missing/`draft` -> `current`).
   - Manual or AI edits to immutable keys fail validation.
+  - Changing `status` from `current` to `draft` on a page that is already published remotely fails validation (Confluence API limitation: cannot unpublish pages).
 - **State**:
     - **Per-Space State File**: `XXX/<SpaceKey>/.confluence-state.json`.
     - **State Keys**:
@@ -54,7 +56,7 @@ Compatibility and precedence:
 
 #### 2.3.0 Git Operating Model
 - Git is required locally, but no Git remote is required.
-- All Git operations are CLI-managed; users interact through `cms` commands only.
+- All Git operations are CLI-managed; users interact through `conf` commands only.
 - `init` behaves as follows:
     - If no git repo exists: `git init -b main`.
     - If git repo exists: Use current branch.
@@ -111,7 +113,7 @@ Compatibility and precedence:
     -   **Stash**: Run `git stash push` on target files to clean workspace (Stash-Merge-Pop strategy).
     -   Capture current workspace state for target scope (`staged`, `unstaged`, `untracked`, and deletions).
     -   Capture out-of-scope workspace state so it can be restored exactly after merge.
-    -   Run `cms validate [TARGET]` against that captured state.
+    -   Run `conf validate [TARGET]` against that captured state.
     -   Abort `push` if validation fails (and restore stash).
 2.  **Identify Files**: Determine changed files from the workspace snapshot.
     -   If no in-scope files changed, exit success as a no-op (`push` creates no snapshot commit, no sync branch/worktree, and no tag).
@@ -184,8 +186,8 @@ Compatibility and precedence:
     - Hooks return mapping decisions only; sync orchestration owns network/filesystem side effects (downloads/uploads/file writes/deletes).
 
 #### 2.3.5 Git Integration Enhancements
-- **Smart .gitignore**: `init` adds `.DS_Store`, `*.tmp`, `.confluence-state.json`, `.env`, `cms.exe`, etc.
-- **Diff Command**: `cms diff [TARGET]` fetches remote, converts to MD, and runs `git diff --no-index` (`.md` suffix => file mode, otherwise space mode).
+- **Smart .gitignore**: `init` adds `.DS_Store`, `*.tmp`, `.confluence-state.json`, `.env`, `conf.exe`, etc.
+- **Diff Command**: `conf diff [TARGET]` fetches remote, converts to MD, and runs `git diff --no-index` (`.md` suffix => file mode, otherwise space mode).
 - **Rich Commits**:
     - Subject: `Sync "[Page Title]" to Confluence (v[Version])`
     - Body: `Page ID: [ID]\nURL: [URL]`
@@ -229,12 +231,14 @@ Compatibility and precedence:
 | Command | Arguments | Description |
 | :--- | :--- | :--- |
 | `init` | none | Checks git installed. Initializes local repo on branch `main` if needed (or uses current branch), creates `.gitignore` (ignoring `.confluence-state.json`, `.env`), verifies config/prompts for env vars, creates `AGENTS.md` and `README.md`. |
-| `pull` | `[TARGET]` | Pulls entire space or a single file. If `TARGET` ends with `.md`, treat as file path; otherwise treat as `SPACE_KEY`. Commits changes, updates state watermark, and manages dirty workspace restoration without requiring user Git commands. |
-| `push` | `[TARGET]` | Pushes all changes in space or one file. If `TARGET` ends with `.md`, treat as file path; otherwise treat as `SPACE_KEY`. Includes uncommitted local changes through an internal workspace snapshot. |
+| `pull` | `[TARGET]` | Pulls entire space or a single file. If `TARGET` ends with `.md`, treat as file path; otherwise treat as `SPACE_KEY`. Commits changes, updates state watermark, and manages dirty workspace restoration. Provides interactive conflict resolution when auto-merge fails. Supports `--discard-local` to overwrite local changes. |
+| `push` | `[TARGET]` | Pushes all changes in space or one file. If `TARGET` ends with `.md`, treat as file path; otherwise treat as `SPACE_KEY`. Includes uncommitted local changes through an internal workspace snapshot. Automatically triggers `pull` on version conflicts if `--on-conflict=pull-merge` is used. |
+
 | `validate` | `[TARGET]` | Validates sync invariants before push: frontmatter schema, immutable key integrity, links/assets, and Markdown->ADF conversion. |
 | `diff` | `[TARGET]` | Shows file- or space-scoped diff against Confluence. If `TARGET` ends with `.md`, treat as file path; otherwise treat as `SPACE_KEY`. |
 
-Automation support for `pull`/`push`: `--yes`, `--non-interactive`; `pull` additionally supports `--skip-missing-assets` and `--force`; `push` additionally supports `--on-conflict=pull-merge|force|cancel`.
+Automation support for `pull`/`push`: `--yes`, `--non-interactive`; `pull` additionally supports `--skip-missing-assets`, `--force`, and `--discard-local`; `push` additionally supports `--on-conflict=pull-merge|force|cancel`.
+
 
 ## 4. Delivery Plan (PR-by-PR)
 
@@ -252,7 +256,7 @@ Checklist:
 - [ ] Wire shared automation flags (`--yes`, `--non-interactive`) and push conflict flag parsing (`--on-conflict`).
 - [ ] Add top-level `Makefile` (`build`, `test`, `lint`/`fmt`).
 Done criteria:
-- [ ] `cms --help` shows all planned commands and flags.
+- [ ] `conf --help` shows all planned commands and flags.
 - [ ] `init` can bootstrap a fresh repo on `main` and initialize config files.
 - [ ] Unit tests cover target parsing and config precedence.
 

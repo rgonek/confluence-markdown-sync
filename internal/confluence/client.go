@@ -19,7 +19,7 @@ import (
 
 const (
 	defaultHTTPTimeout = 30 * time.Second
-	defaultUserAgent   = "cms/dev"
+	defaultUserAgent   = "conf/dev"
 	maxErrorBodyBytes  = 1 << 20 // 1 MiB
 )
 
@@ -427,10 +427,16 @@ func (c *Client) UploadAttachment(ctx context.Context, input AttachmentUploadInp
 }
 
 // DeleteAttachment deletes a Confluence attachment.
-func (c *Client) DeleteAttachment(ctx context.Context, attachmentID string) error {
+func (c *Client) DeleteAttachment(ctx context.Context, attachmentID string, pageID string) error {
 	id := strings.TrimSpace(attachmentID)
 	if id == "" {
 		return errors.New("attachment ID is required")
+	}
+
+	if isUUID(id) && pageID != "" {
+		if resolvedID, err := c.resolveAttachmentIDByFileID(ctx, id, pageID); err == nil {
+			id = resolvedID
+		}
 	}
 
 	req, err := c.newRequest(
@@ -447,6 +453,9 @@ func (c *Client) DeleteAttachment(ctx context.Context, attachmentID string) erro
 		if isHTTPStatus(err, http.StatusNotFound) {
 			return ErrNotFound
 		}
+		if isInvalidAttachmentIdentifierError(err) {
+			return ErrNotFound
+		}
 		return err
 	}
 	return nil
@@ -461,7 +470,7 @@ func (c *Client) CreatePage(ctx context.Context, input PageUpsertInput) (Page, e
 		return Page{}, errors.New("page title is required")
 	}
 
-	req, err := c.newRequest(ctx, http.MethodPost, "/wiki/api/v2/pages", nil, pageWritePayload(input))
+	req, err := c.newRequest(ctx, http.MethodPost, "/wiki/api/v2/pages", nil, pageWritePayload("", input))
 	if err != nil {
 		return Page{}, err
 	}
@@ -488,7 +497,7 @@ func (c *Client) UpdatePage(ctx context.Context, pageID string, input PageUpsert
 		http.MethodPut,
 		"/wiki/api/v2/pages/"+url.PathEscape(id),
 		nil,
-		pageWritePayload(input),
+		pageWritePayload(id, input),
 	)
 	if err != nil {
 		return Page{}, err
@@ -690,6 +699,18 @@ func isHTTPStatus(err error, status int) bool {
 	return errors.As(err, &apiErr) && apiErr.StatusCode == status
 }
 
+func isInvalidAttachmentIdentifierError(err error) bool {
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) || apiErr.StatusCode != http.StatusBadRequest {
+		return false
+	}
+	body := strings.ToLower(strings.TrimSpace(apiErr.Body))
+	message := strings.ToLower(strings.TrimSpace(apiErr.Message))
+	combined := message + " " + body
+	return strings.Contains(combined, "invalid_request_parameter") &&
+		(strings.Contains(combined, "expected type is contentid") || strings.Contains(combined, "for 'id'"))
+}
+
 func decodeAPIErrorMessage(body []byte) string {
 	if len(body) == 0 {
 		return ""
@@ -760,11 +781,14 @@ func buildChangeCQL(spaceKey string, since time.Time) string {
 	return strings.Join(parts, " AND ")
 }
 
-func pageWritePayload(input PageUpsertInput) map[string]any {
+func pageWritePayload(id string, input PageUpsertInput) map[string]any {
 	payload := map[string]any{
 		"spaceId": strings.TrimSpace(input.SpaceID),
 		"title":   strings.TrimSpace(input.Title),
 		"status":  defaultPageStatus(input.Status),
+	}
+	if id != "" {
+		payload["id"] = strings.TrimSpace(id)
 	}
 	if input.ParentPageID != "" {
 		payload["parentId"] = strings.TrimSpace(input.ParentPageID)
@@ -1050,15 +1074,24 @@ func (c *Client) resolveAttachmentIDByFileID(ctx context.Context, fileID string,
 			}
 		}
 
-		nextURL := payload.Links.Next
-		if nextURL == "" {
+		nextURLStr := payload.Links.Next
+		if nextURLStr == "" {
 			break
 		}
 
-		req, err = c.newRequest(ctx, http.MethodGet, nextURL, nil, nil)
+		// Ensure nextURL is a full URL or relative to base
+		if !strings.HasPrefix(nextURLStr, "http") {
+			nextURLStr = resolveWebURL(c.baseURL, nextURLStr)
+		}
+
+		req, err = http.NewRequestWithContext(ctx, http.MethodGet, nextURLStr, nil)
 		if err != nil {
 			return "", err
 		}
+		req.SetBasicAuth(c.email, c.apiToken)
+		req.Header.Set("Accept", "application/json")
+		req.Header.Set("User-Agent", c.userAgent)
+
 		payload = v2ListResponse[attachmentDTO]{}
 	}
 

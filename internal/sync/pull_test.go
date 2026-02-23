@@ -24,9 +24,9 @@ func TestPull_IncrementalRewriteDeleteAndWatermark(t *testing.T) {
 		doc := fs.MarkdownDocument{
 			Frontmatter: fs.Frontmatter{
 				Title:                  strings.TrimSuffix(filepath.Base(relPath), ".md"),
-				ConfluencePageID:       pageID,
-				ConfluenceSpaceKey:     "ENG",
-				ConfluenceVersion:      1,
+				ID:                     pageID,
+				Space:                  "ENG",
+				Version:                1,
 				ConfluenceLastModified: "2026-02-01T08:00:00Z",
 			},
 			Body: body,
@@ -137,8 +137,8 @@ func TestPull_IncrementalRewriteDeleteAndWatermark(t *testing.T) {
 	if !strings.Contains(rootDoc.Body, "![Diagram](assets/1/att-1-diagram.png)") {
 		t.Fatalf("expected rewritten media link in root body, got:\n%s", rootDoc.Body)
 	}
-	if rootDoc.Frontmatter.ConfluenceVersion != 5 {
-		t.Fatalf("root version = %d, want 5", rootDoc.Frontmatter.ConfluenceVersion)
+	if rootDoc.Frontmatter.Version != 5 {
+		t.Fatalf("root version = %d, want 5", rootDoc.Frontmatter.Version)
 	}
 
 	assetPath := filepath.Join(spaceDir, "assets", "1", "att-1-diagram.png")
@@ -332,9 +332,9 @@ func TestPull_ForceFullPullsAllPagesWithoutIncrementalChanges(t *testing.T) {
 	initialDoc := fs.MarkdownDocument{
 		Frontmatter: fs.Frontmatter{
 			Title:                  "Root",
-			ConfluencePageID:       "1",
-			ConfluenceSpaceKey:     "ENG",
-			ConfluenceVersion:      1,
+			ID:                     "1",
+			Space:                  "ENG",
+			Version:                1,
 			ConfluenceLastModified: "2026-02-01T08:00:00Z",
 		},
 		Body: "old body\n",

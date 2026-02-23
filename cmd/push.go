@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -31,6 +32,8 @@ var newPushRemote = func(cfg *config.Config) (syncflow.PushRemote, error) {
 	})
 }
 
+var flagPushPreflight bool
+
 func newPushCmd() *cobra.Command {
 	var onConflict string
 	var dryRun bool
@@ -42,6 +45,9 @@ func newPushCmd() *cobra.Command {
 
 TARGET can be a SPACE_KEY (e.g. "MYSPACE") or a path to a .md file.
 If omitted, the space is inferred from the current directory name.
+
+For space-wide pushes, the conflict policy defaults to "pull-merge" if not specified.
+For single-file pushes, a policy must be specified via --on-conflict or chosen via prompt.
 
 push always runs validate before any remote write.
 It uses an isolated worktree and a temporary branch to ensure safety.`,
@@ -55,6 +61,7 @@ It uses an isolated worktree and a temporary branch to ensure safety.`,
 		},
 	}
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Simulate the push without modifying Confluence or local Git state")
+	cmd.Flags().BoolVar(&flagPushPreflight, "preflight", false, "Show a concise push plan (changes and validation) without remote writes")
 	cmd.Flags().BoolVarP(&flagYes, "yes", "y", false, "Auto-approve safety confirmations")
 	cmd.Flags().BoolVar(&flagNonInteractive, "non-interactive", false, "Disable prompts; fail fast when a decision is required")
 	cmd.Flags().StringVar(&onConflict, "on-conflict", "", "Non-interactive conflict policy: pull-merge|force|cancel")
@@ -76,12 +83,18 @@ func validateOnConflict(v string) error {
 func runPush(cmd *cobra.Command, target config.Target, onConflict string, dryRun bool) (runErr error) {
 	ctx := context.Background()
 	out := cmd.OutOrStdout()
+	preflight := flagPushPreflight
 
-	resolvedPolicy, err := resolvePushConflictPolicy(cmd.InOrStdin(), out, onConflict)
-	if err != nil {
-		return err
+	if preflight && dryRun {
+		return errors.New("--preflight and --dry-run cannot be used together")
 	}
-	onConflict = resolvedPolicy
+	if !preflight {
+		resolvedPolicy, err := resolvePushConflictPolicy(cmd.InOrStdin(), out, onConflict, target.IsSpace())
+		if err != nil {
+			return err
+		}
+		onConflict = resolvedPolicy
+	}
 
 	initialCtx, err := resolveInitialPullContext(target)
 	if err != nil {
@@ -89,6 +102,22 @@ func runPush(cmd *cobra.Command, target config.Target, onConflict string, dryRun
 	}
 	spaceDir := initialCtx.spaceDir
 	spaceKey := initialCtx.spaceKey
+
+	envPath := findEnvPath(spaceDir)
+	cfg, err := config.Load(envPath)
+	if err != nil {
+		return fmt.Errorf("failed to load config: %w", err)
+	}
+
+	if !initialCtx.fixedDir {
+		remote, err := newPushRemote(cfg)
+		if err == nil {
+			space, err := remote.GetSpace(ctx, spaceKey)
+			if err == nil {
+				spaceDir = filepath.Join(filepath.Dir(spaceDir), fs.SanitizeSpaceDirName(space.Name, space.Key))
+			}
+		}
+	}
 
 	gitClient, err := git.NewClient()
 	if err != nil {
@@ -110,6 +139,50 @@ func runPush(cmd *cobra.Command, target config.Target, onConflict string, dryRun
 		return err
 	}
 
+	if preflight {
+		baselineRef, err := gitPushBaselineRef(gitClient, spaceKey)
+		if err != nil {
+			return err
+		}
+		syncChanges, err := collectSyncPushChanges(gitClient, baselineRef, spaceScopePath, gitClient.RootDir, spaceDir)
+		if err != nil {
+			return err
+		}
+		if target.IsFile() {
+			syncChanges, err = collectSyncPushChanges(gitClient, baselineRef, changeScopePath, gitClient.RootDir, spaceDir)
+			if err != nil {
+				return err
+			}
+		}
+
+		fmt.Fprintf(out, "preflight for space %s\n", spaceKey)
+		if len(syncChanges) == 0 {
+			fmt.Fprintln(out, "no in-scope markdown changes")
+			return nil
+		}
+
+		var currentTarget config.Target
+		if target.IsFile() {
+			abs, _ := filepath.Abs(target.Value)
+			currentTarget = config.Target{Mode: config.TargetModeFile, Value: abs}
+		} else {
+			currentTarget = config.Target{Mode: config.TargetModeSpace, Value: spaceDir}
+		}
+		if err := runValidateTarget(out, currentTarget); err != nil {
+			return fmt.Errorf("preflight validate failed: %w", err)
+		}
+
+		addCount, modifyCount, deleteCount := summarizePushChanges(syncChanges)
+		fmt.Fprintf(out, "changes: %d (A:%d M:%d D:%d)\n", len(syncChanges), addCount, modifyCount, deleteCount)
+		for _, change := range syncChanges {
+			fmt.Fprintf(out, "  %s %s\n", change.Type, change.Path)
+		}
+		if len(syncChanges) > 10 || deleteCount > 0 {
+			fmt.Fprintln(out, "safety confirmation would be required")
+		}
+		return nil
+	}
+
 	ts := nowUTC()
 	tsStr := ts.Format("20060102T150405Z")
 
@@ -121,41 +194,13 @@ func runPush(cmd *cobra.Command, target config.Target, onConflict string, dryRun
 			return err
 		}
 
-		changes, err := gitClient.DiffNameStatus(baselineRef, "", spaceScopePath)
-		if err != nil {
-			return fmt.Errorf("diff failed: %w", err)
-		}
-
-		untracked, err := gitClient.Run("ls-files", "--others", "--exclude-standard", "--", spaceScopePath)
-		if err == nil {
-			for _, line := range strings.Split(strings.ReplaceAll(untracked, "\r\n", "\n"), "\n") {
-				line = strings.TrimSpace(line)
-				if line != "" {
-					changes = append(changes, git.FileStatus{Code: "A", Path: filepath.ToSlash(line)})
-				}
-			}
-		}
-
-		syncChanges, err := toSyncPushChanges(changes, gitClient.RootDir, spaceDir)
+		syncChanges, err := collectSyncPushChanges(gitClient, baselineRef, spaceScopePath, gitClient.RootDir, spaceDir)
 		if err != nil {
 			return err
 		}
 
 		if target.IsFile() {
-			changes, err = gitClient.DiffNameStatus(baselineRef, "", changeScopePath)
-			if err != nil {
-				return err
-			}
-			untracked, err = gitClient.Run("ls-files", "--others", "--exclude-standard", "--", changeScopePath)
-			if err == nil {
-				for _, line := range strings.Split(strings.ReplaceAll(untracked, "\r\n", "\n"), "\n") {
-					line = strings.TrimSpace(line)
-					if line != "" {
-						changes = append(changes, git.FileStatus{Code: "A", Path: filepath.ToSlash(line)})
-					}
-				}
-			}
-			syncChanges, err = toSyncPushChanges(changes, gitClient.RootDir, spaceDir)
+			syncChanges, err = collectSyncPushChanges(gitClient, baselineRef, changeScopePath, gitClient.RootDir, spaceDir)
 			if err != nil {
 				return err
 			}
@@ -178,8 +223,8 @@ func runPush(cmd *cobra.Command, target config.Target, onConflict string, dryRun
 			return fmt.Errorf("pre-push validate failed: %w", err)
 		}
 
-		envPath := findEnvPath(spaceDir)
-		cfg, err := config.Load(envPath)
+		envPath = findEnvPath(spaceDir)
+		cfg, err = config.Load(envPath)
 		if err != nil {
 			return fmt.Errorf("failed to load config: %w", err)
 		}
@@ -191,7 +236,13 @@ func runPush(cmd *cobra.Command, target config.Target, onConflict string, dryRun
 
 		remote := &dryRunPushRemote{inner: realRemote, out: out, domain: cfg.Domain}
 
-		state, err := fs.LoadState(spaceDir)
+		dryRunSpaceDir, cleanupDryRun, err := prepareDryRunSpaceDir(spaceDir)
+		if err != nil {
+			return err
+		}
+		defer cleanupDryRun()
+
+		state, err := fs.LoadState(dryRunSpaceDir)
 		if err != nil {
 			return fmt.Errorf("load state: %w", err)
 		}
@@ -203,11 +254,12 @@ func runPush(cmd *cobra.Command, target config.Target, onConflict string, dryRun
 
 		result, err := syncflow.Push(ctx, remote, syncflow.PushOptions{
 			SpaceKey:       spaceKey,
-			SpaceDir:       spaceDir,
+			SpaceDir:       dryRunSpaceDir,
 			Domain:         cfg.Domain,
 			State:          state,
 			Changes:        syncChanges,
 			ConflictPolicy: toSyncConflictPolicy(onConflict),
+			DryRun:         true,
 			Progress:       progress,
 		})
 		if err != nil {
@@ -314,6 +366,12 @@ func runPush(cmd *cobra.Command, target config.Target, onConflict string, dryRun
 		}
 		return fmt.Errorf("reset worktree: %w", err)
 	}
+	if err := restoreUntrackedFromStashParent(wtClient, stashRef, spaceScopePath); err != nil {
+		if stashRef != "" {
+			_ = gitClient.StashPop(stashRef)
+		}
+		return err
+	}
 
 	var wtTarget config.Target
 
@@ -344,15 +402,7 @@ func runPush(cmd *cobra.Command, target config.Target, onConflict string, dryRun
 	}
 
 	wtClient = &git.Client{RootDir: worktreeDir}
-	changes, err := wtClient.DiffNameStatus(baselineRef, snapshotCommit, spaceScopePath)
-	if err != nil {
-		if stashRef != "" {
-			_ = gitClient.StashPop(stashRef)
-		}
-		return fmt.Errorf("diff failed: %w", err)
-	}
-
-	syncChanges, err := toSyncPushChanges(changes, gitClient.RootDir, spaceDir)
+	syncChanges, err := collectSyncPushChanges(wtClient, baselineRef, spaceScopePath, gitClient.RootDir, spaceDir)
 	if err != nil {
 		if stashRef != "" {
 			_ = gitClient.StashPop(stashRef)
@@ -361,18 +411,7 @@ func runPush(cmd *cobra.Command, target config.Target, onConflict string, dryRun
 	}
 
 	if target.IsFile() {
-		// Filter syncChanges for the specific file
-		// Or assume re-running diff with scoped path is better
-		// changeScopePath is absolute path in repo? No, gitClient.ScopePath returns relative to root.
-		// DiffNameStatus expects relative to root.
-		changes, err = wtClient.DiffNameStatus(baselineRef, "HEAD", changeScopePath)
-		if err != nil {
-			if stashRef != "" {
-				_ = gitClient.StashPop(stashRef)
-			}
-			return err
-		}
-		syncChanges, err = toSyncPushChanges(changes, gitClient.RootDir, spaceDir)
+		syncChanges, err = collectSyncPushChanges(wtClient, baselineRef, changeScopePath, gitClient.RootDir, spaceDir)
 		if err != nil {
 			if stashRef != "" {
 				_ = gitClient.StashPop(stashRef)
@@ -397,8 +436,8 @@ func runPush(cmd *cobra.Command, target config.Target, onConflict string, dryRun
 	}
 
 	// 6. Push (in worktree)
-	envPath := findEnvPath(wtSpaceDir) // Load config from worktree
-	cfg, err := config.Load(envPath)
+	envPath = findEnvPath(wtSpaceDir) // Load config from worktree
+	cfg, err = config.Load(envPath)
 	if err != nil {
 		if stashRef != "" {
 			_ = gitClient.StashPop(stashRef)
@@ -438,10 +477,20 @@ func runPush(cmd *cobra.Command, target config.Target, onConflict string, dryRun
 	})
 	if err != nil {
 		if stashRef != "" {
+			// Restore workspace before reporting error or attempting pull-merge
 			_ = gitClient.StashPop(stashRef)
 		}
 		var conflictErr *syncflow.PushConflictError
 		if errors.As(err, &conflictErr) {
+			if onConflict == OnConflictPullMerge {
+				fmt.Fprintf(out, "conflict detected for %s; policy is %s, attempting automatic pull-merge...\n", conflictErr.Path, onConflict)
+				// Use the original target for pull
+				if pullErr := runPull(cmd, target); pullErr != nil {
+					return fmt.Errorf("automatic pull-merge failed: %w", pullErr)
+				}
+				fmt.Fprintln(out, "automatic pull-merge completed. If there were no content conflicts, you can now retry your push.")
+				return nil
+			}
 			return formatPushConflictError(conflictErr)
 		}
 		return err
@@ -478,7 +527,7 @@ func runPush(cmd *cobra.Command, target config.Target, onConflict string, dryRun
 			repoPaths = append(repoPaths, rel)
 		}
 
-		if err := wtClient.Add(repoPaths...); err != nil {
+		if err := wtClient.AddForce(repoPaths...); err != nil {
 			if stashRef != "" {
 				_ = gitClient.StashPop(stashRef)
 			}
@@ -598,6 +647,105 @@ func gitPushBaselineRef(client *git.Client, spaceKey string) (string, error) {
 	return lines[0], nil
 }
 
+func collectSyncPushChanges(client *git.Client, baselineRef, scopePath, repoRoot, spaceDir string) ([]syncflow.PushFileChange, error) {
+	changes, err := collectGitChangesWithUntracked(client, baselineRef, scopePath)
+	if err != nil {
+		return nil, err
+	}
+	return toSyncPushChanges(changes, repoRoot, spaceDir)
+}
+
+func collectGitChangesWithUntracked(client *git.Client, baselineRef, scopePath string) ([]git.FileStatus, error) {
+	changes, err := client.DiffNameStatus(baselineRef, "", scopePath)
+	if err != nil {
+		return nil, fmt.Errorf("diff failed: %w", err)
+	}
+
+	untrackedRaw, err := client.Run("ls-files", "--others", "--exclude-standard", "--", scopePath)
+	if err == nil {
+		for _, line := range strings.Split(strings.ReplaceAll(untrackedRaw, "\r\n", "\n"), "\n") {
+			line = strings.TrimSpace(line)
+			if line == "" {
+				continue
+			}
+			changes = append(changes, git.FileStatus{Code: "A", Path: filepath.ToSlash(line)})
+		}
+	}
+
+	return changes, nil
+}
+
+func prepareDryRunSpaceDir(spaceDir string) (string, func(), error) {
+	tmpRoot, err := os.MkdirTemp("", "conf-dry-run-*")
+	if err != nil {
+		return "", nil, fmt.Errorf("create dry-run temp dir: %w", err)
+	}
+
+	cleanup := func() {
+		_ = os.RemoveAll(tmpRoot)
+	}
+
+	dryRunSpaceDir := filepath.Join(tmpRoot, filepath.Base(spaceDir))
+	if err := copyDirTree(spaceDir, dryRunSpaceDir); err != nil {
+		cleanup()
+		return "", nil, fmt.Errorf("prepare dry-run space copy: %w", err)
+	}
+
+	return dryRunSpaceDir, cleanup, nil
+}
+
+func copyDirTree(src, dst string) error {
+	return filepath.WalkDir(src, func(path string, d os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+
+		relPath, err := filepath.Rel(src, path)
+		if err != nil {
+			return err
+		}
+
+		targetPath := filepath.Join(dst, relPath)
+		if d.IsDir() {
+			return os.MkdirAll(targetPath, 0o755)
+		}
+
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		if err := os.MkdirAll(filepath.Dir(targetPath), 0o755); err != nil {
+			return err
+		}
+		return os.WriteFile(targetPath, raw, 0o644)
+	})
+}
+
+func restoreUntrackedFromStashParent(client *git.Client, stashRef, scopePath string) error {
+	stashRef = strings.TrimSpace(stashRef)
+	if stashRef == "" {
+		return nil
+	}
+
+	untrackedRef := stashRef + "^3"
+	if _, err := client.Run("rev-parse", "--verify", "--quiet", untrackedRef); err != nil {
+		return nil
+	}
+	untrackedPaths, err := client.Run("ls-tree", "-r", "--name-only", untrackedRef, "--", scopePath)
+	if err != nil || strings.TrimSpace(untrackedPaths) == "" {
+		return nil
+	}
+
+	if _, err := client.Run("checkout", untrackedRef, "--", scopePath); err != nil {
+		return fmt.Errorf("restore untracked files from stash: %w", err)
+	}
+	if _, err := client.Run("reset", "--", scopePath); err != nil {
+		return fmt.Errorf("unstage restored untracked files: %w", err)
+	}
+
+	return nil
+}
+
 func toSyncPushChanges(changes []git.FileStatus, repoRoot, spaceDir string) ([]syncflow.PushFileChange, error) {
 	normalizedSpaceDir, err := normalizeCommandPath(spaceDir)
 	if err != nil {
@@ -630,6 +778,10 @@ func toSyncPushChanges(changes []git.FileStatus, repoRoot, spaceDir string) ([]s
 
 		relPath = filepath.ToSlash(relPath)
 		if relPath == "." || strings.HasPrefix(relPath, "../") {
+			continue
+		}
+
+		if !strings.HasSuffix(relPath, ".md") || strings.HasPrefix(relPath, "assets/") {
 			continue
 		}
 
@@ -675,6 +827,20 @@ func toSyncConflictPolicy(policy string) syncflow.PushConflictPolicy {
 	}
 }
 
+func summarizePushChanges(changes []syncflow.PushFileChange) (adds, modifies, deletes int) {
+	for _, change := range changes {
+		switch change.Type {
+		case syncflow.PushChangeAdd:
+			adds++
+		case syncflow.PushChangeModify:
+			modifies++
+		case syncflow.PushChangeDelete:
+			deletes++
+		}
+	}
+	return adds, modifies, deletes
+}
+
 func pushHasDeleteChange(changes []syncflow.PushFileChange) bool {
 	for _, change := range changes {
 		if change.Type == syncflow.PushChangeDelete {
@@ -687,8 +853,9 @@ func pushHasDeleteChange(changes []syncflow.PushFileChange) bool {
 func formatPushConflictError(conflictErr *syncflow.PushConflictError) error {
 	switch conflictErr.Policy {
 	case syncflow.PushConflictPolicyPullMerge:
+		// This should generally be handled by the caller in runPush, but fallback here
 		return fmt.Errorf(
-			"conflict for %s (remote v%d > local v%d): pull-merge policy selected; run cms pull and merge local changes before retrying push",
+			"conflict for %s (remote v%d > local v%d): run 'conf pull' to merge remote changes into your local workspace before retrying push",
 			conflictErr.Path,
 			conflictErr.RemoteVersion,
 			conflictErr.LocalVersion,
@@ -697,7 +864,7 @@ func formatPushConflictError(conflictErr *syncflow.PushConflictError) error {
 		return conflictErr
 	default:
 		return fmt.Errorf(
-			"conflict for %s (remote v%d > local v%d): rerun with --on-conflict=force to overwrite or --on-conflict=pull-merge to reconcile",
+			"conflict for %s (remote v%d > local v%d): rerun with --on-conflict=force to overwrite remote, or run 'conf pull' to merge",
 			conflictErr.Path,
 			conflictErr.RemoteVersion,
 			conflictErr.LocalVersion,

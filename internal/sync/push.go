@@ -2,6 +2,7 @@ package sync
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"mime"
@@ -11,7 +12,6 @@ import (
 	"regexp"
 	"sort"
 	"strings"
-	"time"
 
 	"github.com/rgonek/confluence-markdown-sync/internal/confluence"
 	"github.com/rgonek/confluence-markdown-sync/internal/converter"
@@ -27,11 +27,12 @@ type PushRemote interface {
 	GetSpace(ctx context.Context, spaceKey string) (confluence.Space, error)
 	ListPages(ctx context.Context, opts confluence.PageListOptions) (confluence.PageListResult, error)
 	GetPage(ctx context.Context, pageID string) (confluence.Page, error)
+	CreatePage(ctx context.Context, input confluence.PageUpsertInput) (confluence.Page, error)
 	UpdatePage(ctx context.Context, pageID string, input confluence.PageUpsertInput) (confluence.Page, error)
 	ArchivePages(ctx context.Context, pageIDs []string) (confluence.ArchiveResult, error)
 	DeletePage(ctx context.Context, pageID string, hardDelete bool) error
 	UploadAttachment(ctx context.Context, input confluence.AttachmentUploadInput) (confluence.Attachment, error)
-	DeleteAttachment(ctx context.Context, attachmentID string) error
+	DeleteAttachment(ctx context.Context, attachmentID string, pageID string) error
 }
 
 // PushConflictPolicy controls remote-ahead conflict behavior.
@@ -68,6 +69,7 @@ type PushOptions struct {
 	Changes        []PushFileChange
 	ConflictPolicy PushConflictPolicy
 	HardDelete     bool
+	DryRun         bool
 	Progress       Progress
 }
 
@@ -140,7 +142,7 @@ func Push(ctx context.Context, remote PushRemote, opts PushOptions) (PushResult,
 	pages, err := listAllPushPages(ctx, remote, confluence.PageListOptions{
 		SpaceID:  space.ID,
 		SpaceKey: opts.SpaceKey,
-		Status:   "current",
+		Status:   "current,draft",
 		Limit:    pushPageBatchSize,
 	})
 	if err != nil {
@@ -254,7 +256,7 @@ func pushDeletePage(
 	for _, assetPath := range stalePaths {
 		attachmentID := state.AttachmentIndex[assetPath]
 		if strings.TrimSpace(attachmentID) != "" {
-			if err := remote.DeleteAttachment(ctx, attachmentID); err != nil && !errors.Is(err, confluence.ErrNotFound) {
+			if err := remote.DeleteAttachment(ctx, attachmentID, pageID); err != nil && !errors.Is(err, confluence.ErrNotFound) {
 				return PushCommitPlan{}, fmt.Errorf("delete attachment %s: %w", attachmentID, err)
 			}
 		}
@@ -301,16 +303,17 @@ func pushUpsertPage(
 		return PushCommitPlan{}, fmt.Errorf("read markdown %s: %w", relPath, err)
 	}
 
-	pageID := strings.TrimSpace(doc.Frontmatter.ConfluencePageID)
-	if pageID == "" {
-		return PushCommitPlan{}, fmt.Errorf("%s missing confluence_page_id", relPath)
-	}
-	if !strings.EqualFold(strings.TrimSpace(doc.Frontmatter.ConfluenceSpaceKey), strings.TrimSpace(opts.SpaceKey)) {
-		return PushCommitPlan{}, fmt.Errorf("%s belongs to space %q, expected %q", relPath, doc.Frontmatter.ConfluenceSpaceKey, opts.SpaceKey)
+	pageID := strings.TrimSpace(doc.Frontmatter.ID)
+	if !strings.EqualFold(strings.TrimSpace(doc.Frontmatter.Space), strings.TrimSpace(opts.SpaceKey)) {
+		return PushCommitPlan{}, fmt.Errorf("%s belongs to space %q, expected %q", relPath, doc.Frontmatter.Space, opts.SpaceKey)
 	}
 
-	remotePage, ok := remotePageByID[pageID]
-	if !ok {
+	localVersion := doc.Frontmatter.Version
+	fallbackParentID := strings.TrimSpace(doc.Frontmatter.ConfluenceParentPageID)
+	var remotePage confluence.Page
+	if pageID != "" {
+		// Always fetch the latest version specifically for the page we're about to update
+		// to avoid eventual consistency issues with space-wide listing.
 		fetched, fetchErr := remote.GetPage(ctx, pageID)
 		if fetchErr != nil {
 			if errors.Is(fetchErr, confluence.ErrNotFound) {
@@ -320,30 +323,60 @@ func pushUpsertPage(
 		}
 		remotePage = fetched
 		remotePageByID[pageID] = fetched
-	}
 
-	localVersion := doc.Frontmatter.ConfluenceVersion
-	if remotePage.Version > localVersion {
-		switch policy {
-		case PushConflictPolicyForce:
-			// Continue and overwrite on top of remote head.
-		case PushConflictPolicyPullMerge, PushConflictPolicyCancel:
-			return PushCommitPlan{}, &PushConflictError{
-				Path:          relPath,
-				PageID:        pageID,
-				LocalVersion:  localVersion,
-				RemoteVersion: remotePage.Version,
-				Policy:        policy,
-			}
-		default:
-			return PushCommitPlan{}, &PushConflictError{
-				Path:          relPath,
-				PageID:        pageID,
-				LocalVersion:  localVersion,
-				RemoteVersion: remotePage.Version,
-				Policy:        PushConflictPolicyCancel,
+		fallbackParentID = strings.TrimSpace(remotePage.ParentPageID)
+
+		if remotePage.Version > localVersion {
+			switch policy {
+
+			case PushConflictPolicyForce:
+				// Continue and overwrite on top of remote head.
+			case PushConflictPolicyPullMerge, PushConflictPolicyCancel:
+				return PushCommitPlan{}, &PushConflictError{
+					Path:          relPath,
+					PageID:        pageID,
+					LocalVersion:  localVersion,
+					RemoteVersion: remotePage.Version,
+					Policy:        policy,
+				}
+			default:
+				return PushCommitPlan{}, &PushConflictError{
+					Path:          relPath,
+					PageID:        pageID,
+					LocalVersion:  localVersion,
+					RemoteVersion: remotePage.Version,
+					Policy:        PushConflictPolicyCancel,
+				}
 			}
 		}
+	} else {
+		// Create a placeholder page to get an ID for attachments
+		title := resolveLocalTitle(doc, relPath)
+		resolvedParentID := resolveParentIDFromHierarchy(relPath, "", fallbackParentID, pageIDByPath)
+
+		targetStatus := doc.Frontmatter.Status
+		if strings.TrimSpace(targetStatus) == "" {
+			targetStatus = "current"
+		}
+
+		created, err := remote.CreatePage(ctx, confluence.PageUpsertInput{
+			SpaceID:      space.ID,
+			ParentPageID: resolvedParentID,
+			Title:        title,
+			Status:       targetStatus,
+			BodyADF:      []byte(`{"version":1,"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"Initial sync..."}]}]}`),
+		})
+		if err != nil {
+			return PushCommitPlan{}, fmt.Errorf("create placeholder page for %s: %w", relPath, err)
+		}
+		pageID = created.ID
+		doc.Frontmatter.ID = pageID
+		doc.Frontmatter.Space = opts.SpaceKey
+		doc.Frontmatter.Version = created.Version
+		localVersion = created.Version
+		remotePage = created
+		remotePageByID[pageID] = created
+		pageIDByPath[normalizeRelPath(relPath)] = pageID
 	}
 
 	linkHook := NewReverseLinkHook(opts.SpaceDir, pageIDByPath, opts.Domain)
@@ -409,7 +442,7 @@ func pushUpsertPage(
 		if _, keep := referencedIDs[attachmentID]; keep {
 			continue
 		}
-		if err := remote.DeleteAttachment(ctx, attachmentID); err != nil && !errors.Is(err, confluence.ErrNotFound) {
+		if err := remote.DeleteAttachment(ctx, attachmentID, pageID); err != nil && !errors.Is(err, confluence.ErrNotFound) {
 			return PushCommitPlan{}, fmt.Errorf("delete stale attachment %s: %w", attachmentID, err)
 		}
 		delete(state.AttachmentIndex, stalePath)
@@ -428,32 +461,41 @@ func pushUpsertPage(
 	}
 
 	title := resolveLocalTitle(doc, relPath)
-	resolvedParentID := resolveParentIDFromHierarchy(relPath, pageID, doc.Frontmatter.ConfluenceParentPageID, pageIDByPath)
+	resolvedParentID := resolveParentIDFromHierarchy(relPath, pageID, fallbackParentID, pageIDByPath)
 	nextVersion := localVersion + 1
 	if policy == PushConflictPolicyForce && remotePage.Version >= nextVersion {
 		nextVersion = remotePage.Version + 1
+	}
+
+	// Post-process ADF to ensure required attributes for Confluence v2 API
+	finalADF, err := ensureADFMediaCollection(reverse.ADF, pageID)
+	if err != nil {
+		return PushCommitPlan{}, fmt.Errorf("post-process ADF for %s: %w", relPath, err)
+	}
+
+	targetStatus := doc.Frontmatter.Status
+	if strings.TrimSpace(targetStatus) == "" {
+		targetStatus = "current"
 	}
 
 	updatedPage, err := remote.UpdatePage(ctx, pageID, confluence.PageUpsertInput{
 		SpaceID:      space.ID,
 		ParentPageID: resolvedParentID,
 		Title:        title,
-		Status:       "current",
+		Status:       targetStatus,
 		Version:      nextVersion,
-		BodyADF:      reverse.ADF,
+		BodyADF:      finalADF,
 	})
 	if err != nil {
 		return PushCommitPlan{}, fmt.Errorf("update page %s: %w", pageID, err)
 	}
 
 	doc.Frontmatter.Title = title
-	doc.Frontmatter.ConfluenceVersion = updatedPage.Version
-	doc.Frontmatter.ConfluenceParentPageID = updatedPage.ParentPageID
-	if !updatedPage.LastModified.IsZero() {
-		doc.Frontmatter.ConfluenceLastModified = updatedPage.LastModified.UTC().Format(time.RFC3339)
-	}
-	if err := fs.WriteMarkdownDocument(absPath, doc); err != nil {
-		return PushCommitPlan{}, fmt.Errorf("write markdown %s: %w", relPath, err)
+	doc.Frontmatter.Version = updatedPage.Version
+	if !opts.DryRun {
+		if err := fs.WriteMarkdownDocument(absPath, doc); err != nil {
+			return PushCommitPlan{}, fmt.Errorf("write markdown %s: %w", relPath, err)
+		}
 	}
 
 	state.PagePathIndex[relPath] = pageID
@@ -719,4 +761,68 @@ func listAllPushPages(ctx context.Context, remote PushRemote, opts confluence.Pa
 		cursor = pageResult.NextCursor
 	}
 	return result, nil
+}
+
+// ensureADFMediaCollection post-processes the ADF JSON to add required 'collection'
+// attributes to 'media' nodes, which is often needed for Confluence v2 API storage conversion.
+func ensureADFMediaCollection(adfJSON []byte, pageID string) ([]byte, error) {
+	if len(adfJSON) == 0 {
+		return adfJSON, nil
+	}
+	if strings.TrimSpace(pageID) == "" {
+		return adfJSON, nil
+	}
+
+	var root any
+	if err := json.Unmarshal(adfJSON, &root); err != nil {
+		return nil, fmt.Errorf("unmarshal ADF: %w", err)
+	}
+
+	modified := walkAndFixMediaNodes(root, pageID)
+	if !modified {
+		return adfJSON, nil
+	}
+
+	out, err := json.Marshal(root)
+	if err != nil {
+		return nil, fmt.Errorf("marshal ADF: %w", err)
+	}
+	return out, nil
+}
+
+func walkAndFixMediaNodes(node any, pageID string) bool {
+	modified := false
+	switch n := node.(type) {
+	case map[string]any:
+		if nodeType, ok := n["type"].(string); ok && (nodeType == "media" || nodeType == "mediaInline") {
+			if attrs, ok := n["attrs"].(map[string]any); ok {
+				// If we have an id but no collection, add it
+				_, hasID := attrs["id"]
+				if !hasID {
+					_, hasID = attrs["attachmentId"]
+				}
+				collection, hasCollection := attrs["collection"].(string)
+				if hasID && (!hasCollection || collection == "") {
+					attrs["collection"] = "contentId-" + pageID
+					modified = true
+				}
+				if _, hasType := attrs["type"]; !hasType {
+					attrs["type"] = "file"
+					modified = true
+				}
+			}
+		}
+		for _, v := range n {
+			if walkAndFixMediaNodes(v, pageID) {
+				modified = true
+			}
+		}
+	case []any:
+		for _, item := range n {
+			if walkAndFixMediaNodes(item, pageID) {
+				modified = true
+			}
+		}
+	}
+	return modified
 }

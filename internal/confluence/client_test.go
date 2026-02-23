@@ -247,6 +247,57 @@ func TestArchiveAndDeleteEndpoints(t *testing.T) {
 	}
 }
 
+func TestCreateAndUpdatePage_Payloads(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		var body map[string]any
+		json.NewDecoder(r.Body).Decode(&body)
+
+		if r.Method == http.MethodPost {
+			if body["id"] != nil {
+				t.Errorf("CreatePage payload should not have id, got %v", body["id"])
+			}
+			if body["spaceId"] != "S1" {
+				t.Errorf("CreatePage spaceId = %v, want S1", body["spaceId"])
+			}
+			io.WriteString(w, `{"id":"101","title":"New","spaceId":"S1","version":{"number":1}}`)
+		} else if r.Method == http.MethodPut {
+			if body["id"] != "101" {
+				t.Errorf("UpdatePage payload should have id=101, got %v", body["id"])
+			}
+			if body["spaceId"] != "S1" {
+				t.Errorf("UpdatePage spaceId = %v, want S1", body["spaceId"])
+			}
+			io.WriteString(w, `{"id":"101","title":"Updated","spaceId":"S1","version":{"number":2}}`)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	client, _ := NewClient(ClientConfig{
+		BaseURL:  server.URL,
+		Email:    "u",
+		APIToken: "t",
+	})
+
+	ctx := context.Background()
+	input := PageUpsertInput{
+		SpaceID: "S1",
+		Title:   "Test",
+		Version: 1,
+		BodyADF: json.RawMessage(`{"version":1}`),
+	}
+
+	_, err := client.CreatePage(ctx, input)
+	if err != nil {
+		t.Fatalf("CreatePage failed: %v", err)
+	}
+
+	_, err = client.UpdatePage(ctx, "101", input)
+	if err != nil {
+		t.Fatalf("UpdatePage failed: %v", err)
+	}
+}
+
 func TestDownloadAttachment_ResolvesUUID(t *testing.T) {
 	uuid := "e2cabb2e-4df7-49bb-84e0-c76ae83f6f9b"
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -278,6 +329,49 @@ func TestDownloadAttachment_ResolvesUUID(t *testing.T) {
 	}
 	if string(raw) != "uuid-data" {
 		t.Fatalf("data = %q, want uuid-data", string(raw))
+	}
+}
+
+func TestResolveAttachmentIDByFileID_Pagination(t *testing.T) {
+	uuid := "e2cabb2e-4df7-49bb-84e0-c76ae83f6f9b"
+	callCount := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		callCount++
+		w.Header().Set("Content-Type", "application/json")
+		if callCount == 1 {
+			if !strings.Contains(r.URL.Path, "/attachments") {
+				t.Fatalf("call 1 path = %s", r.URL.Path)
+			}
+			// First page, doesn't contain our UUID
+			io.WriteString(w, `{
+				"results":[{"id":"att-other", "fileId":"other-uuid"}],
+				"_links":{"next":"/wiki/api/v2/pages/123/attachments?cursor=next-page-token"}
+			}`)
+		} else {
+			if !strings.Contains(r.URL.RawQuery, "cursor=next-page-token") {
+				t.Fatalf("call 2 query = %s, missing cursor", r.URL.RawQuery)
+			}
+			// Second page contains our UUID
+			io.WriteString(w, `{"results":[{"id":"att-uuid-123", "fileId":"`+uuid+`"}]}`)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	client, _ := NewClient(ClientConfig{
+		BaseURL:  server.URL,
+		Email:    "u",
+		APIToken: "t",
+	})
+
+	id, err := client.resolveAttachmentIDByFileID(context.Background(), uuid, "123")
+	if err != nil {
+		t.Fatalf("resolveAttachmentIDByFileID() error: %v", err)
+	}
+	if id != "att-uuid-123" {
+		t.Fatalf("id = %q, want att-uuid-123", id)
+	}
+	if callCount != 2 {
+		t.Fatalf("callCount = %d, want 2", callCount)
 	}
 }
 
@@ -392,7 +486,7 @@ func TestUploadAndDeleteAttachmentEndpoints(t *testing.T) {
 		t.Fatalf("page ID = %q, want 42", attachment.PageID)
 	}
 
-	if err := client.DeleteAttachment(context.Background(), "att-9"); err != nil {
+	if err := client.DeleteAttachment(context.Background(), "att-9", "42"); err != nil {
 		t.Fatalf("DeleteAttachment() unexpected error: %v", err)
 	}
 
@@ -401,5 +495,41 @@ func TestUploadAndDeleteAttachmentEndpoints(t *testing.T) {
 	}
 	if deleteCalls != 1 {
 		t.Fatalf("delete calls = %d, want 1", deleteCalls)
+	}
+}
+
+func TestDeleteAttachment_InvalidLegacyIDReturnsNotFound(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			// Resolve UUID first
+			w.Header().Set("Content-Type", "application/json")
+			io.WriteString(w, `{"results":[]}`) // Doesn't matter for this test as we want it to fall through or fail
+			return
+		}
+
+		if r.Method != http.MethodDelete {
+			t.Fatalf("method = %s, want DELETE", r.Method)
+		}
+		if r.URL.Path != "/wiki/api/v2/attachments/ffd70a27-0a48-48db-9662-24252c884152" {
+			t.Fatalf("path = %s, want legacy attachment delete path", r.URL.Path)
+		}
+
+		w.WriteHeader(http.StatusBadRequest)
+		io.WriteString(w, `{"errors":[{"status":400,"code":"INVALID_REQUEST_PARAMETER","title":"Provided value {ffd70a27-0a48-48db-9662-24252c884152} for 'id' is not the correct type. Expected type is ContentId","detail":""}]}`)
+	}))
+	t.Cleanup(server.Close)
+
+	client, err := NewClient(ClientConfig{
+		BaseURL:  server.URL,
+		Email:    "user@example.com",
+		APIToken: "token-123",
+	})
+	if err != nil {
+		t.Fatalf("NewClient() unexpected error: %v", err)
+	}
+
+	err = client.DeleteAttachment(context.Background(), "ffd70a27-0a48-48db-9662-24252c884152", "123")
+	if !errors.Is(err, ErrNotFound) {
+		t.Fatalf("DeleteAttachment() error = %v, want ErrNotFound", err)
 	}
 }

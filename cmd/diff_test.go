@@ -26,9 +26,9 @@ func TestRunDiff_FileModeShowsContentChanges(t *testing.T) {
 	writeMarkdown(t, localFile, fs.MarkdownDocument{
 		Frontmatter: fs.Frontmatter{
 			Title:                  "Root",
-			ConfluencePageID:       "1",
-			ConfluenceSpaceKey:     "ENG",
-			ConfluenceVersion:      1,
+			ID:                     "1",
+			Space:                  "ENG",
+			Version:                1,
 			ConfluenceLastModified: "2026-02-01T10:00:00Z",
 		},
 		Body: "old body\n",
@@ -86,9 +86,9 @@ func TestRunDiff_SpaceModeNoDifferences(t *testing.T) {
 	writeMarkdown(t, filepath.Join(spaceDir, "root.md"), fs.MarkdownDocument{
 		Frontmatter: fs.Frontmatter{
 			Title:                  "Root",
-			ConfluencePageID:       "1",
-			ConfluenceSpaceKey:     "ENG",
-			ConfluenceVersion:      2,
+			ID:                     "1",
+			Space:                  "ENG",
+			Version:                2,
 			ConfluenceLastModified: "2026-02-01T11:00:00Z",
 		},
 		Body: "same body\n",
@@ -153,9 +153,9 @@ func TestRunDiff_ReportsBestEffortWarnings(t *testing.T) {
 	writeMarkdown(t, localFile, fs.MarkdownDocument{
 		Frontmatter: fs.Frontmatter{
 			Title:                  "Root",
-			ConfluencePageID:       "1",
-			ConfluenceSpaceKey:     "ENG",
-			ConfluenceVersion:      1,
+			ID:                     "1",
+			Space:                  "ENG",
+			Version:                1,
 			ConfluenceLastModified: "2026-02-01T10:00:00Z",
 		},
 		Body: "old body\n",
@@ -211,9 +211,9 @@ func TestRunDiff_FolderListFailureFallsBackToPageHierarchy(t *testing.T) {
 	writeMarkdown(t, localFile, fs.MarkdownDocument{
 		Frontmatter: fs.Frontmatter{
 			Title:                  "Root",
-			ConfluencePageID:       "1",
-			ConfluenceSpaceKey:     "ENG",
-			ConfluenceVersion:      1,
+			ID:                     "1",
+			Space:                  "ENG",
+			Version:                1,
 			ConfluenceLastModified: "2026-02-01T10:00:00Z",
 		},
 		Body: "old body\n",

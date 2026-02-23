@@ -1,6 +1,6 @@
 # Automation and CI
 
-This document explains how to run `cms` safely in scripts and CI pipelines.
+This document explains how to run `conf` safely in scripts and CI pipelines.
 
 ## Automation Flags
 
@@ -26,7 +26,7 @@ Additional push flag:
 
 ## Safety Confirmation Rules
 
-`cms` requires confirmation when an operation:
+`conf` requires confirmation when an operation:
 
 - affects more than 10 Markdown files, or
 - includes delete operations.
@@ -50,9 +50,9 @@ In non-interactive usage, set one explicitly.
 ## Recommended Non-Interactive Commands
 
 ```powershell
-cms pull ENG --yes --non-interactive --skip-missing-assets --force
-cms validate ENG
-cms push ENG --yes --non-interactive --on-conflict=cancel
+conf pull ENG --yes --non-interactive --skip-missing-assets --force
+conf validate ENG
+conf push ENG --yes --non-interactive --on-conflict=cancel
 ```
 
 ## CI Pipeline Example
@@ -75,26 +75,26 @@ jobs:
         with:
           go-version: '1.25.x'
 
-      - name: Build cms
-        run: go build -o cms .
+      - name: Build conf
+        run: go build -o conf .
 
       - name: Pull docs
         env:
           ATLASSIAN_DOMAIN: ${{ secrets.ATLASSIAN_DOMAIN }}
           ATLASSIAN_EMAIL: ${{ secrets.ATLASSIAN_EMAIL }}
           ATLASSIAN_API_TOKEN: ${{ secrets.ATLASSIAN_API_TOKEN }}
-        run: ./cms pull ENG --yes --non-interactive --skip-missing-assets --force
+        run: ./conf pull ENG --yes --non-interactive --skip-missing-assets --force
 
       - name: Validate docs
         env:
           ATLASSIAN_DOMAIN: ${{ secrets.ATLASSIAN_DOMAIN }}
           ATLASSIAN_EMAIL: ${{ secrets.ATLASSIAN_EMAIL }}
           ATLASSIAN_API_TOKEN: ${{ secrets.ATLASSIAN_API_TOKEN }}
-        run: ./cms validate ENG
+        run: ./conf validate ENG
 ```
 
 ## Operational Notes
 
 - `push` always runs `validate` before remote writes.
-- A Git remote is not required for `cms` operations.
+- A Git remote is not required for `conf` operations.
 - Sync state is local (`.confluence-state.json`) and should remain gitignored.

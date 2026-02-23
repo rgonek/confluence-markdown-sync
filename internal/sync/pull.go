@@ -119,7 +119,7 @@ func Pull(ctx context.Context, remote PullRemote, opts PullOptions) (PullResult,
 	pages, err := listAllPages(ctx, remote, confluence.PageListOptions{
 		SpaceID:  space.ID,
 		SpaceKey: opts.SpaceKey,
-		Status:   "current",
+		Status:   "current,draft",
 		Limit:    pullPageBatchSize,
 	})
 	if err != nil {
@@ -313,12 +313,11 @@ func Pull(ctx context.Context, remote PullRemote, opts PullOptions) (PullResult,
 
 		doc := fs.MarkdownDocument{
 			Frontmatter: fs.Frontmatter{
-				Title:                  page.Title,
-				ConfluencePageID:       page.ID,
-				ConfluenceSpaceKey:     opts.SpaceKey,
-				ConfluenceVersion:      page.Version,
-				ConfluenceLastModified: page.LastModified.UTC().Format(time.RFC3339),
-				ConfluenceParentPageID: page.ParentPageID,
+				Title:   page.Title,
+				ID:      page.ID,
+				Space:   opts.SpaceKey,
+				Version: page.Version,
+				Status:  page.Status,
 			},
 			Body: forward.Markdown,
 		}
@@ -882,12 +881,12 @@ func collectAttachmentRefs(adfJSON []byte, defaultPageID string) map[string]atta
 		}
 
 		attachmentID := firstString(attrs,
+			"id",
 			"attachmentId",
 			"attachmentID",
 			"mediaId",
 			"fileId",
 			"fileID",
-			"id",
 		)
 		if attachmentID == "" {
 			return

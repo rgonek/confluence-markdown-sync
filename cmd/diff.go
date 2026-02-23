@@ -122,7 +122,7 @@ func runDiff(cmd *cobra.Command, target config.Target) error {
 	pagePathByIDAbs, pagePathByIDRel := syncflow.PlanPagePaths(diffCtx.spaceDir, state.PagePathIndex, pages, folderByID)
 	attachmentPathByID := buildDiffAttachmentPathByID(diffCtx.spaceDir, state.AttachmentIndex)
 
-	tmpRoot, err := os.MkdirTemp("", "cms-diff-*")
+	tmpRoot, err := os.MkdirTemp("", "conf-diff-*")
 	if err != nil {
 		return fmt.Errorf("create diff workspace: %w", err)
 	}
@@ -298,12 +298,10 @@ func renderDiffMarkdown(
 
 	doc := fs.MarkdownDocument{
 		Frontmatter: fs.Frontmatter{
-			Title:                  page.Title,
-			ConfluencePageID:       page.ID,
-			ConfluenceSpaceKey:     spaceKey,
-			ConfluenceVersion:      page.Version,
-			ConfluenceLastModified: page.LastModified.UTC().Format("2006-01-02T15:04:05Z07:00"),
-			ConfluenceParentPageID: page.ParentPageID,
+			Title:   page.Title,
+			ID:      page.ID,
+			Space:   spaceKey,
+			Version: page.Version,
 		},
 		Body: forward.Markdown,
 	}

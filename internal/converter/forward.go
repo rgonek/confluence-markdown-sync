@@ -34,7 +34,7 @@ func Forward(ctx context.Context, adfJSON []byte, cfg ForwardConfig, sourcePath 
 		MentionStyle:         adfconv.MentionPandoc,
 		AlignmentStyle:       adfconv.AlignPandoc,
 		ExpandStyle:          adfconv.ExpandPandoc,
-		InlineCardStyle:      adfconv.InlineCardPandoc,
+		InlineCardStyle:      adfconv.InlineCardLink,
 		LayoutSectionStyle:   adfconv.LayoutSectionPandoc,
 		TableMode:            adfconv.TableAutoPandoc,
 		ExtensionHandlers: map[string]adfconv.ExtensionHandler{

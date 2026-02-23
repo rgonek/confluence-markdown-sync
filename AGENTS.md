@@ -1,21 +1,36 @@
 # AGENTS
 
 ## Purpose
-This repository builds `cms` (`confluence-sync`), a Go CLI that syncs Confluence pages with local Markdown files.
+This repository builds `conf` (`confluence-sync`), a Go CLI that syncs Confluence pages with local Markdown files.
 
 ## Source Of Truth
 - Primary plan: `agents/plans/confluence_sync_cli.md`
 - If implementation details are unclear, update the plan first, then implement.
 
+## Intended Usages
+
+This project supports two primary sync workflows for agents:
+
+### 1. Human-in-the-Loop (Agent as Writer)
+The agent focus on Markdown content; the human runs `conf` commands.
+- **Agent Task**: Edit `.md` files, run `conf validate` to check work.
+- **Safety**: Do not touch `id`, `space`, or `version` in frontmatter.
+
+### 2. Full Agentic Use (Autonomous Sync)
+The agent manages the full sync cycle.
+- **Workflow**: `pull` -> `edit` -> `validate` -> `diff` -> `push`.
+- **Tests**: Always run `make test` (including the E2E workflow test) before pushing significant changes to `conf` itself.
+
 ## Core Invariants
 - `push` must always run `validate` before any remote write.
+
 - Immutable frontmatter keys:
-  - `confluence_page_id`
-  - `confluence_space_key`
+  - `id`
+  - `space`
 - Mutable-by-sync frontmatter keys:
-  - `confluence_version`
-  - `confluence_last_modified`
-  - `confluence_parent_page_id`
+  - `version`
+- User-editable frontmatter keys:
+  - `status` (can be `draft` or `current`. Omitted means `current`. Cannot be set back to `draft` once published remotely).
 - Remote deletions are hard-deleted locally during `pull` (recovery is via Git history).
 - `.confluence-state.json` is local state and must stay gitignored.
 
@@ -67,9 +82,12 @@ Validation failures must stop `push` immediately.
 
 ## Interactivity And Automation Requirements
 - `pull` and `push` support `--yes` and `--non-interactive`.
-- `pull` supports `--skip-missing-assets` and `--force` (`-f`) for full-space refresh.
+- `pull` supports `--skip-missing-assets`, `--force` (`-f`) for full-space refresh, and `--discard-local` to overwrite local changes.
 - `push` supports `--on-conflict=pull-merge|force|cancel` for non-interactive conflict policy.
 - `push` supports `--dry-run` to print simulated API requests and ADF output without modifying local or remote state.
+- `pull` provides interactive conflict resolution (Keep Both/Remote/Local) when automatic merge fails.
+- `push` with `--on-conflict=pull-merge` automatically triggers `pull` on version conflicts.
+
 - `--yes` auto-approves safety confirmations but does not choose remote-ahead conflict strategy.
 - `--non-interactive` must fail fast when a required decision is missing.
 - Safety confirmation is required when an operation affects more than 10 markdown files or includes delete operations.

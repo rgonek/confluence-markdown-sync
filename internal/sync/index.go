@@ -42,8 +42,8 @@ func BuildPageIndex(spaceDir string) (PageIndex, error) {
 		// Normalized path separator to forward slash for consistency in keys
 		rel = filepath.ToSlash(rel)
 
-		if fm.ConfluencePageID != "" {
-			index[rel] = fm.ConfluencePageID
+		if fm.ID != "" {
+			index[rel] = fm.ID
 		}
 		return nil
 	})

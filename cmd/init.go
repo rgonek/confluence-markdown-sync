@@ -24,55 +24,67 @@ Thumbs.db
 *.bak
 
 # Binary
-cms
-cms.exe
+conf
+conf.exe
 `
 
 const agentsMDTemplate = `# AGENTS
 
-## Purpose
-This repository uses ` + "`cms`" + ` (confluence-sync) to sync Confluence pages with local Markdown files.
+This repository uses ` + "`conf`" + ` (confluence-sync) to manage Confluence documentation as Markdown.
+
+## Intended Usages
+
+### 1. Human-in-the-Loop (Agent as Writer)
+In this mode, the agent edits Markdown files, and a human performs the sync commands.
+- **Workflow**:
+  - Edit ` + "`.md`" + ` files in the space directories.
+  - Run ` + "`conf validate [TARGET]`" + ` to ensure your changes are compatible with Confluence.
+  - Inform the human when changes are ready for ` + "`conf push`" + `.
+- **Rules**:
+  - NEVER manually edit ` + "`id`" + ` or ` + "`space`" + ` in frontmatter.
+  - Add images to the correct ` + "`assets/`" + ` subfolder.
+
+### 2. Full Agentic Use (Autonomous Sync)
+In this mode, the agent is responsible for the entire lifecycle.
+- **Workflow**:
+  - ` + "`conf pull [SPACE]`" + ` — Always pull first to avoid conflicts.
+  - Edit/Create Markdown files.
+  - ` + "`conf validate [SPACE]`" + ` — Verify all links and assets.
+  - ` + "`conf diff [SPACE]`" + ` — Preview changes.
+  - ` + "`conf push [SPACE] --on-conflict=pull-merge`" + ` — Publish changes.
+- **Automation**: Use ` + "`--yes`" + ` and ` + "`--non-interactive`" + ` in CI/CD or automated scripts.
 
 ## Core Invariants
-- ` + "`push`" + ` must always run ` + "`validate`" + ` before any remote write.
-- Immutable frontmatter keys (do not edit manually):
-  - ` + "`confluence_page_id`" + `
-  - ` + "`confluence_space_key`" + `
-- Mutable-by-sync frontmatter keys (managed by ` + "`cms`" + ` only):
-  - ` + "`confluence_version`" + `
-  - ` + "`confluence_last_modified`" + `
-  - ` + "`confluence_parent_page_id`" + `
+- **Source of Truth**: Confluence is the primary source of truth for IDs and versions. Local Markdown is the source of truth for content between syncs.
+- **Validation**: ` + "`push`" + ` will fail if ` + "`validate`" + ` fails.
+- **Frontmatter**:
+  - ` + "`id`" + `, ` + "`space`" + `: Immutable.
+  - ` + "`version`" + `: Managed by ` + "`conf`" + `.
+- **State**: ` + "`.confluence-state.json`" + ` tracks sync state. Do not delete.
 
-## Workflow
-- ` + "`cms pull [SPACE_KEY]`" + ` — fetch remote changes and update local Markdown files.
-- ` + "`cms push [SPACE_KEY]`" + ` — validate and publish local changes to Confluence.
-- ` + "`cms validate [SPACE_KEY]`" + ` — check frontmatter and conversion before push.
-- ` + "`cms diff [SPACE_KEY]`" + ` — compare local files with remote Confluence content.
-
-## AI-Safe Rules
-- Do not modify ` + "`confluence_page_id`" + ` or ` + "`confluence_space_key`" + ` frontmatter fields.
-- Do not delete or rename ` + "`.confluence-state.json`" + ` (it is gitignored; managed by ` + "`cms`" + `).
-- Do not commit ` + "`.env`" + ` files (they contain API credentials).
+## Space-Specific Rules
+Each space directory (e.g., ` + "`Technical documentation (TD)/`" + `) may contain its own ` + "`AGENTS.md`" + ` with space-specific content rules (e.g., required templates, PII guidelines). Check those if they exist.
 `
 
 const readmeMDTemplate = `# Confluence Markdown Sync
 
-This workspace is managed by [cms](https://github.com/rgonek/confluence-markdown-sync).
+This workspace is managed by [conf](https://github.com/rgonek/confluence-markdown-sync).
+
 
 ## Quick Start
 
 ` + "```sh" + `
 # Pull latest from Confluence
-cms pull <SPACE_KEY>
+conf pull <SPACE_KEY>
 
 # Edit .md files, then push
-cms push <SPACE_KEY>
+conf push <SPACE_KEY>
 
 # Validate before pushing
-cms validate <SPACE_KEY>
+conf validate <SPACE_KEY>
 
 # See what changed remotely
-cms diff <SPACE_KEY>
+conf diff <SPACE_KEY>
 ` + "```" + `
 
 ## Authentication
@@ -86,7 +98,7 @@ ATLASSIAN_API_TOKEN=<your-api-token>
 ` + "```" + `
 
 ## Notes
-- Frontmatter fields ` + "`confluence_page_id`" + ` and ` + "`confluence_space_key`" + ` are immutable — do not edit them.
+- Frontmatter fields ` + "`id`" + ` and ` + "`space`" + ` are immutable — do not edit them.
 - ` + "`.confluence-state.json`" + ` is local state and is gitignored.
 - Recovery from a failed push is CLI-guided — no manual Git commands required.
 `
@@ -94,8 +106,8 @@ ATLASSIAN_API_TOKEN=<your-api-token>
 func newInitCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "init",
-		Short: "Initialize a cms workspace",
-		Long: `Init sets up the current directory as a cms workspace.
+		Short: "Initialize a conf workspace",
+		Long: `Init sets up the current directory as a conf workspace.
 
 It will:
   - Verify git is installed (and initialize a repo on branch 'main' if needed)
@@ -170,7 +182,7 @@ func runInit(cmd *cobra.Command, _ []string) error {
 		}
 	}
 
-	fmt.Fprintln(out, "\ncms workspace initialized successfully.")
+	fmt.Fprintln(out, "\nconf workspace initialized successfully.")
 	return nil
 }
 
@@ -180,7 +192,7 @@ func isInsideGitRepo() bool {
 	return err == nil
 }
 
-// ensureGitignore appends required cms entries to .gitignore, creating it if necessary.
+// ensureGitignore appends required conf entries to .gitignore, creating it if necessary.
 func ensureGitignore() error {
 	const path = ".gitignore"
 
@@ -313,7 +325,7 @@ func createInitCommit() (bool, error) {
 		return false, nil
 	}
 
-	commitOut, err := exec.Command("git", "commit", "-m", "chore: initialize cms workspace").CombinedOutput()
+	commitOut, err := exec.Command("git", "commit", "-m", "chore: initialize conf workspace").CombinedOutput()
 	if err != nil {
 		msg := strings.TrimSpace(string(commitOut))
 		if strings.Contains(msg, "Please tell me who you are") || strings.Contains(msg, "unable to auto-detect email address") {

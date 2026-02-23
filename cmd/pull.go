@@ -18,7 +18,8 @@ import (
 )
 
 var (
-	flagPullForce = false
+	flagPullForce        = false
+	flagPullDiscardLocal = false
 
 	newPullRemote = func(cfg *config.Config) (syncflow.PullRemote, error) {
 		return confluence.NewClient(confluence.ClientConfig{
@@ -61,6 +62,7 @@ If omitted, the space is inferred from the current directory name.`,
 	cmd.Flags().BoolVar(&flagNonInteractive, "non-interactive", false, "Disable prompts; fail fast when a decision is required")
 	cmd.Flags().BoolVarP(&flagSkipMissingAssets, "skip-missing-assets", "s", false, "Continue if an attachment is missing (not found)")
 	cmd.Flags().BoolVarP(&flagPullForce, "force", "f", false, "Force full space pull and refresh all tracked pages")
+	cmd.Flags().BoolVar(&flagPullDiscardLocal, "discard-local", false, "Discard local uncommitted changes if they conflict with remote updates")
 	return cmd
 }
 
@@ -148,6 +150,11 @@ func runPull(cmd *cobra.Command, target config.Target) (runErr error) {
 		}
 		if stashRef != "" {
 			defer func() {
+				if flagPullDiscardLocal {
+					fmt.Fprintf(out, "Discarding local changes (dropped stash %s)\n", stashRef)
+					_, _ = runGit(repoRoot, "stash", "drop", stashRef)
+					return
+				}
 				restoreErr := applyAndDropStash(repoRoot, stashRef)
 				if restoreErr != nil {
 					runErr = errors.Join(runErr, restoreErr)
@@ -185,6 +192,7 @@ func runPull(cmd *cobra.Command, target config.Target) (runErr error) {
 	}
 
 	for _, diag := range result.Diagnostics {
+
 		fmt.Fprintf(out, "warning: %s [%s] %s\n", diag.Path, diag.Code, diag.Message)
 	}
 
@@ -244,13 +252,13 @@ func resolveInitialPullContext(target config.Target) (initialPullContext, error)
 			return initialPullContext{}, fmt.Errorf("read target file %s: %w", target.Value, err)
 		}
 
-		spaceKey := strings.TrimSpace(doc.Frontmatter.ConfluenceSpaceKey)
+		spaceKey := strings.TrimSpace(doc.Frontmatter.Space)
 		if spaceKey == "" {
-			return initialPullContext{}, fmt.Errorf("target file %s missing confluence_space_key", target.Value)
+			return initialPullContext{}, fmt.Errorf("target file %s missing space", target.Value)
 		}
-		pageID := strings.TrimSpace(doc.Frontmatter.ConfluencePageID)
+		pageID := strings.TrimSpace(doc.Frontmatter.ID)
 		if pageID == "" {
-			return initialPullContext{}, fmt.Errorf("target file %s missing confluence_page_id", target.Value)
+			return initialPullContext{}, fmt.Errorf("target file %s missing id", target.Value)
 		}
 
 		return initialPullContext{
@@ -271,9 +279,9 @@ func resolveInitialPullContext(target config.Target) (initialPullContext, error)
 				// But best is to check if we can find ANY .md file and its space key.
 				for relPath := range state.PagePathIndex {
 					doc, err := fs.ReadMarkdownDocument(filepath.Join(cwd, filepath.FromSlash(relPath)))
-					if err == nil && doc.Frontmatter.ConfluenceSpaceKey != "" {
+					if err == nil && doc.Frontmatter.Space != "" {
 						return initialPullContext{
-							spaceKey: doc.Frontmatter.ConfluenceSpaceKey,
+							spaceKey: doc.Frontmatter.Space,
 							spaceDir: cwd,
 							fixedDir: true,
 						}, nil
@@ -305,9 +313,9 @@ func resolveInitialPullContext(target config.Target) (initialPullContext, error)
 			if err == nil {
 				for relPath := range state.PagePathIndex {
 					doc, err := fs.ReadMarkdownDocument(filepath.Join(spaceDir, filepath.FromSlash(relPath)))
-					if err == nil && doc.Frontmatter.ConfluenceSpaceKey != "" {
+					if err == nil && doc.Frontmatter.Space != "" {
 						return initialPullContext{
-							spaceKey: doc.Frontmatter.ConfluenceSpaceKey,
+							spaceKey: doc.Frontmatter.Space,
 							spaceDir: spaceDir,
 							fixedDir: true,
 						}, nil
@@ -324,6 +332,23 @@ func resolveInitialPullContext(target config.Target) (initialPullContext, error)
 	}
 
 	spaceDir := filepath.Join(cwd, target.Value)
+	if _, err := os.Stat(spaceDir); err != nil {
+		// Try to find a directory that looks like "Name (KEY)"
+		if items, err := os.ReadDir(cwd); err == nil {
+			suffix := fmt.Sprintf("(%s)", target.Value)
+			for _, item := range items {
+				if item.IsDir() && strings.HasSuffix(item.Name(), suffix) {
+					spaceDir = filepath.Join(cwd, item.Name())
+					return initialPullContext{
+						spaceKey: target.Value,
+						spaceDir: spaceDir,
+						fixedDir: true,
+					}, nil
+				}
+			}
+		}
+	}
+
 	spaceDir, err = filepath.Abs(spaceDir)
 	if err != nil {
 		return initialPullContext{}, err
@@ -469,13 +494,63 @@ func applyAndDropStash(repoRoot, stashRef string) error {
 	if stashRef == "" {
 		return nil
 	}
-	if _, err := runGit(repoRoot, "stash", "apply", "--index", stashRef); err != nil {
-		return fmt.Errorf("failed to restore stashed changes (%s): %w", stashRef, err)
+	out, err := runGit(repoRoot, "stash", "apply", "--index", stashRef)
+	if err != nil {
+		// Check if it's a conflict
+		if strings.Contains(err.Error(), "conflict") || strings.Contains(out, "CONFLICT") {
+			return handlePullConflict(repoRoot, stashRef)
+		}
+		return fmt.Errorf("local changes could not be automatically merged with remote updates. Please resolve the conflicts in the affected files and then run 'git stash drop %s' to clean up. Error: %w", stashRef, err)
 	}
 	if _, err := runGit(repoRoot, "stash", "drop", stashRef); err != nil {
 		return fmt.Errorf("restored stash but failed to drop %s: %w", stashRef, err)
 	}
 	return nil
+}
+
+func handlePullConflict(repoRoot, stashRef string) error {
+	if flagNonInteractive || flagYes {
+		return fmt.Errorf("local changes could not be automatically merged with remote updates (CONFLICT). Please resolve the conflicts in the affected files and then run 'git stash drop %s' to clean up.", stashRef)
+	}
+
+	fmt.Println("\n⚠️  CONFLICT DETECTED")
+	fmt.Println("Local changes could not be automatically merged with remote updates.")
+	fmt.Println("How would you like to proceed?")
+	fmt.Println(" [1] Keep both (add conflict markers to files) - RECOMMENDED")
+	fmt.Println(" [2] Use Remote version (discard my local changes for these files)")
+	fmt.Println(" [3] Use Local version (overwrite remote updates with my local changes)")
+	fmt.Print("\nChoice [1/2/3]: ")
+
+	var choice string
+	fmt.Scanln(&choice)
+
+	switch strings.TrimSpace(choice) {
+	case "2":
+		fmt.Println("Discarding local changes...")
+		// We already pulled remote, so we just need to reset the conflicted files or drop the stash.
+		// Actually, stash apply already modified the files with markers.
+		// We should checkout from HEAD.
+		_, err := runGit(repoRoot, "checkout", "HEAD", "--", ".")
+		if err != nil {
+			return fmt.Errorf("failed to discard local changes: %w", err)
+		}
+		_, _ = runGit(repoRoot, "stash", "drop", stashRef)
+		fmt.Println("Local changes discarded. Remote version kept.")
+		return nil
+	case "3":
+		fmt.Println("Keeping local version...")
+		// Checkout from stash
+		_, err := runGit(repoRoot, "checkout", stashRef, "--", ".")
+		if err != nil {
+			return fmt.Errorf("failed to keep local version: %w", err)
+		}
+		_, _ = runGit(repoRoot, "stash", "drop", stashRef)
+		fmt.Println("Remote updates overwritten by local version.")
+		return nil
+	default:
+		fmt.Printf("Conflict markers kept. Please resolve them manually and then run 'git stash drop %s'\n", stashRef)
+		return nil // Return nil because the user "handled" it by choosing to keep markers
+	}
 }
 
 func gitHasScopedStagedChanges(repoRoot, scopePath string) (bool, error) {
@@ -647,4 +722,30 @@ func runGit(workdir string, args ...string) (string, error) {
 func dirExists(path string) bool {
 	info, err := os.Stat(path)
 	return err == nil && info.IsDir()
+}
+
+func ensureSpaceAgentsMD(spaceDir, spaceKey string) {
+	path := filepath.Join(spaceDir, "AGENTS.md")
+	if _, err := os.Stat(path); err == nil {
+		return // Already exists
+	}
+
+	content := fmt.Sprintf(`# AGENTS (%s)
+
+This space directory contains Markdown files synced from Confluence space [%s].
+
+## Space Purpose
+[Describe what this space is for, e.g., Technical Documentation, HR Policies, etc.]
+
+## Space-Specific Rules
+- [e.g., Use Mermaid for all diagrams]
+- [e.g., Every page must have a 'Last Reviewed' date at the bottom]
+- [e.g., Do not include customer names in these docs]
+
+## Sync Workflow
+- Use `+"`conf pull`"+` to get latest updates.
+- Use `+"`conf push`"+` to publish your changes.
+`, spaceKey, spaceKey)
+
+	_ = os.WriteFile(path, []byte(content), 0644)
 }
