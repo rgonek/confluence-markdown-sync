@@ -3,11 +3,15 @@ MAIN       := ./cmd/conf
 GO         := go
 GOFLAGS    :=
 
-.PHONY: build test fmt lint clean
+.PHONY: build install test fmt lint clean
 
 ## build: compile the conf binary
 build:
 	$(GO) build $(GOFLAGS) -o $(BINARY) $(MAIN)
+
+## install: install the binary to $GOPATH/bin
+install:
+	$(GO) install $(MAIN)
 
 ## test: run all unit tests
 test:

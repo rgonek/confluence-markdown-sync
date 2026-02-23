@@ -55,7 +55,7 @@ func (p *consoleProgress) SetTotal(total int) {
 	if total < 0 {
 		return
 	}
-	p.bar.Set(0)
+	p.bar.Reset()
 	p.bar.ChangeMax(total)
 }
 
