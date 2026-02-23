@@ -27,7 +27,12 @@ go.work.sum
 # env file
 .env
 
+# Local test workspaces
+workspace/
+test-output/
+
 # Editor/IDE
+
 # .idea/
 # .vscode/
 

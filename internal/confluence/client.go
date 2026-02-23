@@ -18,7 +18,7 @@ import (
 )
 
 const (
-	defaultHTTPTimeout = 30 * time.Second
+	defaultHTTPTimeout = 300 * time.Second
 	defaultUserAgent   = "conf/dev"
 	maxErrorBodyBytes  = 1 << 20 // 1 MiB
 )
@@ -40,12 +40,13 @@ type ClientConfig struct {
 
 // Client is an HTTP-backed Confluence API client.
 type Client struct {
-	baseURL    string
-	email      string
-	apiToken   string
-	httpClient *http.Client
-	userAgent  string
-	verbose    bool
+	baseURL        string
+	email          string
+	apiToken       string
+	httpClient     *http.Client
+	downloadClient *http.Client
+	userAgent      string
+	verbose        bool
 }
 
 // APIError is returned for non-2xx responses.
@@ -100,12 +101,13 @@ func NewClient(cfg ClientConfig) (*Client, error) {
 	}
 
 	return &Client{
-		baseURL:    baseURL,
-		email:      email,
-		apiToken:   token,
-		httpClient: httpClient,
-		userAgent:  userAgent,
-		verbose:    cfg.Verbose,
+		baseURL:        baseURL,
+		email:          email,
+		apiToken:       token,
+		httpClient:     httpClient,
+		downloadClient: &http.Client{Timeout: 0}, // No global timeout for downloads
+		userAgent:      userAgent,
+		verbose:        cfg.Verbose,
 	}, nil
 }
 
@@ -308,7 +310,14 @@ func (c *Client) DownloadAttachment(ctx context.Context, attachmentID string, pa
 		return fmt.Errorf("attachment %s download URL is empty", id)
 	}
 
-	downloadReq, err := http.NewRequestWithContext(ctx, http.MethodGet, resolvedDownloadURL, nil)
+	downloadCtx := ctx
+	if _, ok := ctx.Deadline(); !ok {
+		var cancel context.CancelFunc
+		downloadCtx, cancel = context.WithTimeout(ctx, 30*time.Minute)
+		defer cancel()
+	}
+
+	downloadReq, err := http.NewRequestWithContext(downloadCtx, http.MethodGet, resolvedDownloadURL, nil)
 	if err != nil {
 		return err
 	}
@@ -331,7 +340,7 @@ func (c *Client) DownloadAttachment(ctx context.Context, attachmentID string, pa
 		fmt.Printf("%s %s\n", downloadReq.Method, downloadReq.URL.String())
 	}
 
-	resp, err := c.httpClient.Do(downloadReq)
+	resp, err := c.downloadClient.Do(downloadReq)
 	if err != nil {
 		return err
 	}

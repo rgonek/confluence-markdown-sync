@@ -208,10 +208,6 @@ func Pull(ctx context.Context, remote PullRemote, opts PullOptions) (PullResult,
 		}
 	}
 
-	if opts.Progress != nil {
-		opts.Progress.Done()
-	}
-
 	attachmentIndex := cloneStringMap(state.AttachmentIndex)
 	attachmentPathByID := map[string]string{}
 	attachmentPageByID := map[string]string{}
@@ -279,16 +275,27 @@ func Pull(ctx context.Context, remote PullRemote, opts PullOptions) (PullResult,
 		}
 
 		err := func() error {
-			f, err := os.Create(assetPath)
-			if err != nil {
-				return fmt.Errorf("create attachment file %s: %w", assetPath, err)
-			}
-			defer f.Close()
+			var lastErr error
+			for retry := 0; retry < 3; retry++ {
+				if retry > 0 {
+					time.Sleep(time.Duration(retry) * time.Second)
+				}
+				f, err := os.Create(assetPath)
+				if err != nil {
+					return fmt.Errorf("create attachment file %s: %w", assetPath, err)
+				}
 
-			if err := remote.DownloadAttachment(ctx, attachmentID, pageID, f); err != nil {
-				return err
+				err = remote.DownloadAttachment(ctx, attachmentID, pageID, f)
+				_ = f.Close()
+				if err == nil {
+					return nil
+				}
+				lastErr = err
+				if errors.Is(err, confluence.ErrNotFound) {
+					break // No point in retrying 404
+				}
 			}
-			return nil
+			return lastErr
 		}()
 
 		if err != nil {
