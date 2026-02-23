@@ -5,7 +5,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
+
 	"path/filepath"
 	"strings"
 	"testing"
@@ -971,8 +973,9 @@ func (f *cmdFakePushRemote) ListChanges(_ context.Context, _ confluence.ChangeLi
 	}, nil
 }
 
-func (f *cmdFakePushRemote) DownloadAttachment(_ context.Context, attachmentID string, pageID string) ([]byte, error) {
-	return []byte("fake-bytes"), nil
+func (f *cmdFakePushRemote) DownloadAttachment(_ context.Context, attachmentID string, pageID string, out io.Writer) error {
+	_, err := out.Write([]byte("fake-bytes"))
+	return err
 }
 
 func (f *cmdFakePushRemote) DeleteAttachment(_ context.Context, attachmentID string, _ string) error {

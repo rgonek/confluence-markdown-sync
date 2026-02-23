@@ -3,6 +3,7 @@ package confluence
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"time"
 )
 
@@ -13,8 +14,9 @@ type Service interface {
 	ListPages(ctx context.Context, opts PageListOptions) (PageListResult, error)
 	GetFolder(ctx context.Context, folderID string) (Folder, error)
 	GetPage(ctx context.Context, pageID string) (Page, error)
-	DownloadAttachment(ctx context.Context, attachmentID string, pageID string) ([]byte, error)
+	DownloadAttachment(ctx context.Context, attachmentID string, pageID string, out io.Writer) error
 	UploadAttachment(ctx context.Context, input AttachmentUploadInput) (Attachment, error)
+
 	DeleteAttachment(ctx context.Context, attachmentID string, pageID string) error
 	CreatePage(ctx context.Context, input PageUpsertInput) (Page, error)
 	UpdatePage(ctx context.Context, pageID string, input PageUpsertInput) (Page, error)

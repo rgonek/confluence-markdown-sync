@@ -3,6 +3,7 @@ package sync
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -481,12 +482,13 @@ func (f *fakePullRemote) GetPage(_ context.Context, pageID string) (confluence.P
 	return page, nil
 }
 
-func (f *fakePullRemote) DownloadAttachment(_ context.Context, attachmentID string, pageID string) ([]byte, error) {
+func (f *fakePullRemote) DownloadAttachment(_ context.Context, attachmentID string, pageID string, out io.Writer) error {
 	raw, ok := f.attachments[attachmentID]
 	if !ok {
-		return nil, confluence.ErrNotFound
+		return confluence.ErrNotFound
 	}
-	return raw, nil
+	_, err := out.Write(raw)
+	return err
 }
 
 func rawJSON(t *testing.T, value any) json.RawMessage {

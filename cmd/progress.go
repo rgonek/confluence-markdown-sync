@@ -8,13 +8,15 @@ import (
 )
 
 type consoleProgress struct {
-	bar *progressbar.ProgressBar
-	out io.Writer
+	bar         *progressbar.ProgressBar
+	out         io.Writer
+	description string
 }
 
 func newConsoleProgress(out io.Writer, description string) *consoleProgress {
 	return &consoleProgress{
-		out: out,
+		out:         out,
+		description: description,
 		bar: progressbar.NewOptions(-1,
 			progressbar.OptionSetDescription(description),
 			progressbar.OptionSetWriter(out),
@@ -27,13 +29,23 @@ func newConsoleProgress(out io.Writer, description string) *consoleProgress {
 }
 
 func (p *consoleProgress) SetDescription(desc string) {
+	p.description = desc
 	p.bar.Describe(desc)
+}
+
+func (p *consoleProgress) SetCurrentItem(name string) {
+	if name == "" {
+		p.bar.Describe(p.description)
+	} else {
+		p.bar.Describe(fmt.Sprintf("%s: %s", p.description, name))
+	}
 }
 
 func (p *consoleProgress) SetTotal(total int) {
 	if total <= 0 {
 		return
 	}
+	p.bar.Set(0) // Reset current progress when total changes
 	p.bar.ChangeMax(total)
 }
 

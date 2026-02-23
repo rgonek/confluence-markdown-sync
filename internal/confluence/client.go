@@ -264,10 +264,10 @@ func (c *Client) GetPage(ctx context.Context, pageID string) (Page, error) {
 }
 
 // DownloadAttachment downloads attachment bytes by attachment ID.
-func (c *Client) DownloadAttachment(ctx context.Context, attachmentID string, pageID string) ([]byte, error) {
+func (c *Client) DownloadAttachment(ctx context.Context, attachmentID string, pageID string, out io.Writer) error {
 	id := strings.TrimSpace(attachmentID)
 	if id == "" {
-		return nil, errors.New("attachment ID is required")
+		return errors.New("attachment ID is required")
 	}
 
 	if isUUID(id) {
@@ -284,15 +284,15 @@ func (c *Client) DownloadAttachment(ctx context.Context, attachmentID string, pa
 		nil,
 	)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
 	var payload attachmentDTO
 	if err := c.do(req, &payload); err != nil {
 		if isHTTPStatus(err, http.StatusNotFound) {
-			return nil, ErrNotFound
+			return ErrNotFound
 		}
-		return nil, err
+		return err
 	}
 
 	downloadURL := strings.TrimSpace(payload.DownloadLink)
@@ -305,12 +305,12 @@ func (c *Client) DownloadAttachment(ctx context.Context, attachmentID string, pa
 
 	resolvedDownloadURL := resolveWebURL(c.baseURL, downloadURL)
 	if strings.TrimSpace(resolvedDownloadURL) == "" {
-		return nil, fmt.Errorf("attachment %s download URL is empty", id)
+		return fmt.Errorf("attachment %s download URL is empty", id)
 	}
 
 	downloadReq, err := http.NewRequestWithContext(ctx, http.MethodGet, resolvedDownloadURL, nil)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
 	// Only send Basic Auth if the download URL is on the same host as our base URL.
@@ -333,16 +333,16 @@ func (c *Client) DownloadAttachment(ctx context.Context, attachmentID string, pa
 
 	resp, err := c.httpClient.Do(downloadReq)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
 		bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrorBodyBytes))
 		if resp.StatusCode == http.StatusNotFound {
-			return nil, ErrNotFound
+			return ErrNotFound
 		}
-		return nil, &APIError{
+		return &APIError{
 			StatusCode: resp.StatusCode,
 			Method:     downloadReq.Method,
 			URL:        downloadReq.URL.String(),
@@ -351,12 +351,12 @@ func (c *Client) DownloadAttachment(ctx context.Context, attachmentID string, pa
 		}
 	}
 
-	bodyBytes, err := io.ReadAll(resp.Body)
+	_, err = io.Copy(out, resp.Body)
 	if err != nil {
-		return nil, fmt.Errorf("read attachment response body: %w", err)
+		return fmt.Errorf("write attachment response: %w", err)
 	}
 
-	return bodyBytes, nil
+	return nil
 }
 
 // UploadAttachment uploads an attachment to a page.

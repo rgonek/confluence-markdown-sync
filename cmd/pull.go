@@ -121,7 +121,12 @@ func runPull(cmd *cobra.Command, target config.Target) (runErr error) {
 		return fmt.Errorf("load state: %w", err)
 	}
 
-	impact, err := estimatePullImpactWithSpace(ctx, remote, space, pullCtx.targetPageID, state, syncflow.DefaultPullOverlapWindow, flagPullForce)
+	var progress syncflow.Progress
+	if !flagVerbose {
+		progress = newConsoleProgress(out, "Syncing from Confluence")
+	}
+
+	impact, err := estimatePullImpactWithSpace(ctx, remote, space, pullCtx.targetPageID, state, syncflow.DefaultPullOverlapWindow, flagPullForce, progress)
 	if err != nil {
 		return err
 	}
@@ -161,11 +166,6 @@ func runPull(cmd *cobra.Command, target config.Target) (runErr error) {
 				}
 			}()
 		}
-	}
-
-	var progress syncflow.Progress
-	if !flagVerbose {
-		progress = newConsoleProgress(out, "Syncing from Confluence")
 	}
 
 	result, err := syncflow.Pull(ctx, remote, syncflow.PullOptions{
@@ -580,13 +580,18 @@ func estimatePullImpactWithSpace(
 	state fs.SpaceState,
 	overlapWindow time.Duration,
 	forceFull bool,
+	progress syncflow.Progress,
 ) (pullImpact, error) {
+	if progress != nil {
+		progress.SetDescription("Analyzing pull impact")
+	}
+
 	pages, err := listAllPullPagesForEstimate(ctx, remote, confluence.PageListOptions{
 		SpaceID:  space.ID,
 		SpaceKey: space.Key,
 		Status:   "current",
 		Limit:    100,
-	})
+	}, progress)
 	if err != nil {
 		return pullImpact{}, fmt.Errorf("list pages for safety check: %w", err)
 	}
@@ -651,7 +656,7 @@ func estimatePullImpactWithSpace(
 			SpaceKey: space.Key,
 			Since:    since,
 			Limit:    100,
-		})
+		}, progress)
 		if err != nil {
 			return pullImpact{}, fmt.Errorf("list incremental changes for safety check: %w", err)
 		}
@@ -673,6 +678,7 @@ func listAllPullPagesForEstimate(
 	ctx context.Context,
 	remote syncflow.PullRemote,
 	opts confluence.PageListOptions,
+	progress syncflow.Progress,
 ) ([]confluence.Page, error) {
 	result := []confluence.Page{}
 	cursor := opts.Cursor
@@ -683,6 +689,9 @@ func listAllPullPagesForEstimate(
 			return nil, err
 		}
 		result = append(result, pageResult.Pages...)
+		if progress != nil {
+			progress.Add(len(pageResult.Pages))
+		}
 		if strings.TrimSpace(pageResult.NextCursor) == "" || pageResult.NextCursor == cursor {
 			break
 		}
@@ -695,6 +704,7 @@ func listAllPullChangesForEstimate(
 	ctx context.Context,
 	remote syncflow.PullRemote,
 	opts confluence.ChangeListOptions,
+	progress syncflow.Progress,
 ) ([]confluence.Change, error) {
 	result := []confluence.Change{}
 	start := opts.Start
@@ -705,6 +715,9 @@ func listAllPullChangesForEstimate(
 			return nil, err
 		}
 		result = append(result, changeResult.Changes...)
+		if progress != nil {
+			progress.Add(len(changeResult.Changes))
+		}
 		if !changeResult.HasMore {
 			break
 		}

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -30,13 +31,14 @@ type PullRemote interface {
 	GetFolder(ctx context.Context, folderID string) (confluence.Folder, error)
 	ListChanges(ctx context.Context, opts confluence.ChangeListOptions) (confluence.ChangeListResult, error)
 	GetPage(ctx context.Context, pageID string) (confluence.Page, error)
-	DownloadAttachment(ctx context.Context, attachmentID string, pageID string) ([]byte, error)
+	DownloadAttachment(ctx context.Context, attachmentID string, pageID string, out io.Writer) error
 }
 
 // Progress defines a progress reporter.
 type Progress interface {
 	SetDescription(desc string)
 	SetTotal(total int)
+	SetCurrentItem(name string)
 	Add(n int)
 	Done()
 }
@@ -116,12 +118,16 @@ func Pull(ctx context.Context, remote PullRemote, opts PullOptions) (PullResult,
 		return PullResult{}, fmt.Errorf("resolve space %q: %w", opts.SpaceKey, err)
 	}
 
+	if opts.Progress != nil {
+		opts.Progress.SetDescription("Scanning space for pages")
+	}
+
 	pages, err := listAllPages(ctx, remote, confluence.PageListOptions{
 		SpaceID:  space.ID,
 		SpaceKey: opts.SpaceKey,
 		Status:   "current",
 		Limit:    pullPageBatchSize,
-	})
+	}, opts.Progress)
 	if err != nil {
 		return PullResult{}, fmt.Errorf("list pages: %w", err)
 	}
@@ -155,6 +161,9 @@ func Pull(ctx context.Context, remote PullRemote, opts PullOptions) (PullResult,
 
 	pagePathByIDAbs, pagePathByIDRel := PlanPagePaths(spaceDir, state.PagePathIndex, pages, folderByID)
 
+	if opts.Progress != nil {
+		opts.Progress.SetDescription("Identifying changed pages")
+	}
 	changedPageIDs, err := selectChangedPageIDs(ctx, remote, opts, overlapWindow, pageByID)
 	if err != nil {
 		return PullResult{}, err
@@ -253,15 +262,39 @@ func Pull(ctx context.Context, remote PullRemote, opts PullOptions) (PullResult,
 	downloadedAssets := make([]string, 0, len(assetIDs))
 
 	if opts.Progress != nil {
-		opts.Progress.SetDescription("Downloading assets & writing markdown")
-		opts.Progress.SetTotal(len(assetIDs) + len(changedPageIDs))
+		opts.Progress.SetDescription("Downloading assets")
+		opts.Progress.SetTotal(len(assetIDs))
 	}
 
 	for _, attachmentID := range assetIDs {
 		assetPath := attachmentPathByID[attachmentID]
 		pageID := attachmentPageByID[attachmentID]
-		raw, err := remote.DownloadAttachment(ctx, attachmentID, pageID)
+
+		if opts.Progress != nil {
+			opts.Progress.SetCurrentItem(filepath.Base(assetPath))
+		}
+
+		if err := os.MkdirAll(filepath.Dir(assetPath), 0o755); err != nil {
+			return PullResult{}, fmt.Errorf("prepare attachment directory %s: %w", assetPath, err)
+		}
+
+		err := func() error {
+			f, err := os.Create(assetPath)
+			if err != nil {
+				return fmt.Errorf("create attachment file %s: %w", assetPath, err)
+			}
+			defer f.Close()
+
+			if err := remote.DownloadAttachment(ctx, attachmentID, pageID, f); err != nil {
+				return err
+			}
+			return nil
+		}()
+
 		if err != nil {
+			// Clean up partially downloaded file
+			_ = os.Remove(assetPath)
+
 			skip := false
 			if errors.Is(err, confluence.ErrNotFound) && opts.SkipMissingAssets {
 				skip = true
@@ -282,12 +315,7 @@ func Pull(ctx context.Context, remote PullRemote, opts PullOptions) (PullResult,
 			}
 			return PullResult{}, fmt.Errorf("download attachment %s (page %s): %w", attachmentID, pageID, err)
 		}
-		if err := os.MkdirAll(filepath.Dir(assetPath), 0o755); err != nil {
-			return PullResult{}, fmt.Errorf("prepare attachment directory %s: %w", assetPath, err)
-		}
-		if err := os.WriteFile(assetPath, raw, 0o644); err != nil {
-			return PullResult{}, fmt.Errorf("write attachment %s: %w", assetPath, err)
-		}
+
 		relAssetPath, relErr := filepath.Rel(spaceDir, assetPath)
 		if relErr != nil {
 			relAssetPath = assetPath
@@ -299,13 +327,27 @@ func Pull(ctx context.Context, remote PullRemote, opts PullOptions) (PullResult,
 		}
 	}
 
+	if opts.Progress != nil {
+		opts.Progress.SetCurrentItem("")
+	}
+
 	updatedMarkdown := make([]string, 0, len(changedPages))
 	changedPageIDsSorted := sortedStringKeys(changedPages)
+
+	if opts.Progress != nil {
+		opts.Progress.SetDescription("Writing markdown")
+		opts.Progress.SetTotal(len(changedPageIDsSorted))
+	}
+
 	for _, pageID := range changedPageIDsSorted {
 		page := changedPages[pageID]
 		outputPath, ok := pagePathByIDAbs[page.ID]
 		if !ok {
 			return PullResult{}, fmt.Errorf("planned path missing for page %s", page.ID)
+		}
+
+		if opts.Progress != nil {
+			opts.Progress.SetCurrentItem(filepath.Base(outputPath))
 		}
 
 		forward, err := converter.Forward(ctx, page.BodyADF, converter.ForwardConfig{
@@ -352,6 +394,7 @@ func Pull(ctx context.Context, remote PullRemote, opts PullOptions) (PullResult,
 	}
 
 	if opts.Progress != nil {
+		opts.Progress.SetCurrentItem("")
 		opts.Progress.Done()
 	}
 
@@ -447,7 +490,7 @@ func selectChangedPageIDs(
 		SpaceKey: opts.SpaceKey,
 		Since:    since,
 		Limit:    pullChangeBatchSize,
-	})
+	}, opts.Progress)
 	if err != nil {
 		return nil, fmt.Errorf("list incremental changes: %w", err)
 	}
@@ -475,7 +518,7 @@ func shouldIgnoreFolderHierarchyError(err error) bool {
 	return errors.As(err, &apiErr)
 }
 
-func listAllPages(ctx context.Context, remote PullRemote, opts confluence.PageListOptions) ([]confluence.Page, error) {
+func listAllPages(ctx context.Context, remote PullRemote, opts confluence.PageListOptions, progress Progress) ([]confluence.Page, error) {
 	result := []confluence.Page{}
 	cursor := opts.Cursor
 	for {
@@ -485,6 +528,9 @@ func listAllPages(ctx context.Context, remote PullRemote, opts confluence.PageLi
 			return nil, err
 		}
 		result = append(result, pageResult.Pages...)
+		if progress != nil {
+			progress.Add(len(pageResult.Pages))
+		}
 		if strings.TrimSpace(pageResult.NextCursor) == "" || pageResult.NextCursor == cursor {
 			break
 		}
@@ -559,7 +605,7 @@ func resolveFolderHierarchyFromPages(ctx context.Context, remote PullRemote, pag
 	return folderByID, diagnostics, nil
 }
 
-func listAllChanges(ctx context.Context, remote PullRemote, opts confluence.ChangeListOptions) ([]confluence.Change, error) {
+func listAllChanges(ctx context.Context, remote PullRemote, opts confluence.ChangeListOptions, progress Progress) ([]confluence.Change, error) {
 	result := []confluence.Change{}
 	start := opts.Start
 	for {
@@ -569,6 +615,9 @@ func listAllChanges(ctx context.Context, remote PullRemote, opts confluence.Chan
 			return nil, err
 		}
 		result = append(result, changeResult.Changes...)
+		if progress != nil {
+			progress.Add(len(changeResult.Changes))
+		}
 		if !changeResult.HasMore {
 			break
 		}

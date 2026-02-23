@@ -317,19 +317,24 @@ func TestDownloadAttachment_ResolvesUUID(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	client, _ := NewClient(ClientConfig{
+	client, err := NewClient(ClientConfig{
 		BaseURL:  server.URL,
 		Email:    "u",
 		APIToken: "t",
 	})
+	if err != nil {
+		t.Fatalf("NewClient() failed: %v", err)
+	}
 
-	raw, err := client.DownloadAttachment(context.Background(), uuid, "123")
+	var buf strings.Builder
+	err = client.DownloadAttachment(context.Background(), uuid, "123", &buf)
 	if err != nil {
 		t.Fatalf("DownloadAttachment() error: %v", err)
 	}
-	if string(raw) != "uuid-data" {
-		t.Fatalf("data = %q, want uuid-data", string(raw))
+	if buf.String() != "uuid-data" {
+		t.Fatalf("data = %q, want uuid-data", buf.String())
 	}
+
 }
 
 func TestResolveAttachmentIDByFileID_Pagination(t *testing.T) {
@@ -405,12 +410,13 @@ func TestDownloadAttachment_ResolvesAndDownloadsBytes(t *testing.T) {
 		t.Fatalf("NewClient() unexpected error: %v", err)
 	}
 
-	raw, err := client.DownloadAttachment(context.Background(), "att-1", "123")
+	var buf strings.Builder
+	err = client.DownloadAttachment(context.Background(), "att-1", "123", &buf)
 	if err != nil {
 		t.Fatalf("DownloadAttachment() unexpected error: %v", err)
 	}
-	if string(raw) != "binary-data" {
-		t.Fatalf("attachment bytes = %q, want %q", string(raw), "binary-data")
+	if buf.String() != "binary-data" {
+		t.Fatalf("attachment bytes = %q, want %q", buf.String(), "binary-data")
 	}
 }
 
