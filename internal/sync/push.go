@@ -69,6 +69,7 @@ type PushOptions struct {
 	Changes        []PushFileChange
 	ConflictPolicy PushConflictPolicy
 	HardDelete     bool
+	DryRun         bool
 	Progress       Progress
 }
 
@@ -480,8 +481,10 @@ func pushUpsertPage(
 
 	doc.Frontmatter.Title = title
 	doc.Frontmatter.Version = updatedPage.Version
-	if err := fs.WriteMarkdownDocument(absPath, doc); err != nil {
-		return PushCommitPlan{}, fmt.Errorf("write markdown %s: %w", relPath, err)
+	if !opts.DryRun {
+		if err := fs.WriteMarkdownDocument(absPath, doc); err != nil {
+			return PushCommitPlan{}, fmt.Errorf("write markdown %s: %w", relPath, err)
+		}
 	}
 
 	state.PagePathIndex[relPath] = pageID
@@ -780,7 +783,7 @@ func walkAndFixMediaNodes(node any, pageID string) bool {
 	modified := false
 	switch n := node.(type) {
 	case map[string]any:
-		if nodeType, ok := n["type"].(string); ok && nodeType == "media" {
+		if nodeType, ok := n["type"].(string); ok && (nodeType == "media" || nodeType == "mediaInline") {
 			if attrs, ok := n["attrs"].(map[string]any); ok {
 				// If we have an id but no collection, add it
 				_, hasID := attrs["id"]
@@ -790,6 +793,10 @@ func walkAndFixMediaNodes(node any, pageID string) bool {
 				collection, hasCollection := attrs["collection"].(string)
 				if hasID && (!hasCollection || collection == "") {
 					attrs["collection"] = "contentId-" + pageID
+					modified = true
+				}
+				if _, hasType := attrs["type"]; !hasType {
+					attrs["type"] = "file"
 					modified = true
 				}
 			}

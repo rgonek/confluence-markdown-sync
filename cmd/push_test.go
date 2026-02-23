@@ -370,6 +370,39 @@ func TestRunPush_DryRunDoesNotMutateFrontmatter(t *testing.T) {
 	}
 }
 
+func TestRunPush_DryRunDoesNotMutateExistingFrontmatter(t *testing.T) {
+	repo := t.TempDir()
+	spaceDir := preparePushRepoWithBaseline(t, repo)
+
+	existingFile := filepath.Join(spaceDir, "root.md")
+	docBefore, _ := fs.ReadMarkdownDocument(existingFile)
+	originalVersion := docBefore.Frontmatter.Version
+	if originalVersion == 0 {
+		t.Fatal("expected original version to be non-zero")
+	}
+
+	fake := newCmdFakePushRemote(originalVersion)
+	oldPushFactory := newPushRemote
+	newPushRemote = func(_ *config.Config) (syncflow.PushRemote, error) { return fake, nil }
+	t.Cleanup(func() { newPushRemote = oldPushFactory })
+
+	setupEnv(t)
+	chdirRepo(t, spaceDir)
+	setAutomationFlags(t, true, true)
+
+	cmd := &cobra.Command{}
+	cmd.SetOut(&bytes.Buffer{})
+
+	if err := runPush(cmd, config.Target{Mode: config.TargetModeSpace, Value: ""}, OnConflictForce, true); err != nil {
+		t.Fatalf("runPush dry-run error: %v", err)
+	}
+
+	docAfter, _ := fs.ReadMarkdownDocument(existingFile)
+	if docAfter.Frontmatter.Version != originalVersion {
+		t.Fatalf("dry-run mutated version: got %d, want %d", docAfter.Frontmatter.Version, originalVersion)
+	}
+}
+
 func TestRunPush_IncludesUntrackedAssetsFromWorkspaceSnapshot(t *testing.T) {
 	repo := t.TempDir()
 	spaceDir := preparePushRepoWithBaseline(t, repo)

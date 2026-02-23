@@ -880,12 +880,12 @@ func collectAttachmentRefs(adfJSON []byte, defaultPageID string) map[string]atta
 		}
 
 		attachmentID := firstString(attrs,
+			"id",
 			"attachmentId",
 			"attachmentID",
 			"mediaId",
 			"fileId",
 			"fileID",
-			"id",
 		)
 		if attachmentID == "" {
 			return

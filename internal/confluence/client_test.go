@@ -332,6 +332,49 @@ func TestDownloadAttachment_ResolvesUUID(t *testing.T) {
 	}
 }
 
+func TestResolveAttachmentIDByFileID_Pagination(t *testing.T) {
+	uuid := "e2cabb2e-4df7-49bb-84e0-c76ae83f6f9b"
+	callCount := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		callCount++
+		w.Header().Set("Content-Type", "application/json")
+		if callCount == 1 {
+			if !strings.Contains(r.URL.Path, "/attachments") {
+				t.Fatalf("call 1 path = %s", r.URL.Path)
+			}
+			// First page, doesn't contain our UUID
+			io.WriteString(w, `{
+				"results":[{"id":"att-other", "fileId":"other-uuid"}],
+				"_links":{"next":"/wiki/api/v2/pages/123/attachments?cursor=next-page-token"}
+			}`)
+		} else {
+			if !strings.Contains(r.URL.RawQuery, "cursor=next-page-token") {
+				t.Fatalf("call 2 query = %s, missing cursor", r.URL.RawQuery)
+			}
+			// Second page contains our UUID
+			io.WriteString(w, `{"results":[{"id":"att-uuid-123", "fileId":"`+uuid+`"}]}`)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	client, _ := NewClient(ClientConfig{
+		BaseURL:  server.URL,
+		Email:    "u",
+		APIToken: "t",
+	})
+
+	id, err := client.resolveAttachmentIDByFileID(context.Background(), uuid, "123")
+	if err != nil {
+		t.Fatalf("resolveAttachmentIDByFileID() error: %v", err)
+	}
+	if id != "att-uuid-123" {
+		t.Fatalf("id = %q, want att-uuid-123", id)
+	}
+	if callCount != 2 {
+		t.Fatalf("callCount = %d, want 2", callCount)
+	}
+}
+
 func TestDownloadAttachment_ResolvesAndDownloadsBytes(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {

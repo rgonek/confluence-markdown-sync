@@ -1074,15 +1074,24 @@ func (c *Client) resolveAttachmentIDByFileID(ctx context.Context, fileID string,
 			}
 		}
 
-		nextURL := payload.Links.Next
-		if nextURL == "" {
+		nextURLStr := payload.Links.Next
+		if nextURLStr == "" {
 			break
 		}
 
-		req, err = c.newRequest(ctx, http.MethodGet, nextURL, nil, nil)
+		// Ensure nextURL is a full URL or relative to base
+		if !strings.HasPrefix(nextURLStr, "http") {
+			nextURLStr = resolveWebURL(c.baseURL, nextURLStr)
+		}
+
+		req, err = http.NewRequestWithContext(ctx, http.MethodGet, nextURLStr, nil)
 		if err != nil {
 			return "", err
 		}
+		req.SetBasicAuth(c.email, c.apiToken)
+		req.Header.Set("Accept", "application/json")
+		req.Header.Set("User-Agent", c.userAgent)
+
 		payload = v2ListResponse[attachmentDTO]{}
 	}
 

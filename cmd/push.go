@@ -259,6 +259,7 @@ func runPush(cmd *cobra.Command, target config.Target, onConflict string, dryRun
 			State:          state,
 			Changes:        syncChanges,
 			ConflictPolicy: toSyncConflictPolicy(onConflict),
+			DryRun:         true,
 			Progress:       progress,
 		})
 		if err != nil {
