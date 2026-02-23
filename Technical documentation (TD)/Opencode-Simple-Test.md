@@ -2,7 +2,7 @@
 title: Opencode Simple Test
 id: "4161537"
 space: TD
-version: 5
+version: 6
 ---
 # Opencode Simple Test
 
@@ -25,7 +25,8 @@ Bob -> Alice: Hi!
 ```
 
 ## Attachment Test
-[Test Attachment](./assets/4161537/test-attachment.txt)
+Removed attachment.
+
 
 
 
