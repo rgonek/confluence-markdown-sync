@@ -383,6 +383,11 @@ func pushUpsertPage(
 			return PushCommitPlan{}, fmt.Errorf("create placeholder page for %s: %w", relPath, err)
 		}
 		pageID = created.ID
+
+		if err := syncPageMetadata(ctx, remote, pageID, doc); err != nil {
+			return PushCommitPlan{}, fmt.Errorf("sync metadata for %s: %w", relPath, err)
+		}
+
 		doc.Frontmatter.ID = pageID
 		doc.Frontmatter.Space = opts.SpaceKey
 		doc.Frontmatter.Version = created.Version
@@ -501,6 +506,10 @@ func pushUpsertPage(
 	})
 	if err != nil {
 		return PushCommitPlan{}, fmt.Errorf("update page %s: %w", pageID, err)
+	}
+
+	if err := syncPageMetadata(ctx, remote, pageID, doc); err != nil {
+		return PushCommitPlan{}, fmt.Errorf("sync metadata for %s: %w", relPath, err)
 	}
 
 	doc.Frontmatter.Title = title
@@ -838,4 +847,63 @@ func walkAndFixMediaNodes(node any, pageID string) bool {
 		}
 	}
 	return modified
+}
+
+func syncPageMetadata(ctx context.Context, remote PushRemote, pageID string, doc fs.MarkdownDocument) error {
+	// 1. Sync Content Status
+	targetStatus := strings.TrimSpace(doc.Frontmatter.Status)
+	currentStatus, err := remote.GetContentStatus(ctx, pageID)
+	if err != nil {
+		return fmt.Errorf("get content status: %w", err)
+	}
+	if targetStatus != currentStatus {
+		if targetStatus == "" {
+			if err := remote.DeleteContentStatus(ctx, pageID); err != nil {
+				return fmt.Errorf("delete content status: %w", err)
+			}
+		} else {
+			if err := remote.SetContentStatus(ctx, pageID, targetStatus); err != nil {
+				return fmt.Errorf("set content status: %w", err)
+			}
+		}
+	}
+
+	// 2. Sync Labels
+	remoteLabels, err := remote.GetLabels(ctx, pageID)
+	if err != nil {
+		return fmt.Errorf("get labels: %w", err)
+	}
+
+	remoteLabelSet := map[string]struct{}{}
+	for _, l := range remoteLabels {
+		remoteLabelSet[l] = struct{}{}
+	}
+
+	localLabelSet := map[string]struct{}{}
+	for _, l := range doc.Frontmatter.Labels {
+		localLabelSet[strings.TrimSpace(l)] = struct{}{}
+	}
+
+	var toAdd []string
+	for l := range localLabelSet {
+		if _, ok := remoteLabelSet[l]; !ok {
+			toAdd = append(toAdd, l)
+		}
+	}
+
+	for l := range remoteLabelSet {
+		if _, ok := localLabelSet[l]; !ok {
+			if err := remote.RemoveLabel(ctx, pageID, l); err != nil {
+				return fmt.Errorf("remove label %q: %w", l, err)
+			}
+		}
+	}
+
+	if len(toAdd) > 0 {
+		if err := remote.AddLabels(ctx, pageID, toAdd); err != nil {
+			return fmt.Errorf("add labels: %w", err)
+		}
+	}
+
+	return nil
 }
