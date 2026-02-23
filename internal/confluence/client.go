@@ -173,9 +173,12 @@ func (c *Client) ListPages(ctx context.Context, opts PageListOptions) (PageListR
 	if opts.SpaceKey != "" {
 		query.Set("space-key", opts.SpaceKey)
 	}
-	if opts.Status != "" {
-		query.Set("status", opts.Status)
+	status := opts.Status
+	if status == "" {
+		status = "current"
 	}
+	query.Set("status", status)
+
 	if opts.Limit > 0 {
 		query.Set("limit", strconv.Itoa(opts.Limit))
 	}

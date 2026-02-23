@@ -586,6 +586,76 @@ func sampleChildADF() map[string]any {
 	}
 }
 
+func TestPull_DraftRecovery(t *testing.T) {
+	tmpDir := t.TempDir()
+	spaceDir := filepath.Join(tmpDir, "ENG")
+	_ = os.MkdirAll(spaceDir, 0o755)
+
+	// Local state knows about page 10 (draft)
+	state := fs.SpaceState{
+		PagePathIndex: map[string]string{
+			"draft.md": "10",
+		},
+	}
+	if err := fs.SaveState(spaceDir, state); err != nil {
+		t.Fatalf("save state: %v", err)
+	}
+
+	fake := &fakePullRemote{
+		space: confluence.Space{ID: "space-1", Key: "ENG"},
+		// Remote space listing ONLY returns published pages (page 1)
+		pages: []confluence.Page{
+			{ID: "1", SpaceID: "space-1", Title: "Published Page", Status: "current"},
+		},
+		pagesByID: map[string]confluence.Page{
+			"1": {
+				ID:      "1",
+				SpaceID: "space-1",
+				Title:   "Published Page",
+				Status:  "current",
+				BodyADF: []byte(`{"version":1,"type":"doc","content":[]}`),
+			},
+			"10": {
+				ID:      "10",
+				SpaceID: "space-1",
+				Title:   "Draft Page",
+				Status:  "draft", // This page is a draft
+				BodyADF: []byte(`{"version":1,"type":"doc","content":[]}`),
+			},
+		},
+	}
+
+	res, err := Pull(context.Background(), fake, PullOptions{
+		SpaceKey: "ENG",
+		SpaceDir: spaceDir,
+		State:    state,
+	})
+	if err != nil {
+		t.Fatalf("Pull() unexpected error: %v", err)
+	}
+
+	// Draft page should be preserved, not deleted
+	foundDraft := false
+	for _, p := range res.UpdatedMarkdown {
+		if p == "draft.md" {
+			foundDraft = true
+			break
+		}
+	}
+	if !foundDraft {
+		t.Errorf("draft.md not found in updated markdown, was it erroneously deleted?")
+	}
+
+	// Verify draft frontmatter
+	doc, err := fs.ReadMarkdownDocument(filepath.Join(spaceDir, "draft.md"))
+	if err != nil {
+		t.Fatalf("read draft.md: %v", err)
+	}
+	if doc.Frontmatter.Status != "draft" {
+		t.Errorf("draft.md status = %q, want draft", doc.Frontmatter.Status)
+	}
+}
+
 func TestPull_SkipsMissingAssets(t *testing.T) {
 	tmpDir := t.TempDir()
 	spaceDir := filepath.Join(tmpDir, "ENG")

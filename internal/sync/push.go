@@ -142,13 +142,20 @@ func Push(ctx context.Context, remote PushRemote, opts PushOptions) (PushResult,
 	pages, err := listAllPushPages(ctx, remote, confluence.PageListOptions{
 		SpaceID:  space.ID,
 		SpaceKey: opts.SpaceKey,
-		Status:   "current,draft",
+		Status:   "current",
 		Limit:    pushPageBatchSize,
 	})
 	if err != nil {
 		return PushResult{}, fmt.Errorf("list pages: %w", err)
 	}
+
+	pages, err = recoverMissingPages(ctx, remote, space.ID, state.PagePathIndex, pages)
+	if err != nil {
+		return PushResult{}, fmt.Errorf("recover missing pages: %w", err)
+	}
+
 	remotePageByID := make(map[string]confluence.Page, len(pages))
+
 	for _, page := range pages {
 		remotePageByID[page.ID] = page
 	}

@@ -554,3 +554,79 @@ func (f *cmdFakePullRemote) DownloadAttachment(_ context.Context, attachmentID s
 	}
 	return raw, nil
 }
+
+func TestRunPull_DraftSpaceListing(t *testing.T) {
+	repo := t.TempDir()
+	setupGitRepo(t, repo)
+
+	spaceDir := filepath.Join(repo, "Engineering (ENG)")
+	if err := os.MkdirAll(spaceDir, 0o755); err != nil {
+		t.Fatalf("mkdir space: %v", err)
+	}
+
+	// Page 10 is known locally as a draft
+	writeMarkdown(t, filepath.Join(spaceDir, "draft.md"), fs.MarkdownDocument{
+		Frontmatter: fs.Frontmatter{
+			Title:   "Draft Page",
+			ID:      "10",
+			Space:   "ENG",
+			Version: 1,
+			Status:  "draft",
+		},
+		Body: "draft body\n",
+	})
+	state := fs.SpaceState{
+		PagePathIndex: map[string]string{
+			"draft.md": "10",
+		},
+	}
+	if err := fs.SaveState(spaceDir, state); err != nil {
+		t.Fatalf("save state: %v", err)
+	}
+
+	runGitForTest(t, repo, "add", ".")
+	runGitForTest(t, repo, "commit", "-m", "initial draft")
+
+	fake := &cmdFakePullRemote{
+		space: confluence.Space{ID: "space-1", Key: "ENG", Name: "Engineering"},
+		// Remote space listing only returns current pages (none in this case)
+		pages: []confluence.Page{},
+		pagesByID: map[string]confluence.Page{
+			"10": {
+				ID:      "10",
+				SpaceID: "space-1",
+				Title:   "Draft Page",
+				Status:  "draft",
+				BodyADF: rawJSON(t, simpleADF("remote draft body")),
+			},
+		},
+		attachments: map[string][]byte{},
+	}
+
+	oldFactory := newPullRemote
+	newPullRemote = func(_ *config.Config) (syncflow.PullRemote, error) { return fake, nil }
+	t.Cleanup(func() { newPullRemote = oldFactory })
+
+	setupEnv(t)
+	chdirRepo(t, repo)
+
+	cmd := &cobra.Command{}
+	out := &bytes.Buffer{}
+	cmd.SetOut(out)
+
+	if err := runPull(cmd, config.Target{Mode: config.TargetModeSpace, Value: "Engineering (ENG)"}); err != nil {
+		t.Fatalf("runPull() error: %v", err)
+	}
+
+	// draft.md should NOT be deleted, and should be updated from remote
+	doc, err := fs.ReadMarkdownDocument(filepath.Join(spaceDir, "draft.md"))
+	if err != nil {
+		t.Fatalf("read draft.md: %v", err)
+	}
+	if !strings.Contains(doc.Body, "remote draft body") {
+		t.Errorf("draft.md not updated from remote, body = %q", doc.Body)
+	}
+	if doc.Frontmatter.Status != "draft" {
+		t.Errorf("draft.md status = %q, want draft", doc.Frontmatter.Status)
+	}
+}
