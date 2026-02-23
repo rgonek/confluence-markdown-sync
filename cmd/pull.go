@@ -160,12 +160,31 @@ func runPull(cmd *cobra.Command, target config.Target) (runErr error) {
 					_, _ = runGit(repoRoot, "stash", "drop", stashRef)
 					return
 				}
+
+				if runErr != nil {
+					// CLEANUP: If pull failed and we have a stash, we must clean up
+					// the mess Pull made before we can pop the stash.
+					// Otherwise git stash apply --include-untracked will fail if it
+					// tries to restore files that Pull newly created.
+					fmt.Fprintf(out, "Cleaning up failed pull before restoring local changes...\n")
+					_, _ = runGit(repoRoot, "clean", "-fd", "--", scopePath)
+					_, _ = runGit(repoRoot, "checkout", "HEAD", "--", scopePath)
+				}
+
 				restoreErr := applyAndDropStash(repoRoot, stashRef)
 				if restoreErr != nil {
 					runErr = errors.Join(runErr, restoreErr)
 				}
 			}()
 		}
+	} else {
+		// If the directory didn't exist before, we should delete it on error
+		defer func() {
+			if runErr != nil {
+				fmt.Fprintf(out, "Cleaning up failed pull...\n")
+				_ = os.RemoveAll(pullCtx.spaceDir)
+			}
+		}()
 	}
 
 	result, err := syncflow.Pull(ctx, remote, syncflow.PullOptions{
