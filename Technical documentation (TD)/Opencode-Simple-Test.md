@@ -2,8 +2,17 @@
 title: Opencode Simple Test
 id: "4161537"
 space: TD
-version: 2
+version: 3
 ---
 # Opencode Simple Test
 
 This is a simple test page.
+
+## Mermaid Diagram
+```mermaid
+graph TD
+    A[Start] --> B{Is it working?}
+    B -- Yes --> C[Great!]
+    B -- No --> D[Fix it]
+```
+
