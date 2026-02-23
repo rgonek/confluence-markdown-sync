@@ -94,7 +94,10 @@ Validation failures must stop `push` immediately.
 
 ## Testing Expectations
 - Add or update tests for any changed invariant.
+- **Agent Sandbox**: Use the `workspace/` or `test-output/` directories (both gitignored) for manual or agentic integration tests.
+- **Cleanup**: Always delete test content from `workspace/` or `test-output/` after completing a test session to keep the environment clean.
 - Prioritize:
+
   - Frontmatter/validation unit tests.
   - Pull/push integration tests.
   - Worktree, snapshot-ref, and tag lifecycle tests (including no-op behavior).
