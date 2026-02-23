@@ -2,7 +2,7 @@
 title: Opencode Simple Test
 id: "4161537"
 space: TD
-version: 4
+version: 5
 ---
 # Opencode Simple Test
 
@@ -23,5 +23,10 @@ Alice -> Bob: Hello
 Bob -> Alice: Hi!
 @enduml
 ```
+
+## Attachment Test
+[Test Attachment](./assets/4161537/test-attachment.txt)
+
+
 
 
