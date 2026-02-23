@@ -20,6 +20,7 @@ import (
 var (
 	flagPullForce        = false
 	flagPullDiscardLocal = false
+	flagPullRelink       = false
 
 	newPullRemote = func(cfg *config.Config) (syncflow.PullRemote, error) {
 		return confluence.NewClient(confluence.ClientConfig{
@@ -63,6 +64,7 @@ If omitted, the space is inferred from the current directory name.`,
 	cmd.Flags().BoolVarP(&flagSkipMissingAssets, "skip-missing-assets", "s", false, "Continue if an attachment is missing (not found)")
 	cmd.Flags().BoolVarP(&flagPullForce, "force", "f", false, "Force full space pull and refresh all tracked pages")
 	cmd.Flags().BoolVar(&flagPullDiscardLocal, "discard-local", false, "Discard local uncommitted changes if they conflict with remote updates")
+	cmd.Flags().BoolVarP(&flagPullRelink, "relink", "r", false, "Automatically relink references to this space from other spaces after pull")
 	return cmd
 }
 
@@ -244,6 +246,23 @@ func runPull(cmd *cobra.Command, target config.Target) (runErr error) {
 	}
 
 	fmt.Fprintf(out, "pull completed: committed and tagged %s\n", tagName)
+
+	if flagPullRelink {
+		index, err := syncflow.BuildGlobalPageIndex(repoRoot)
+		if err != nil {
+			return fmt.Errorf("build global index for relink: %w", err)
+		}
+
+		states, err := fs.FindAllStateFiles(repoRoot)
+		if err != nil {
+			return fmt.Errorf("discover spaces for relink: %w", err)
+		}
+
+		if err := runTargetedRelink(cmd, repoRoot, pullCtx.spaceDir, index, states); err != nil {
+			return fmt.Errorf("auto-relink: %w", err)
+		}
+	}
+
 	return nil
 }
 

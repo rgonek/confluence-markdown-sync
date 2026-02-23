@@ -11,7 +11,11 @@ import (
 // PageIndex maps file paths to page IDs.
 type PageIndex map[string]string
 
+// GlobalPageIndex maps page IDs to absolute local file paths.
+type GlobalPageIndex map[string]string
+
 // BuildPageIndex scans a space directory and returns a map of relative path -> page ID.
+
 func BuildPageIndex(spaceDir string) (PageIndex, error) {
 	index := make(PageIndex)
 	err := filepath.WalkDir(spaceDir, func(path string, d os.DirEntry, err error) error {
@@ -48,4 +52,24 @@ func BuildPageIndex(spaceDir string) (PageIndex, error) {
 		return nil
 	})
 	return index, err
+}
+
+// BuildGlobalPageIndex aggregates paths from all discovered spaces in root.
+func BuildGlobalPageIndex(root string) (GlobalPageIndex, error) {
+	global := make(GlobalPageIndex)
+	states, err := fs.FindAllStateFiles(root)
+	if err != nil {
+		return nil, err
+	}
+
+	for dir, state := range states {
+		for relPath, pageID := range state.PagePathIndex {
+			if pageID == "" {
+				continue
+			}
+			absPath := filepath.Join(dir, filepath.FromSlash(relPath))
+			global[pageID] = absPath
+		}
+	}
+	return global, nil
 }
