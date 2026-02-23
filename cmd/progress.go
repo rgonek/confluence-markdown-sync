@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 	"io"
+	"time"
 
 	"github.com/schollz/progressbar/v3"
 )
@@ -30,6 +31,9 @@ func newConsoleProgress(out io.Writer, description string) *consoleProgress {
 }
 
 func (p *consoleProgress) SetDescription(desc string) {
+	// Add a small sleep when switching descriptions to prevent flickering
+	// and ensure the user can see the transition
+	time.Sleep(100 * time.Millisecond)
 	p.description = desc
 	p.bar.Describe(desc)
 }
@@ -38,12 +42,17 @@ func (p *consoleProgress) SetCurrentItem(name string) {
 	if name == "" {
 		p.bar.Describe(p.description)
 	} else {
-		p.bar.Describe(fmt.Sprintf("%s: %s", p.description, name))
+		// Truncate item for display
+		display := name
+		if len(display) > 30 {
+			display = "..." + display[len(display)-27:]
+		}
+		p.bar.Describe(fmt.Sprintf("%s (%s)", p.description, display))
 	}
 }
 
 func (p *consoleProgress) SetTotal(total int) {
-	if total <= 0 {
+	if total < 0 {
 		return
 	}
 	p.bar.Set(0)

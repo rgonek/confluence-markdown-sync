@@ -14,12 +14,18 @@ var (
 )
 
 // SanitizePathSegment converts arbitrary text into a safe single path segment.
+// It truncates the result to 100 characters to stay within path limits.
 func SanitizePathSegment(v string) string {
 	s := strings.TrimSpace(v)
 	s = invalidPathChars.ReplaceAllString(s, "-")
 	s = strings.Trim(s, ". ")
 	s = separatorRun.ReplaceAllString(s, "-")
 	s = strings.Trim(s, "-")
+
+	if len(s) > 100 {
+		s = s[:100]
+		s = strings.TrimRight(s, "-")
+	}
 
 	if s == "" {
 		s = "untitled"

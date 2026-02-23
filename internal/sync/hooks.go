@@ -75,7 +75,8 @@ func ExtractPageID(href string) string {
 		return id
 	}
 
-	// 2. /pages/123/Title
+	// 2. /pages/123/Title or /wiki/pages/123
+	// 3. /spaces/KEY/pages/123/Title or /wiki/spaces/KEY/pages/123
 	segments := strings.Split(u.Path, "/")
 	for i, seg := range segments {
 		if seg == "pages" && i+1 < len(segments) {

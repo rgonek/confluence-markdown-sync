@@ -62,6 +62,7 @@ Compatibility and precedence:
     - If git repo exists: Use current branch.
     - Prompts for environment variables if missing and creates `.env`.
     - Generates `AGENTS.md` and `README.md`.
+- **Safety Rule**: NEVER perform real `pull` or `push` operations against a live Confluence space within the repository root. This prevents synced content from being accidentally committed. Use a separate sandbox directory for live tests.
 - Recovery and cleanup flows must be provided by CLI behavior/messages rather than manual Git instructions.
 
 #### 2.3.1 Context Detection
