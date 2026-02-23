@@ -402,7 +402,7 @@ func Pull(ctx context.Context, remote PullRemote, opts PullOptions) (PullResult,
 				ID:      page.ID,
 				Space:   opts.SpaceKey,
 				Version: page.Version,
-				Status:  page.Status,
+				State:   page.Status,
 			},
 			Body: forward.Markdown,
 		}

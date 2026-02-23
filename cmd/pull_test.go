@@ -629,7 +629,7 @@ func TestRunPull_DraftSpaceListing(t *testing.T) {
 	if !strings.Contains(doc.Body, "remote draft body") {
 		t.Errorf("draft.md not updated from remote, body = %q", doc.Body)
 	}
-	if doc.Frontmatter.Status != "draft" {
-		t.Errorf("draft.md status = %q, want draft", doc.Frontmatter.Status)
+	if doc.Frontmatter.State != "draft" {
+		t.Errorf("draft.md status = %q, want draft", doc.Frontmatter.State)
 	}
 }

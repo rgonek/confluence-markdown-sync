@@ -653,8 +653,8 @@ func TestPull_DraftRecovery(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read draft.md: %v", err)
 	}
-	if doc.Frontmatter.Status != "draft" {
-		t.Errorf("draft.md status = %q, want draft", doc.Frontmatter.Status)
+	if doc.Frontmatter.State != "draft" {
+		t.Errorf("draft.md status = %q, want draft", doc.Frontmatter.State)
 	}
 }
 
