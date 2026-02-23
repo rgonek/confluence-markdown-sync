@@ -119,7 +119,7 @@ func Pull(ctx context.Context, remote PullRemote, opts PullOptions) (PullResult,
 	pages, err := listAllPages(ctx, remote, confluence.PageListOptions{
 		SpaceID:  space.ID,
 		SpaceKey: opts.SpaceKey,
-		Status:   "current",
+		Status:   "current,draft",
 		Limit:    pullPageBatchSize,
 	})
 	if err != nil {
@@ -317,6 +317,7 @@ func Pull(ctx context.Context, remote PullRemote, opts PullOptions) (PullResult,
 				ID:      page.ID,
 				Space:   opts.SpaceKey,
 				Version: page.Version,
+				Status:  page.Status,
 			},
 			Body: forward.Markdown,
 		}

@@ -41,6 +41,7 @@ type Frontmatter struct {
 	ID      string
 	Space   string
 	Version int
+	Status  string
 
 	// Legacy metadata retained in-memory only for transitional behavior.
 	ConfluenceLastModified string `yaml:"-"`
@@ -54,6 +55,7 @@ type frontmatterYAML struct {
 	ID      string `yaml:"id,omitempty"`
 	Space   string `yaml:"space,omitempty"`
 	Version int    `yaml:"version,omitempty"`
+	Status  string `yaml:"status,omitempty"`
 
 	LegacyPageID       string `yaml:"confluence_page_id,omitempty"`
 	LegacySpaceKey     string `yaml:"confluence_space_key,omitempty"`
@@ -68,7 +70,7 @@ func (fm Frontmatter) MarshalYAML() (any, error) {
 	extra := map[string]any{}
 	for key, value := range fm.Extra {
 		switch key {
-		case "title", "id", "space", "version",
+		case "title", "id", "space", "version", "status",
 			"confluence_page_id", "confluence_space_key", "confluence_version",
 			"confluence_last_modified", "confluence_parent_page_id":
 			continue
@@ -82,8 +84,17 @@ func (fm Frontmatter) MarshalYAML() (any, error) {
 		ID:      fm.ID,
 		Space:   fm.Space,
 		Version: fm.Version,
+		Status:  normalizeStatusForMarshal(fm.Status),
 		Extra:   extra,
 	}, nil
+}
+
+func normalizeStatusForMarshal(status string) string {
+	s := strings.TrimSpace(strings.ToLower(status))
+	if s == "current" || s == "" {
+		return "" // Omit if current or empty
+	}
+	return s
 }
 
 func (fm *Frontmatter) UnmarshalYAML(value *yaml.Node) error {
@@ -96,6 +107,7 @@ func (fm *Frontmatter) UnmarshalYAML(value *yaml.Node) error {
 	fm.ID = strings.TrimSpace(decoded.ID)
 	fm.Space = strings.TrimSpace(decoded.Space)
 	fm.Version = decoded.Version
+	fm.Status = strings.TrimSpace(decoded.Status)
 
 	if fm.ID == "" {
 		fm.ID = strings.TrimSpace(decoded.LegacyPageID)
@@ -119,6 +131,7 @@ func (fm *Frontmatter) UnmarshalYAML(value *yaml.Node) error {
 	delete(decoded.Extra, "id")
 	delete(decoded.Extra, "space")
 	delete(decoded.Extra, "version")
+	delete(decoded.Extra, "status")
 	delete(decoded.Extra, "confluence_page_id")
 	delete(decoded.Extra, "confluence_space_key")
 	delete(decoded.Extra, "confluence_version")
@@ -291,6 +304,15 @@ func ValidateFrontmatterSchema(fm Frontmatter) ValidationResult {
 		}
 	}
 
+	status := strings.TrimSpace(strings.ToLower(fm.Status))
+	if status != "" && status != "current" && status != "draft" {
+		result.Issues = append(result.Issues, ValidationIssue{
+			Field:   "status",
+			Code:    "invalid",
+			Message: "status must be either 'current' or 'draft'",
+		})
+	}
+
 	return result
 }
 
@@ -310,6 +332,24 @@ func ValidateImmutableFrontmatter(previous, current Frontmatter) ValidationResul
 			Field:   "space",
 			Code:    "immutable",
 			Message: "space is immutable and cannot be changed manually",
+		})
+	}
+
+	// Block unpublishing (current -> draft)
+	prevStatus := strings.TrimSpace(strings.ToLower(previous.Status))
+	if prevStatus == "" {
+		prevStatus = "current"
+	}
+	currStatus := strings.TrimSpace(strings.ToLower(current.Status))
+	if currStatus == "" {
+		currStatus = "current"
+	}
+
+	if strings.TrimSpace(previous.ID) != "" && prevStatus == "current" && currStatus == "draft" {
+		result.Issues = append(result.Issues, ValidationIssue{
+			Field:   "status",
+			Code:    "immutable",
+			Message: "Confluence does not support unpublishing pages (changing status from current to draft)",
 		})
 	}
 

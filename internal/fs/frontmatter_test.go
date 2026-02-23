@@ -108,6 +108,55 @@ func TestValidateFrontmatterSchema(t *testing.T) {
 	if !result.IsValid() {
 		t.Fatalf("ValidateFrontmatterSchema() unexpected issues: %#v", result.Issues)
 	}
+
+	result = ValidateFrontmatterSchema(Frontmatter{
+		Space:  "OPS",
+		Status: "draft",
+	})
+	if !result.IsValid() {
+		t.Fatalf("ValidateFrontmatterSchema(draft) unexpected issues: %#v", result.Issues)
+	}
+
+	result = ValidateFrontmatterSchema(Frontmatter{
+		Space:  "OPS",
+		Status: "invalid",
+	})
+	if result.IsValid() {
+		t.Fatal("ValidateFrontmatterSchema(invalid) should fail")
+	}
+}
+
+func TestValidateImmutableFrontmatter_Status(t *testing.T) {
+	previous := Frontmatter{
+		ID:     "1",
+		Space:  "ENG",
+		Status: "current",
+	}
+	current := Frontmatter{
+		ID:     "1",
+		Space:  "ENG",
+		Status: "draft",
+	}
+
+	result := ValidateImmutableFrontmatter(previous, current)
+	if result.IsValid() {
+		t.Fatal("ValidateImmutableFrontmatter() should block current -> draft transition")
+	}
+
+	// draft -> current should be allowed
+	previous.Status = "draft"
+	current.Status = "current"
+	result = ValidateImmutableFrontmatter(previous, current)
+	if !result.IsValid() {
+		t.Fatalf("ValidateImmutableFrontmatter() should allow draft -> current transition: %v", result.Issues)
+	}
+
+	// draft -> draft should be allowed
+	current.Status = "draft"
+	result = ValidateImmutableFrontmatter(previous, current)
+	if !result.IsValid() {
+		t.Fatalf("ValidateImmutableFrontmatter() should allow draft -> draft transition: %v", result.Issues)
+	}
 }
 
 func TestValidateImmutableFrontmatter(t *testing.T) {

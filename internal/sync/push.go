@@ -142,7 +142,7 @@ func Push(ctx context.Context, remote PushRemote, opts PushOptions) (PushResult,
 	pages, err := listAllPushPages(ctx, remote, confluence.PageListOptions{
 		SpaceID:  space.ID,
 		SpaceKey: opts.SpaceKey,
-		Status:   "current",
+		Status:   "current,draft",
 		Limit:    pushPageBatchSize,
 	})
 	if err != nil {
@@ -353,11 +353,17 @@ func pushUpsertPage(
 		// Create a placeholder page to get an ID for attachments
 		title := resolveLocalTitle(doc, relPath)
 		resolvedParentID := resolveParentIDFromHierarchy(relPath, "", fallbackParentID, pageIDByPath)
+
+		targetStatus := doc.Frontmatter.Status
+		if strings.TrimSpace(targetStatus) == "" {
+			targetStatus = "current"
+		}
+
 		created, err := remote.CreatePage(ctx, confluence.PageUpsertInput{
 			SpaceID:      space.ID,
 			ParentPageID: resolvedParentID,
 			Title:        title,
-			Status:       "current",
+			Status:       targetStatus,
 			BodyADF:      []byte(`{"version":1,"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"Initial sync..."}]}]}`),
 		})
 		if err != nil {
@@ -467,11 +473,16 @@ func pushUpsertPage(
 		return PushCommitPlan{}, fmt.Errorf("post-process ADF for %s: %w", relPath, err)
 	}
 
+	targetStatus := doc.Frontmatter.Status
+	if strings.TrimSpace(targetStatus) == "" {
+		targetStatus = "current"
+	}
+
 	updatedPage, err := remote.UpdatePage(ctx, pageID, confluence.PageUpsertInput{
 		SpaceID:      space.ID,
 		ParentPageID: resolvedParentID,
 		Title:        title,
-		Status:       "current",
+		Status:       targetStatus,
 		Version:      nextVersion,
 		BodyADF:      finalADF,
 	})
