@@ -743,8 +743,8 @@ This space directory contains Markdown files synced from Confluence space [%s].
 - [e.g., Do not include customer names in these docs]
 
 ## Sync Workflow
-- Use `+"`cms pull`"+` to get latest updates.
-- Use `+"`cms push`"+` to publish your changes.
+- Use `+"`conf pull`"+` to get latest updates.
+- Use `+"`conf push`"+` to publish your changes.
 `, spaceKey, spaceKey)
 
 	_ = os.WriteFile(path, []byte(content), 0644)

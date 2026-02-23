@@ -122,7 +122,7 @@ func runDiff(cmd *cobra.Command, target config.Target) error {
 	pagePathByIDAbs, pagePathByIDRel := syncflow.PlanPagePaths(diffCtx.spaceDir, state.PagePathIndex, pages, folderByID)
 	attachmentPathByID := buildDiffAttachmentPathByID(diffCtx.spaceDir, state.AttachmentIndex)
 
-	tmpRoot, err := os.MkdirTemp("", "cms-diff-*")
+	tmpRoot, err := os.MkdirTemp("", "conf-diff-*")
 	if err != nil {
 		return fmt.Errorf("create diff workspace: %w", err)
 	}

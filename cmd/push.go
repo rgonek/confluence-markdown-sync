@@ -676,7 +676,7 @@ func collectGitChangesWithUntracked(client *git.Client, baselineRef, scopePath s
 }
 
 func prepareDryRunSpaceDir(spaceDir string) (string, func(), error) {
-	tmpRoot, err := os.MkdirTemp("", "cms-dry-run-*")
+	tmpRoot, err := os.MkdirTemp("", "conf-dry-run-*")
 	if err != nil {
 		return "", nil, fmt.Errorf("create dry-run temp dir: %w", err)
 	}
@@ -855,7 +855,7 @@ func formatPushConflictError(conflictErr *syncflow.PushConflictError) error {
 	case syncflow.PushConflictPolicyPullMerge:
 		// This should generally be handled by the caller in runPush, but fallback here
 		return fmt.Errorf(
-			"conflict for %s (remote v%d > local v%d): run 'cms pull' to merge remote changes into your local workspace before retrying push",
+			"conflict for %s (remote v%d > local v%d): run 'conf pull' to merge remote changes into your local workspace before retrying push",
 			conflictErr.Path,
 			conflictErr.RemoteVersion,
 			conflictErr.LocalVersion,
@@ -864,7 +864,7 @@ func formatPushConflictError(conflictErr *syncflow.PushConflictError) error {
 		return conflictErr
 	default:
 		return fmt.Errorf(
-			"conflict for %s (remote v%d > local v%d): rerun with --on-conflict=force to overwrite remote, or run 'cms pull' to merge",
+			"conflict for %s (remote v%d > local v%d): rerun with --on-conflict=force to overwrite remote, or run 'conf pull' to merge",
 			conflictErr.Path,
 			conflictErr.RemoteVersion,
 			conflictErr.LocalVersion,

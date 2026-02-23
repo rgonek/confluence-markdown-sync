@@ -12,10 +12,10 @@ func TestRunInit_CreatesInitialCommitWhenRepoMissing(t *testing.T) {
 	repo := t.TempDir()
 	chdirRepo(t, repo)
 
-	t.Setenv("GIT_AUTHOR_NAME", "cms-test")
-	t.Setenv("GIT_AUTHOR_EMAIL", "cms-test@example.com")
-	t.Setenv("GIT_COMMITTER_NAME", "cms-test")
-	t.Setenv("GIT_COMMITTER_EMAIL", "cms-test@example.com")
+	t.Setenv("GIT_AUTHOR_NAME", "conf-test")
+	t.Setenv("GIT_AUTHOR_EMAIL", "conf-test@example.com")
+	t.Setenv("GIT_COMMITTER_NAME", "conf-test")
+	t.Setenv("GIT_COMMITTER_EMAIL", "conf-test@example.com")
 
 	cmd := newInitCmd()
 	out := &bytes.Buffer{}
@@ -32,8 +32,8 @@ func TestRunInit_CreatesInitialCommitWhenRepoMissing(t *testing.T) {
 	}
 
 	message := strings.TrimSpace(runGitForTest(t, repo, "log", "-1", "--format=%s"))
-	if message != "chore: initialize cms workspace" {
-		t.Fatalf("commit message = %q, want %q", message, "chore: initialize cms workspace")
+	if message != "chore: initialize conf workspace" {
+		t.Fatalf("commit message = %q, want %q", message, "chore: initialize conf workspace")
 	}
 
 	tracked := runGitForTest(t, repo, "ls-tree", "--name-only", "-r", "HEAD")

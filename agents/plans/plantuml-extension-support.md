@@ -13,11 +13,11 @@ Implement round-trip support for Confluence PlantUML extensions by leveraging th
 - [ ] 6. Add integration tests in `internal/converter/roundtrip_test.go` or a new `plantuml_test.go` to verify that a PlantUML ADF extension converts to Pandoc Markdown and back to a functionally identical ADF extension (ignoring non-essential IDs).
 
 ## Verification Criteria
-- `cms pull` transforms `plantumlcloud` extensions into Pandoc-flavored ` ```puml ` blocks capturing the `filename` metadata natively (e.g. via code block attributes or fenced divs), completely avoiding HTML comments.
-- `cms push` correctly compresses and encodes the Pandoc ` ```puml ` blocks back into Confluence ADF extensions via the `ExtensionHandler` interface.
+- `conf pull` transforms `plantumlcloud` extensions into Pandoc-flavored ` ```puml ` blocks capturing the `filename` metadata natively (e.g. via code block attributes or fenced divs), completely avoiding HTML comments.
+- `conf push` correctly compresses and encodes the Pandoc ` ```puml ` blocks back into Confluence ADF extensions via the `ExtensionHandler` interface.
 - The `filename` attribute is preserved losslessly across a full pull-push cycle.
 - Local Markdown previewers ignore Pandoc block attributes but still display the PUML source.
-- `cms validate` passes for files containing the new PUML block format.
+- `conf validate` passes for files containing the new PUML block format.
 
 ## Potential Risks and Mitigations
 1. **Metadata Corruption**: Users might accidentally delete or edit the Pandoc block attributes. Mitigation: The `PlantUMLHandler` should provide sensible defaults (e.g., a generic filename) if the attributes are missing or malformed.

@@ -1,7 +1,7 @@
 # Confluence Page Status Support Plan
 
 ## 1. Overview
-This document outlines the plan for supporting the `status` field in the Markdown frontmatter within the `cms` CLI, enabling users to create and manage unpublished drafts before making them live on Confluence.
+This document outlines the plan for supporting the `status` field in the Markdown frontmatter within the `conf` CLI, enabling users to create and manage unpublished drafts before making them live on Confluence.
 
 ## 2. Rationale & Constraints
 The Confluence Cloud REST API v2 behaves in a specific and sometimes counter-intuitive way regarding page statuses:
@@ -10,13 +10,13 @@ The Confluence Cloud REST API v2 behaves in a specific and sometimes counter-int
 - **"Unpublishing" (`current` -> `draft`):** The API **does not support unpublishing**. If you send `"status": "draft"` for a page that is already `current`, Confluence leaves the published page live and creates a hidden "draft edit" in the background.
 - **Archiving:** Archiving is not supported via the v2 `PUT /pages/{id}` endpoint.
 
-To prevent human confusion ("I set it to draft, why is it still live on the internet?") and AI hallucinations, `cms` will enforce a strict one-way transition constraint.
+To prevent human confusion ("I set it to draft, why is it still live on the internet?") and AI hallucinations, `conf` will enforce a strict one-way transition constraint.
 
 ## 3. Data Model: Frontmatter
 - Add `status` as a recognized optional key in the YAML frontmatter.
 - Valid values: `current`, `draft`.
 - If the `status` key is missing, it is implicitly treated as `current`.
-- **Pull Behavior:** When running `cms pull`:
+- **Pull Behavior:** When running `conf pull`:
   - If the remote page is published (`current`), the `status` key will be omitted from the generated frontmatter to keep files clean.
   - If the remote page is a draft (or pulled via a specific draft fetch), it will explicitly include `status: draft`.
 
@@ -27,16 +27,16 @@ To prevent human confusion ("I set it to draft, why is it still live on the inte
   - `draft` -> `current` (Publishes the draft)
   - `draft` -> `draft` (Updates the draft)
 - **Blocked Transitions:**
-  - `current` -> `draft`: If a page is already published remotely (has an `id`), `cms validate` must fail with an error stating that Confluence does not support unpublishing pages.
-- `cms validate` must verify that the value is either `current` or `draft`.
+  - `current` -> `draft`: If a page is already published remotely (has an `id`), `conf validate` must fail with an error stating that Confluence does not support unpublishing pages.
+- `conf validate` must verify that the value is either `current` or `draft`.
 
 ## 5. Sync Loop Updates
 
-### `cms pull`
+### `conf pull`
 - Ensure the API client fetches both `current` and `draft` statuses when listing pages in a space. (Currently, the API defaults to `current` and `archived` if not specified).
 - Ensure the `Pull` orchestration saves the correct status in the frontmatter (omitting if `current`).
 
-### `cms push`
+### `conf push`
 - When calling `remote.CreatePage` or `remote.UpdatePage`, read the `status` from the frontmatter (defaulting to `"current"` if missing).
 - Ensure that creating a new placeholder page (for attachment IDs) uses the frontmatter's target status instead of hardcoding `"current"`.
 

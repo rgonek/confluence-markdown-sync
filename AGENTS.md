@@ -1,7 +1,7 @@
 # AGENTS
 
 ## Purpose
-This repository builds `cms` (`confluence-sync`), a Go CLI that syncs Confluence pages with local Markdown files.
+This repository builds `conf` (`confluence-sync`), a Go CLI that syncs Confluence pages with local Markdown files.
 
 ## Source Of Truth
 - Primary plan: `agents/plans/confluence_sync_cli.md`
@@ -12,14 +12,14 @@ This repository builds `cms` (`confluence-sync`), a Go CLI that syncs Confluence
 This project supports two primary sync workflows for agents:
 
 ### 1. Human-in-the-Loop (Agent as Writer)
-The agent focus on Markdown content; the human runs `cms` commands.
-- **Agent Task**: Edit `.md` files, run `cms validate` to check work.
+The agent focus on Markdown content; the human runs `conf` commands.
+- **Agent Task**: Edit `.md` files, run `conf validate` to check work.
 - **Safety**: Do not touch `id`, `space`, or `version` in frontmatter.
 
 ### 2. Full Agentic Use (Autonomous Sync)
 The agent manages the full sync cycle.
 - **Workflow**: `pull` -> `edit` -> `validate` -> `diff` -> `push`.
-- **Tests**: Always run `make test` (including the E2E workflow test) before pushing significant changes to `cms` itself.
+- **Tests**: Always run `make test` (including the E2E workflow test) before pushing significant changes to `conf` itself.
 
 ## Core Invariants
 - `push` must always run `validate` before any remote write.

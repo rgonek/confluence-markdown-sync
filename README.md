@@ -2,12 +2,12 @@
 
 Write docs like code. Publish to Confluence with confidence. ✍️
 
-`cms` is a Go CLI that keeps Confluence pages and local Markdown in sync, so teams can use editor + Git + CI workflows without giving up Confluence as the publishing platform.
+`conf` is a Go CLI that keeps Confluence pages and local Markdown in sync, so teams can use editor + Git + CI workflows without giving up Confluence as the publishing platform.
 
-## Why teams use `cms` ✨
+## Why teams use `conf` ✨
 - 📝 Markdown-first authoring with Confluence as the destination.
 - 🛡️ Safe sync model with validation before remote writes.
-- 👀 Clear preview step via `cms diff` before push.
+- 👀 Clear preview step via `conf diff` before push.
 - 🤖 Works in local repos and automation pipelines.
 
 ## Install 🛠️
@@ -16,7 +16,7 @@ Write docs like code. Publish to Confluence with confidence. ✍️
 ```powershell
 git clone https://github.com/rgonek/confluence-markdown-sync.git
 cd confluence-markdown-sync
-go build -o cms .
+go build -o conf .
 ```
 
 ### Install with Go ⚡
@@ -29,30 +29,30 @@ go install github.com/rgonek/confluence-markdown-sync@latest
 Inside the folder/repo where you want synced docs:
 
 ```powershell
-cms init
+conf init
 ```
 
-`cms init` prepares Git metadata, `.gitignore`, and `.env` scaffolding, and creates an initial commit when it initializes a new Git repository.
+`conf init` prepares Git metadata, `.gitignore`, and `.env` scaffolding, and creates an initial commit when it initializes a new Git repository.
 
-`cms pull` mirrors Confluence hierarchy locally by placing folders and child pages in nested directories. Pages with children use `<Page>/<Page>.md` so they are distinct from pure folders.
+`conf pull` mirrors Confluence hierarchy locally by placing folders and child pages in nested directories. Pages with children use `<Page>/<Page>.md` so they are distinct from pure folders.
 
 ## Quick flow 🔄
 
 ```powershell
 # 1) Pull a Confluence space
-cms pull ENG
+conf pull ENG
 
 # Force a full-space refresh (ignore incremental change detection)
-cms pull ENG --force
+conf pull ENG --force
 
 # 2) Validate local markdown
-cms validate ENG
+conf validate ENG
 
 # 3) Preview local vs remote
-cms diff ENG
+conf diff ENG
 
 # 4) Push local changes
-cms push ENG --on-conflict=cancel
+conf push ENG --on-conflict=cancel
 ```
 
 ## At a glance 👀

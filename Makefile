@@ -1,11 +1,11 @@
-BINARY     := cms
+BINARY     := conf
 MAIN       := .
 GO         := go
 GOFLAGS    :=
 
 .PHONY: build test fmt lint clean
 
-## build: compile the cms binary
+## build: compile the conf binary
 build:
 	$(GO) build $(GOFLAGS) -o $(BINARY) $(MAIN)
 

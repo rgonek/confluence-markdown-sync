@@ -5,7 +5,7 @@ This document outlines the plan for building a CLI tool in Go that synchronizes 
 
 This design uses Git as a local history engine only (no Git remote required). The CLI owns Git operations (branches, worktrees, tags, snapshots), so users should not need to run Git commands directly.
 
-**Binary Name:** `cms`
+**Binary Name:** `conf`
 
 **Key Libraries:**
 - `github.com/rgonek/jira-adf-converter/converter`: Forward conversion (ADF JSON -> Markdown) via `converter.New(converter.Config)` and `ConvertWithContext(...)`, returning `converter.Result{Markdown, Warnings}`.
@@ -23,12 +23,12 @@ Authentication will be handled via environment variables or a local `.env` file:
 - `ATLASSIAN_API_TOKEN`: The API token generated from Atlassian account settings.
 
 Compatibility and precedence:
-- `cms` may accept legacy `CONFLUENCE_*` variables for backward compatibility.
+- `conf` may accept legacy `CONFLUENCE_*` variables for backward compatibility.
 - Resolution order: `CONFLUENCE_*` (if set) -> `ATLASSIAN_*` -> `.env` file -> error.
 
 ### 2.2 Data Mapping & Storage
 - **Directory Structure**:
-  - **Root (`XXX`)**: The directory where `cms init` is run. Contains `.git`.
+  - **Root (`XXX`)**: The directory where `conf init` is run. Contains `.git`.
   - **Space Directory (`XXX/<SpaceKey>`)**: All pages for a space reside here.
 - **File Format**: Markdown (`.md`) with Frontmatter.
 - **Title Source of Truth**: Frontmatter `title` field. Fallback to first H1 header if missing.
@@ -56,7 +56,7 @@ Compatibility and precedence:
 
 #### 2.3.0 Git Operating Model
 - Git is required locally, but no Git remote is required.
-- All Git operations are CLI-managed; users interact through `cms` commands only.
+- All Git operations are CLI-managed; users interact through `conf` commands only.
 - `init` behaves as follows:
     - If no git repo exists: `git init -b main`.
     - If git repo exists: Use current branch.
@@ -113,7 +113,7 @@ Compatibility and precedence:
     -   **Stash**: Run `git stash push` on target files to clean workspace (Stash-Merge-Pop strategy).
     -   Capture current workspace state for target scope (`staged`, `unstaged`, `untracked`, and deletions).
     -   Capture out-of-scope workspace state so it can be restored exactly after merge.
-    -   Run `cms validate [TARGET]` against that captured state.
+    -   Run `conf validate [TARGET]` against that captured state.
     -   Abort `push` if validation fails (and restore stash).
 2.  **Identify Files**: Determine changed files from the workspace snapshot.
     -   If no in-scope files changed, exit success as a no-op (`push` creates no snapshot commit, no sync branch/worktree, and no tag).
@@ -186,8 +186,8 @@ Compatibility and precedence:
     - Hooks return mapping decisions only; sync orchestration owns network/filesystem side effects (downloads/uploads/file writes/deletes).
 
 #### 2.3.5 Git Integration Enhancements
-- **Smart .gitignore**: `init` adds `.DS_Store`, `*.tmp`, `.confluence-state.json`, `.env`, `cms.exe`, etc.
-- **Diff Command**: `cms diff [TARGET]` fetches remote, converts to MD, and runs `git diff --no-index` (`.md` suffix => file mode, otherwise space mode).
+- **Smart .gitignore**: `init` adds `.DS_Store`, `*.tmp`, `.confluence-state.json`, `.env`, `conf.exe`, etc.
+- **Diff Command**: `conf diff [TARGET]` fetches remote, converts to MD, and runs `git diff --no-index` (`.md` suffix => file mode, otherwise space mode).
 - **Rich Commits**:
     - Subject: `Sync "[Page Title]" to Confluence (v[Version])`
     - Body: `Page ID: [ID]\nURL: [URL]`
@@ -256,7 +256,7 @@ Checklist:
 - [ ] Wire shared automation flags (`--yes`, `--non-interactive`) and push conflict flag parsing (`--on-conflict`).
 - [ ] Add top-level `Makefile` (`build`, `test`, `lint`/`fmt`).
 Done criteria:
-- [ ] `cms --help` shows all planned commands and flags.
+- [ ] `conf --help` shows all planned commands and flags.
 - [ ] `init` can bootstrap a fresh repo on `main` and initialize config files.
 - [ ] Unit tests cover target parsing and config precedence.
 

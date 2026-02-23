@@ -13,8 +13,8 @@ import (
 func setupGitRepo(t *testing.T, repo string) {
 	t.Helper()
 	runGitForTest(t, repo, "init", "-b", "main")
-	runGitForTest(t, repo, "config", "user.email", "cms-test@example.com")
-	runGitForTest(t, repo, "config", "user.name", "cms-test")
+	runGitForTest(t, repo, "config", "user.email", "conf-test@example.com")
+	runGitForTest(t, repo, "config", "user.name", "conf-test")
 }
 
 func runGitForTest(t *testing.T, dir string, args ...string) string {

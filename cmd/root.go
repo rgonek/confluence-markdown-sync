@@ -1,4 +1,4 @@
-// Package cmd contains all cobra command definitions for the cms CLI.
+// Package cmd contains all cobra command definitions for the conf CLI.
 package cmd
 
 import (
@@ -14,9 +14,9 @@ var (
 )
 
 var rootCmd = &cobra.Command{
-	Use:   "cms",
-	Short: "cms — Confluence Markdown Sync CLI",
-	Long: `cms syncs Confluence pages with a local Markdown workspace.
+	Use:   "conf",
+	Short: "conf — Confluence Markdown Sync CLI",
+	Long: `conf syncs Confluence pages with a local Markdown workspace.
 
 It converts Confluence ADF content to Markdown for local editing,
 and converts Markdown back to ADF for publishing updates.`,

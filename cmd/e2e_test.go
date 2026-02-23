@@ -40,7 +40,7 @@ func TestWorkflow_ConflictResolution(t *testing.T) {
 		t.Fatalf("NewClient: %v", err)
 	}
 
-	// 0. Build cms
+	// 0. Build conf
 	wd, _ := os.Getwd()
 	// Find project root by looking for go.mod
 	rootDir := wd
@@ -54,10 +54,10 @@ func TestWorkflow_ConflictResolution(t *testing.T) {
 		}
 		rootDir = parent
 	}
-	cmsBin := filepath.Join(rootDir, "cms.exe")
+	confBin := filepath.Join(rootDir, "conf.exe")
 
 	// 1. Setup temp workspace
-	tmpDir, err := os.MkdirTemp("", "cms-e2e-*")
+	tmpDir, err := os.MkdirTemp("", "conf-e2e-*")
 	if err != nil {
 		t.Fatalf("MkdirTemp: %v", err)
 	}
@@ -75,7 +75,7 @@ func TestWorkflow_ConflictResolution(t *testing.T) {
 	}
 
 	runCMS := func(args ...string) string {
-		return runCmd(cmsBin, args...)
+		return runCmd(confBin, args...)
 	}
 
 	// init
@@ -122,7 +122,7 @@ func TestWorkflow_ConflictResolution(t *testing.T) {
 	time.Sleep(5 * time.Second)
 
 	// 4. Try push --on-conflict=cancel -> should fail
-	cmd := exec.Command(cmsBin, "push", "Technical documentation (TD)/Simple.md", "--on-conflict=cancel", "--yes", "--non-interactive")
+	cmd := exec.Command(confBin, "push", "Technical documentation (TD)/Simple.md", "--on-conflict=cancel", "--yes", "--non-interactive")
 	cmd.Dir = tmpDir
 	out, err := cmd.CombinedOutput()
 	if err == nil {
@@ -134,7 +134,7 @@ func TestWorkflow_ConflictResolution(t *testing.T) {
 	fmt.Printf("Push failed as expected (Conflict detected)\n")
 
 	// 5. Run pull to resolve conflict (this will fail with merge conflict in file)
-	cmd = exec.Command(cmsBin, "pull", "Technical documentation (TD)/Simple.md", "--yes", "--non-interactive")
+	cmd = exec.Command(confBin, "pull", "Technical documentation (TD)/Simple.md", "--yes", "--non-interactive")
 	cmd.Dir = tmpDir
 	out, _ = cmd.CombinedOutput()
 	if !strings.Contains(string(out), "conflict") {
@@ -192,20 +192,20 @@ func TestWorkflow_PushAutoPullMerge(t *testing.T) {
 		}
 		rootDir = parent
 	}
-	cmsBin := filepath.Join(rootDir, "cms.exe")
+	confBin := filepath.Join(rootDir, "conf.exe")
 
-	tmpDir, err := os.MkdirTemp("", "cms-e2e-autopull-*")
+	tmpDir, err := os.MkdirTemp("", "conf-e2e-autopull-*")
 	if err != nil {
 		t.Fatalf("MkdirTemp: %v", err)
 	}
 	defer os.RemoveAll(tmpDir)
 
 	runCMS := func(args ...string) string {
-		cmd := exec.Command(cmsBin, args...)
+		cmd := exec.Command(confBin, args...)
 		cmd.Dir = tmpDir
 		out, err := cmd.CombinedOutput()
 		if err != nil {
-			t.Fatalf("Command cms %v failed: %v\n%s", args, err, string(out))
+			t.Fatalf("Command conf %v failed: %v\n%s", args, err, string(out))
 		}
 		return string(out)
 	}
@@ -233,7 +233,7 @@ func TestWorkflow_PushAutoPullMerge(t *testing.T) {
 
 	// 4. Run push with --on-conflict=pull-merge
 	// This should trigger the automatic pull
-	pcmd := exec.Command(cmsBin, "push", "Technical documentation (TD)/Simple.md", "--on-conflict=pull-merge", "--yes", "--non-interactive")
+	pcmd := exec.Command(confBin, "push", "Technical documentation (TD)/Simple.md", "--on-conflict=pull-merge", "--yes", "--non-interactive")
 	pcmd.Dir = tmpDir
 	out, err := pcmd.CombinedOutput()
 	// It might fail with a content conflict error (which is what happens in this test setup)
@@ -276,20 +276,20 @@ func TestWorkflow_AgenticFullCycle(t *testing.T) {
 		}
 		rootDir = parent
 	}
-	cmsBin := filepath.Join(rootDir, "cms.exe")
+	confBin := filepath.Join(rootDir, "conf.exe")
 
-	tmpDir, err := os.MkdirTemp("", "cms-e2e-agentic-*")
+	tmpDir, err := os.MkdirTemp("", "conf-e2e-agentic-*")
 	if err != nil {
 		t.Fatalf("MkdirTemp: %v", err)
 	}
 	defer os.RemoveAll(tmpDir)
 
 	runCMS := func(args ...string) string {
-		cmd := exec.Command(cmsBin, args...)
+		cmd := exec.Command(confBin, args...)
 		cmd.Dir = tmpDir
 		out, err := cmd.CombinedOutput()
 		if err != nil {
-			t.Fatalf("Command cms %v failed: %v\n%s", args, err, string(out))
+			t.Fatalf("Command conf %v failed: %v\n%s", args, err, string(out))
 		}
 		return string(out)
 	}
@@ -341,20 +341,20 @@ func TestWorkflow_PushDryRunNonMutating(t *testing.T) {
 		}
 		rootDir = parent
 	}
-	cmsBin := filepath.Join(rootDir, "cms.exe")
+	confBin := filepath.Join(rootDir, "conf.exe")
 
-	tmpDir, err := os.MkdirTemp("", "cms-e2e-dryrun-*")
+	tmpDir, err := os.MkdirTemp("", "conf-e2e-dryrun-*")
 	if err != nil {
 		t.Fatalf("MkdirTemp: %v", err)
 	}
 	defer os.RemoveAll(tmpDir)
 
 	runCMS := func(args ...string) string {
-		cmd := exec.Command(cmsBin, args...)
+		cmd := exec.Command(confBin, args...)
 		cmd.Dir = tmpDir
 		out, err := cmd.CombinedOutput()
 		if err != nil {
-			t.Fatalf("Command cms %v failed: %v\n%s", args, err, string(out))
+			t.Fatalf("Command conf %v failed: %v\n%s", args, err, string(out))
 		}
 		return string(out)
 	}
@@ -424,20 +424,20 @@ func TestWorkflow_PullDiscardLocal(t *testing.T) {
 		}
 		rootDir = parent
 	}
-	cmsBin := filepath.Join(rootDir, "cms.exe")
+	confBin := filepath.Join(rootDir, "conf.exe")
 
-	tmpDir, err := os.MkdirTemp("", "cms-e2e-discard-*")
+	tmpDir, err := os.MkdirTemp("", "conf-e2e-discard-*")
 	if err != nil {
 		t.Fatalf("MkdirTemp: %v", err)
 	}
 	defer os.RemoveAll(tmpDir)
 
 	runCMS := func(args ...string) string {
-		cmd := exec.Command(cmsBin, args...)
+		cmd := exec.Command(confBin, args...)
 		cmd.Dir = tmpDir
 		out, err := cmd.CombinedOutput()
 		if err != nil {
-			t.Fatalf("Command cms %v failed: %v\n%s", args, err, string(out))
+			t.Fatalf("Command conf %v failed: %v\n%s", args, err, string(out))
 		}
 		return string(out)
 	}

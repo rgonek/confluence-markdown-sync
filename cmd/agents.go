@@ -51,7 +51,7 @@ func runAgentsInit(cmd *cobra.Command, target config.Target, templateType string
 	spaceKey := initialCtx.spaceKey
 
 	if _, err := os.Stat(spaceDir); os.IsNotExist(err) {
-		return fmt.Errorf("space directory %s does not exist; run 'cms pull %s' first", spaceDir, spaceKey)
+		return fmt.Errorf("space directory %s does not exist; run 'conf pull %s' first", spaceDir, spaceKey)
 	}
 
 	path := filepath.Join(spaceDir, "AGENTS.md")
@@ -102,10 +102,10 @@ You are a technical writer and software engineer. Your goal is to maintain high-
 - **Assets**: Store all images in the `+"`assets/`"+` directory.
 
 ## Sync Workflow
-1. `+"`cms pull`"+` to get the latest state.
+1. `+"`conf pull`"+` to get the latest state.
 2. Edit Markdown files.
-3. `+"`cms validate`"+` to check links and ADF compatibility.
-4. `+"`cms push`"+` to publish.
+3. `+"`conf validate`"+` to check links and ADF compatibility.
+4. `+"`conf push`"+` to publish.
 `, spaceKey, spaceKey)
 }
 
@@ -124,10 +124,10 @@ You are an internal communications specialist. Your goal is to ensure documentat
 - **Links**: Ensure all links to external portals (Workday, etc.) are up to date.
 
 ## Sync Workflow
-1. `+"`cms pull`"+`
+1. `+"`conf pull`"+`
 2. Update policy Markdown.
-3. `+"`cms validate`"+`
-4. `+"`cms push`"+`
+3. `+"`conf validate`"+`
+4. `+"`conf push`"+`
 `, spaceKey, spaceKey)
 }
 
@@ -146,10 +146,10 @@ You are a project manager. Your goal is to keep stakeholders informed and ensure
 - **Status Updates**: Use traffic light emojis (🟢, 🟡, 🔴) to indicate project health.
 
 ## Sync Workflow
-1. `+"`cms pull`"+`
+1. `+"`conf pull`"+`
 2. Update status/notes.
-3. `+"`cms validate`"+`
-4. `+"`cms push`"+`
+3. `+"`conf validate`"+`
+4. `+"`conf push`"+`
 `, spaceKey, spaceKey)
 }
 
@@ -168,10 +168,10 @@ You are a product manager. Your goal is to define clear, actionable requirements
 - **Prioritization**: Clearly mark "Must Have", "Should Have", and "Could Have" features.
 
 ## Sync Workflow
-1. `+"`cms pull`"+`
+1. `+"`conf pull`"+`
 2. Refine requirements.
-3. `+"`cms validate`"+`
-4. `+"`cms push`"+`
+3. `+"`conf validate`"+`
+4. `+"`conf push`"+`
 `, spaceKey, spaceKey)
 }
 
@@ -190,17 +190,17 @@ You are a support specialist and technical communicator. Your goal is to solve u
 - **Callouts**: Use bolding or blockquotes for critical warnings or tips.
 
 ## Sync Workflow
-1. `+"`cms pull`"+`
+1. `+"`conf pull`"+`
 2. Update help articles.
-3. `+"`cms validate`"+`
-4. `+"`cms push`"+`
+3. `+"`conf validate`"+`
+4. `+"`conf push`"+`
 `, spaceKey, spaceKey)
 }
 
 func getGeneralAgentsTemplate(spaceKey string) string {
 	return fmt.Sprintf(`# AGENTS (%s)
 
-This space directory is managed by `+"`cms`"+`.
+This space directory is managed by `+"`conf`"+`.
 
 ## Rules
 - Do not edit `+"`id`"+` or `+"`space`"+` in frontmatter.
@@ -208,8 +208,8 @@ This space directory is managed by `+"`cms`"+`.
 - Run `+"`validate`"+` before publishing.
 
 ## Commands
-- `+"`cms pull`"+`
-- `+"`cms push`"+`
-- `+"`cms validate`"+`
+- `+"`conf pull`"+`
+- `+"`conf push`"+`
+- `+"`conf validate`"+`
 `, spaceKey)
 }

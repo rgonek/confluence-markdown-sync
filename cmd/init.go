@@ -24,13 +24,13 @@ Thumbs.db
 *.bak
 
 # Binary
-cms
-cms.exe
+conf
+conf.exe
 `
 
 const agentsMDTemplate = `# AGENTS
 
-This repository uses ` + "`cms`" + ` (confluence-sync) to manage Confluence documentation as Markdown.
+This repository uses ` + "`conf`" + ` (confluence-sync) to manage Confluence documentation as Markdown.
 
 ## Intended Usages
 
@@ -38,8 +38,8 @@ This repository uses ` + "`cms`" + ` (confluence-sync) to manage Confluence docu
 In this mode, the agent edits Markdown files, and a human performs the sync commands.
 - **Workflow**:
   - Edit ` + "`.md`" + ` files in the space directories.
-  - Run ` + "`cms validate [TARGET]`" + ` to ensure your changes are compatible with Confluence.
-  - Inform the human when changes are ready for ` + "`cms push`" + `.
+  - Run ` + "`conf validate [TARGET]`" + ` to ensure your changes are compatible with Confluence.
+  - Inform the human when changes are ready for ` + "`conf push`" + `.
 - **Rules**:
   - NEVER manually edit ` + "`id`" + ` or ` + "`space`" + ` in frontmatter.
   - Add images to the correct ` + "`assets/`" + ` subfolder.
@@ -47,11 +47,11 @@ In this mode, the agent edits Markdown files, and a human performs the sync comm
 ### 2. Full Agentic Use (Autonomous Sync)
 In this mode, the agent is responsible for the entire lifecycle.
 - **Workflow**:
-  - ` + "`cms pull [SPACE]`" + ` — Always pull first to avoid conflicts.
+  - ` + "`conf pull [SPACE]`" + ` — Always pull first to avoid conflicts.
   - Edit/Create Markdown files.
-  - ` + "`cms validate [SPACE]`" + ` — Verify all links and assets.
-  - ` + "`cms diff [SPACE]`" + ` — Preview changes.
-  - ` + "`cms push [SPACE] --on-conflict=pull-merge`" + ` — Publish changes.
+  - ` + "`conf validate [SPACE]`" + ` — Verify all links and assets.
+  - ` + "`conf diff [SPACE]`" + ` — Preview changes.
+  - ` + "`conf push [SPACE] --on-conflict=pull-merge`" + ` — Publish changes.
 - **Automation**: Use ` + "`--yes`" + ` and ` + "`--non-interactive`" + ` in CI/CD or automated scripts.
 
 ## Core Invariants
@@ -59,7 +59,7 @@ In this mode, the agent is responsible for the entire lifecycle.
 - **Validation**: ` + "`push`" + ` will fail if ` + "`validate`" + ` fails.
 - **Frontmatter**:
   - ` + "`id`" + `, ` + "`space`" + `: Immutable.
-  - ` + "`version`" + `: Managed by ` + "`cms`" + `.
+  - ` + "`version`" + `: Managed by ` + "`conf`" + `.
 - **State**: ` + "`.confluence-state.json`" + ` tracks sync state. Do not delete.
 
 ## Space-Specific Rules
@@ -68,23 +68,23 @@ Each space directory (e.g., ` + "`Technical documentation (TD)/`" + `) may conta
 
 const readmeMDTemplate = `# Confluence Markdown Sync
 
-This workspace is managed by [cms](https://github.com/rgonek/confluence-markdown-sync).
+This workspace is managed by [conf](https://github.com/rgonek/confluence-markdown-sync).
 
 
 ## Quick Start
 
 ` + "```sh" + `
 # Pull latest from Confluence
-cms pull <SPACE_KEY>
+conf pull <SPACE_KEY>
 
 # Edit .md files, then push
-cms push <SPACE_KEY>
+conf push <SPACE_KEY>
 
 # Validate before pushing
-cms validate <SPACE_KEY>
+conf validate <SPACE_KEY>
 
 # See what changed remotely
-cms diff <SPACE_KEY>
+conf diff <SPACE_KEY>
 ` + "```" + `
 
 ## Authentication
@@ -106,8 +106,8 @@ ATLASSIAN_API_TOKEN=<your-api-token>
 func newInitCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "init",
-		Short: "Initialize a cms workspace",
-		Long: `Init sets up the current directory as a cms workspace.
+		Short: "Initialize a conf workspace",
+		Long: `Init sets up the current directory as a conf workspace.
 
 It will:
   - Verify git is installed (and initialize a repo on branch 'main' if needed)
@@ -182,7 +182,7 @@ func runInit(cmd *cobra.Command, _ []string) error {
 		}
 	}
 
-	fmt.Fprintln(out, "\ncms workspace initialized successfully.")
+	fmt.Fprintln(out, "\nconf workspace initialized successfully.")
 	return nil
 }
 
@@ -192,7 +192,7 @@ func isInsideGitRepo() bool {
 	return err == nil
 }
 
-// ensureGitignore appends required cms entries to .gitignore, creating it if necessary.
+// ensureGitignore appends required conf entries to .gitignore, creating it if necessary.
 func ensureGitignore() error {
 	const path = ".gitignore"
 
@@ -325,7 +325,7 @@ func createInitCommit() (bool, error) {
 		return false, nil
 	}
 
-	commitOut, err := exec.Command("git", "commit", "-m", "chore: initialize cms workspace").CombinedOutput()
+	commitOut, err := exec.Command("git", "commit", "-m", "chore: initialize conf workspace").CombinedOutput()
 	if err != nil {
 		msg := strings.TrimSpace(string(commitOut))
 		if strings.Contains(msg, "Please tell me who you are") || strings.Contains(msg, "unable to auto-detect email address") {

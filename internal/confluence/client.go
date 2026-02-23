@@ -19,7 +19,7 @@ import (
 
 const (
 	defaultHTTPTimeout = 30 * time.Second
-	defaultUserAgent   = "cms/dev"
+	defaultUserAgent   = "conf/dev"
 	maxErrorBodyBytes  = 1 << 20 // 1 MiB
 )
 

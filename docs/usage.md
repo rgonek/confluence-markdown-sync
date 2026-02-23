@@ -1,10 +1,10 @@
 # Usage Guide
 
-This guide covers day-to-day usage of `cms`.
+This guide covers day-to-day usage of `conf`.
 
-## What `cms` does
+## What `conf` does
 
-`cms` synchronizes Confluence pages with local Markdown files.
+`conf` synchronizes Confluence pages with local Markdown files.
 
 - `pull` converts Confluence ADF to Markdown.
 - `push` converts Markdown back to ADF and updates Confluence.
@@ -19,7 +19,7 @@ This guide covers day-to-day usage of `cms`.
 
 ## Authentication
 
-`cms` resolves configuration in this order:
+`conf` resolves configuration in this order:
 
 1. `CONFLUENCE_*`
 2. `ATLASSIAN_*`
@@ -44,7 +44,7 @@ ATLASSIAN_API_TOKEN=your-token
 Create or enter your repository folder and run:
 
 ```powershell
-cms init
+conf init
 ```
 
 `init` can:
@@ -59,25 +59,25 @@ cms init
 
 Many commands accept `[TARGET]`.
 
-- If `[TARGET]` ends with `.md`, `cms` treats it as a file target.
-- Otherwise, `cms` treats it as a space target (`SPACE_KEY`).
+- If `[TARGET]` ends with `.md`, `conf` treats it as a file target.
+- Otherwise, `conf` treats it as a space target (`SPACE_KEY`).
 
 Examples:
 
 ```powershell
-cms pull ENG
-cms validate ENG
-cms push ENG --on-conflict=cancel
-cms diff ENG
+conf pull ENG
+conf validate ENG
+conf push ENG --on-conflict=cancel
+conf diff ENG
 
-cms pull .\ENG\Architecture.md
-cms validate .\ENG\Architecture.md
-cms diff .\ENG\Architecture.md
+conf pull .\ENG\Architecture.md
+conf validate .\ENG\Architecture.md
+conf diff .\ENG\Architecture.md
 ```
 
 ## Command Reference
 
-### `cms pull [TARGET]`
+### `conf pull [TARGET]`
 
 Pulls remote Confluence content into local Markdown.
 
@@ -95,7 +95,7 @@ Highlights:
 - remote deletions are hard-deleted locally,
 - sync tag created only on non-no-op runs.
 
-### `cms validate [TARGET]`
+### `conf validate [TARGET]`
 
 Runs strict validation of sync invariants.
 
@@ -108,7 +108,7 @@ Checks include:
 
 Use this before major pushes or in CI.
 
-### `cms diff [TARGET]`
+### `conf diff [TARGET]`
 
 Shows a local-vs-remote diff.
 
@@ -119,7 +119,7 @@ Highlights:
 - compares using `git diff --no-index`,
 - supports both file and space targets.
 
-### `cms push [TARGET]`
+### `conf push [TARGET]`
 
 Publishes local Markdown changes to Confluence.
 
@@ -150,22 +150,22 @@ Local state file:
 
 ```powershell
 # 1) Pull latest
-cms pull ENG
+conf pull ENG
 
 # 2) Edit markdown locally
 
 # 3) Validate
-cms validate ENG
+conf validate ENG
 
 # 4) Review with diff
-cms diff ENG
+conf diff ENG
 
 # 5) Push
-cms push ENG --on-conflict=cancel
+conf push ENG --on-conflict=cancel
 ```
 
 ## Troubleshooting
 
-- Validation errors on unresolved links/assets: run `cms validate [TARGET]` and fix broken paths or metadata.
+- Validation errors on unresolved links/assets: run `conf validate [TARGET]` and fix broken paths or metadata.
 - Conflict errors on push: choose `--on-conflict=pull-merge|force|cancel` based on your policy.
 - No-op output: there were no in-scope changes to sync.
