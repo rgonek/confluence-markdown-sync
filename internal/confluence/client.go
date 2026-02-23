@@ -18,7 +18,7 @@ import (
 )
 
 const (
-	defaultHTTPTimeout = 30 * time.Second
+	defaultHTTPTimeout = 300 * time.Second
 	defaultUserAgent   = "conf/dev"
 	maxErrorBodyBytes  = 1 << 20 // 1 MiB
 )

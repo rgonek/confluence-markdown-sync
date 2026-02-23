@@ -21,9 +21,10 @@ func newConsoleProgress(out io.Writer, description string) *consoleProgress {
 			progressbar.OptionSetDescription(description),
 			progressbar.OptionSetWriter(out),
 			progressbar.OptionShowCount(),
-			progressbar.OptionOnCompletion(func() {
-				fmt.Fprint(out, "\n")
-			}),
+			progressbar.OptionSetPredictTime(false),
+			progressbar.OptionSetRenderBlankState(true),
+			progressbar.OptionClearOnFinish(),
+			progressbar.OptionFullWidth(),
 		),
 	}
 }
@@ -45,7 +46,7 @@ func (p *consoleProgress) SetTotal(total int) {
 	if total <= 0 {
 		return
 	}
-	p.bar.Set(0) // Reset current progress when total changes
+	p.bar.Set(0)
 	p.bar.ChangeMax(total)
 }
 
@@ -55,5 +56,5 @@ func (p *consoleProgress) Add(n int) {
 
 func (p *consoleProgress) Done() {
 	_ = p.bar.Finish()
-	fmt.Fprint(p.out, "\n")
+	fmt.Fprint(p.out, "\r") // Return to start of line
 }
