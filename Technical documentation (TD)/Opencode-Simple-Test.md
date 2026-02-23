@@ -2,7 +2,7 @@
 title: Opencode Simple Test
 id: "4161537"
 space: TD
-version: 3
+version: 4
 ---
 # Opencode Simple Test
 
@@ -15,4 +15,13 @@ graph TD
     B -- Yes --> C[Great!]
     B -- No --> D[Fix it]
 ```
+
+## PlantUML Diagram
+```plantuml
+@startuml
+Alice -> Bob: Hello
+Bob -> Alice: Hi!
+@enduml
+```
+
 
