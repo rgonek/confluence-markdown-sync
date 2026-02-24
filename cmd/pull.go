@@ -1,9 +1,11 @@
 package cmd
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -71,7 +73,7 @@ If omitted, the space is inferred from the current directory name.`,
 }
 
 func runPull(cmd *cobra.Command, target config.Target) (runErr error) {
-	ctx := context.Background()
+	ctx := getCommandContext(cmd)
 	out := cmd.OutOrStdout()
 
 	// 1. Initial resolution of key/dir
@@ -178,7 +180,7 @@ func runPull(cmd *cobra.Command, target config.Target) (runErr error) {
 					_ = os.Remove(filepath.Join(pullCtx.spaceDir, fs.StateFileName))
 				}
 
-				restoreErr := applyAndDropStash(repoRoot, stashRef)
+				restoreErr := applyAndDropStash(repoRoot, stashRef, scopePath, cmd.InOrStdin(), out)
 				if restoreErr != nil {
 					runErr = errors.Join(runErr, restoreErr)
 				}
@@ -203,6 +205,7 @@ func runPull(cmd *cobra.Command, target config.Target) (runErr error) {
 		TargetPageID:      pullCtx.targetPageID,
 		ForceFull:         flagPullForce,
 		SkipMissingAssets: flagSkipMissingAssets,
+		PrefetchedPages:   impact.prefetchedPages,
 		OnDownloadError: func(attachmentID string, pageID string, err error) bool {
 			return askToContinueOnDownloadError(cmd.InOrStdin(), out, attachmentID, pageID, err)
 		},
@@ -316,18 +319,26 @@ func resolveInitialPullContext(target config.Target) (initialPullContext, error)
 		// If we are in a tracked directory, use it.
 		if _, err := os.Stat(filepath.Join(cwd, fs.StateFileName)); err == nil {
 			state, err := fs.LoadState(cwd)
-			if err == nil && len(state.PagePathIndex) > 0 {
-				// We need space key. Usually we can find it in one of the files frontmatter
-				// or we assume current dir name might be the key if not found.
-				// But best is to check if we can find ANY .md file and its space key.
-				for relPath := range state.PagePathIndex {
-					doc, err := fs.ReadMarkdownDocument(filepath.Join(cwd, filepath.FromSlash(relPath)))
-					if err == nil && doc.Frontmatter.Space != "" {
-						return initialPullContext{
-							spaceKey: doc.Frontmatter.Space,
-							spaceDir: cwd,
-							fixedDir: true,
-						}, nil
+			if err == nil {
+				// Check state.SpaceKey first before falling back to file iteration
+				if strings.TrimSpace(state.SpaceKey) != "" {
+					return initialPullContext{
+						spaceKey: state.SpaceKey,
+						spaceDir: cwd,
+						fixedDir: true,
+					}, nil
+				}
+				// Fall back to finding space key from file frontmatter
+				if len(state.PagePathIndex) > 0 {
+					for relPath := range state.PagePathIndex {
+						doc, err := fs.ReadMarkdownDocument(filepath.Join(cwd, filepath.FromSlash(relPath)))
+						if err == nil && doc.Frontmatter.Space != "" {
+							return initialPullContext{
+								spaceKey: doc.Frontmatter.Space,
+								spaceDir: cwd,
+								fixedDir: true,
+							}, nil
+						}
 					}
 				}
 			}
@@ -354,6 +365,15 @@ func resolveInitialPullContext(target config.Target) (initialPullContext, error)
 		if _, err := os.Stat(filepath.Join(spaceDir, fs.StateFileName)); err == nil {
 			state, err := fs.LoadState(spaceDir)
 			if err == nil {
+				// Check state.SpaceKey first before falling back to file iteration
+				if strings.TrimSpace(state.SpaceKey) != "" {
+					return initialPullContext{
+						spaceKey: state.SpaceKey,
+						spaceDir: spaceDir,
+						fixedDir: true,
+					}, nil
+				}
+				// Fall back to finding space key from file frontmatter
 				for relPath := range state.PagePathIndex {
 					doc, err := fs.ReadMarkdownDocument(filepath.Join(spaceDir, filepath.FromSlash(relPath)))
 					if err == nil && doc.Frontmatter.Space != "" {
@@ -533,15 +553,15 @@ func stashScopeIfDirty(repoRoot, scopePath, spaceKey string, ts time.Time) (stri
 	return ref, nil
 }
 
-func applyAndDropStash(repoRoot, stashRef string) error {
+func applyAndDropStash(repoRoot, stashRef, scopePath string, in io.Reader, out io.Writer) error {
 	if stashRef == "" {
 		return nil
 	}
-	out, err := runGit(repoRoot, "stash", "apply", "--index", stashRef)
+	outStr, err := runGit(repoRoot, "stash", "apply", "--index", stashRef)
 	if err != nil {
 		// Check if it's a conflict
-		if strings.Contains(err.Error(), "conflict") || strings.Contains(out, "CONFLICT") {
-			return handlePullConflict(repoRoot, stashRef)
+		if strings.Contains(err.Error(), "conflict") || strings.Contains(outStr, "CONFLICT") {
+			return handlePullConflict(repoRoot, stashRef, scopePath, in, out)
 		}
 		return fmt.Errorf("local changes could not be automatically merged with remote updates. Please resolve the conflicts in the affected files and then run 'git stash drop %s' to clean up. Error: %w", stashRef, err)
 	}
@@ -551,47 +571,50 @@ func applyAndDropStash(repoRoot, stashRef string) error {
 	return nil
 }
 
-func handlePullConflict(repoRoot, stashRef string) error {
+func handlePullConflict(repoRoot, stashRef, scopePath string, in io.Reader, out io.Writer) error {
 	if flagNonInteractive || flagYes {
 		return fmt.Errorf("local changes could not be automatically merged with remote updates (CONFLICT). Please resolve the conflicts in the affected files and then run 'git stash drop %s' to clean up.", stashRef)
 	}
 
-	fmt.Println("\n⚠️  CONFLICT DETECTED")
-	fmt.Println("Local changes could not be automatically merged with remote updates.")
-	fmt.Println("How would you like to proceed?")
-	fmt.Println(" [1] Keep both (add conflict markers to files) - RECOMMENDED")
-	fmt.Println(" [2] Use Remote version (discard my local changes for these files)")
-	fmt.Println(" [3] Use Local version (overwrite remote updates with my local changes)")
-	fmt.Print("\nChoice [1/2/3]: ")
+	fmt.Fprintln(out, "\n⚠️  CONFLICT DETECTED")
+	fmt.Fprintln(out, "Local changes could not be automatically merged with remote updates.")
+	fmt.Fprintln(out, "How would you like to proceed?")
+	fmt.Fprintln(out, " [1] Keep both (add conflict markers to files) - RECOMMENDED")
+	fmt.Fprintln(out, " [2] Use Remote version (discard my local changes for these files)")
+	fmt.Fprintln(out, " [3] Use Local version (overwrite remote updates with my local changes)")
+	fmt.Fprint(out, "\nChoice [1/2/3]: ")
 
-	var choice string
-	fmt.Scanln(&choice)
+	scanner := bufio.NewScanner(in)
+	if !scanner.Scan() {
+		return fmt.Errorf("failed to read user input")
+	}
+	choice := scanner.Text()
 
 	switch strings.TrimSpace(choice) {
 	case "2":
-		fmt.Println("Discarding local changes...")
+		fmt.Fprintln(out, "Discarding local changes...")
 		// We already pulled remote, so we just need to reset the conflicted files or drop the stash.
 		// Actually, stash apply already modified the files with markers.
 		// We should checkout from HEAD.
-		_, err := runGit(repoRoot, "checkout", "HEAD", "--", ".")
+		_, err := runGit(repoRoot, "checkout", "HEAD", "--", scopePath)
 		if err != nil {
 			return fmt.Errorf("failed to discard local changes: %w", err)
 		}
 		_, _ = runGit(repoRoot, "stash", "drop", stashRef)
-		fmt.Println("Local changes discarded. Remote version kept.")
+		fmt.Fprintln(out, "Local changes discarded. Remote version kept.")
 		return nil
 	case "3":
-		fmt.Println("Keeping local version...")
+		fmt.Fprintln(out, "Keeping local version...")
 		// Checkout from stash
-		_, err := runGit(repoRoot, "checkout", stashRef, "--", ".")
+		_, err := runGit(repoRoot, "checkout", stashRef, "--", scopePath)
 		if err != nil {
 			return fmt.Errorf("failed to keep local version: %w", err)
 		}
 		_, _ = runGit(repoRoot, "stash", "drop", stashRef)
-		fmt.Println("Remote updates overwritten by local version.")
+		fmt.Fprintln(out, "Remote updates overwritten by local version.")
 		return nil
 	default:
-		fmt.Printf("Conflict markers kept. Please resolve them manually and then run 'git stash drop %s'\n", stashRef)
+		fmt.Fprintf(out, "Conflict markers kept. Please resolve them manually and then run 'git stash drop %s'\n", stashRef)
 		return nil // Return nil because the user "handled" it by choosing to keep markers
 	}
 }
@@ -613,6 +636,7 @@ func gitHasScopedStagedChanges(repoRoot, scopePath string) (bool, error) {
 type pullImpact struct {
 	changedMarkdown int
 	deletedMarkdown int
+	prefetchedPages []confluence.Page
 }
 
 func estimatePullImpactWithSpace(
@@ -714,6 +738,7 @@ func estimatePullImpactWithSpace(
 	return pullImpact{
 		changedMarkdown: len(changedIDs),
 		deletedMarkdown: len(deletedIDs),
+		prefetchedPages: pages,
 	}, nil
 }
 

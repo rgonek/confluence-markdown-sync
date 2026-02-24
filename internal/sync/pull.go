@@ -62,6 +62,7 @@ type PullOptions struct {
 	SkipMissingAssets bool
 	OnDownloadError   func(attachmentID string, pageID string, err error) bool // return true to skip and continue
 	Progress          Progress
+	PrefetchedPages   []confluence.Page // pages fetched during estimate phase to avoid duplicate listing
 }
 
 // PullDiagnostic captures non-fatal conversion diagnostics.
@@ -151,14 +152,19 @@ func Pull(ctx context.Context, remote PullRemote, opts PullOptions) (PullResult,
 		opts.Progress.SetDescription("Scanning space for pages")
 	}
 
-	pages, err := listAllPages(ctx, remote, confluence.PageListOptions{
-		SpaceID:  space.ID,
-		SpaceKey: opts.SpaceKey,
-		Status:   "current",
-		Limit:    pullPageBatchSize,
-	}, opts.Progress)
-	if err != nil {
-		return PullResult{}, fmt.Errorf("list pages: %w", err)
+	var pages []confluence.Page
+	if len(opts.PrefetchedPages) > 0 {
+		pages = opts.PrefetchedPages
+	} else {
+		pages, err = listAllPages(ctx, remote, confluence.PageListOptions{
+			SpaceID:  space.ID,
+			SpaceKey: opts.SpaceKey,
+			Status:   "current",
+			Limit:    pullPageBatchSize,
+		}, opts.Progress)
+		if err != nil {
+			return PullResult{}, fmt.Errorf("list pages: %w", err)
+		}
 	}
 
 	pages, err = recoverMissingPages(ctx, remote, space.ID, state.PagePathIndex, pages)
@@ -596,6 +602,9 @@ func Pull(ctx context.Context, remote PullRemote, opts PullOptions) (PullResult,
 
 	state.PagePathIndex = invertPathByID(pagePathByIDRel)
 	state.AttachmentIndex = attachmentIndex
+
+	folderPathIndex := buildFolderPathIndex(folderByID, pageByID)
+	state.FolderPathIndex = folderPathIndex
 
 	highWatermark := pullStartedAt.UTC()
 	if maxRemoteModified.After(highWatermark) {
@@ -1305,4 +1314,82 @@ func contextSleep(ctx context.Context, d time.Duration) error {
 	case <-ctx.Done():
 		return ctx.Err()
 	}
+}
+
+func buildFolderPathIndex(folderByID map[string]confluence.Folder, pageByID map[string]confluence.Page) map[string]string {
+	if len(folderByID) == 0 {
+		return nil
+	}
+
+	folderPathIndex := make(map[string]string)
+
+	for folderID := range folderByID {
+		localPath := buildFolderLocalPath(folderID, folderByID, pageByID)
+		if localPath != "" {
+			folderPathIndex[localPath] = folderID
+		}
+	}
+
+	if len(folderPathIndex) == 0 {
+		return nil
+	}
+	return folderPathIndex
+}
+
+func buildFolderLocalPath(folderID string, folderByID map[string]confluence.Folder, pageByID map[string]confluence.Page) string {
+	segments := []string{}
+
+	currentID := folderID
+	currentType := "folder"
+
+	for currentID != "" {
+		var title string
+		var nextID string
+		var nextType string
+
+		if currentType == "folder" {
+			folder, ok := folderByID[currentID]
+			if !ok {
+				break
+			}
+			title = strings.TrimSpace(folder.Title)
+			if title == "" {
+				title = "folder-" + folder.ID
+			}
+			nextID = strings.TrimSpace(folder.ParentID)
+			nextType = strings.ToLower(strings.TrimSpace(folder.ParentType))
+			if nextType == "" {
+				nextType = "folder"
+			}
+		} else {
+			page, ok := pageByID[currentID]
+			if !ok {
+				break
+			}
+			title = strings.TrimSpace(page.Title)
+			if title == "" {
+				title = "page-" + page.ID
+			}
+			nextID = strings.TrimSpace(page.ParentPageID)
+			nextType = strings.ToLower(strings.TrimSpace(page.ParentType))
+			if nextType == "" {
+				nextType = "page"
+			}
+		}
+
+		segments = append(segments, fs.SanitizePathSegment(title))
+
+		currentID = nextID
+		currentType = nextType
+	}
+
+	if len(segments) == 0 {
+		return ""
+	}
+
+	for i, j := 0, len(segments)-1; i < j; i, j = i+1, j-1 {
+		segments[i], segments[j] = segments[j], segments[i]
+	}
+
+	return filepath.Join(segments...)
 }

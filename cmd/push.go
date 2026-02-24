@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -81,7 +80,7 @@ func validateOnConflict(v string) error {
 }
 
 func runPush(cmd *cobra.Command, target config.Target, onConflict string, dryRun bool) (runErr error) {
-	ctx := context.Background()
+	ctx := getCommandContext(cmd)
 	out := cmd.OutOrStdout()
 	preflight := flagPushPreflight
 
@@ -285,8 +284,11 @@ func runPush(cmd *cobra.Command, target config.Target, onConflict string, dryRun
 	if err != nil {
 		return fmt.Errorf("stash failed: %w", err)
 	}
-	// Note: We intentionally DO NOT defer drop/restore here immediately,
-	// because restoration logic depends on success/failure of the flow.
+	defer func() {
+		if stashRef != "" {
+			_ = gitClient.StashPop(stashRef)
+		}
+	}()
 
 	snapshotRef := stashRef
 	if snapshotRef == "" {
@@ -295,9 +297,6 @@ func runPush(cmd *cobra.Command, target config.Target, onConflict string, dryRun
 
 	snapshotCommit, err := gitClient.ResolveRef(snapshotRef)
 	if err != nil {
-		if stashRef != "" {
-			_ = gitClient.StashPop(stashRef)
-		}
 		return fmt.Errorf("resolve snapshot ref: %w", err)
 	}
 
@@ -307,9 +306,6 @@ func runPush(cmd *cobra.Command, target config.Target, onConflict string, dryRun
 
 	snapshotName := fmt.Sprintf("refs/confluence-sync/snapshots/%s/%s", refKey, tsStr)
 	if err := gitClient.UpdateRef(snapshotName, snapshotCommit, "create snapshot"); err != nil {
-		if stashRef != "" {
-			_ = gitClient.StashPop(stashRef)
-		}
 		return fmt.Errorf("create snapshot ref: %w", err)
 	}
 
@@ -325,9 +321,6 @@ func runPush(cmd *cobra.Command, target config.Target, onConflict string, dryRun
 	// 2. Create Sync Branch
 	syncBranchName := fmt.Sprintf("sync/%s/%s", refKey, tsStr)
 	if err := gitClient.CreateBranch(syncBranchName, snapshotCommit); err != nil {
-		if stashRef != "" {
-			_ = gitClient.StashPop(stashRef)
-		}
 		return fmt.Errorf("create sync branch: %w", err)
 	}
 
@@ -343,9 +336,6 @@ func runPush(cmd *cobra.Command, target config.Target, onConflict string, dryRun
 	// 3. Create Worktree
 	worktreeDir := filepath.Join(gitClient.RootDir, ".confluence-worktrees", fmt.Sprintf("%s-%s", refKey, tsStr))
 	if err := gitClient.AddWorktree(worktreeDir, syncBranchName); err != nil {
-		if stashRef != "" {
-			_ = gitClient.StashPop(stashRef)
-		}
 		return fmt.Errorf("create worktree: %w", err)
 	}
 	defer func() {
@@ -355,9 +345,6 @@ func runPush(cmd *cobra.Command, target config.Target, onConflict string, dryRun
 	// Resolve HEAD from main repo to reset SyncBranch
 	currentHead, err := gitClient.ResolveRef("HEAD")
 	if err != nil {
-		if stashRef != "" {
-			_ = gitClient.StashPop(stashRef)
-		}
 		return fmt.Errorf("resolve HEAD: %w", err)
 	}
 
@@ -367,15 +354,9 @@ func runPush(cmd *cobra.Command, target config.Target, onConflict string, dryRun
 
 	// Reset SyncBranch to HEAD (mixed) to ensure commits are granular and based on HEAD
 	if _, err := wtClient.Run("reset", "--mixed", currentHead); err != nil {
-		if stashRef != "" {
-			_ = gitClient.StashPop(stashRef)
-		}
 		return fmt.Errorf("reset worktree: %w", err)
 	}
 	if err := restoreUntrackedFromStashParent(wtClient, stashRef, spaceScopePath); err != nil {
-		if stashRef != "" {
-			_ = gitClient.StashPop(stashRef)
-		}
 		return err
 	}
 
@@ -391,53 +372,34 @@ func runPush(cmd *cobra.Command, target config.Target, onConflict string, dryRun
 	}
 
 	if err := runValidateTarget(out, wtTarget); err != nil {
-
-		if stashRef != "" {
-			_ = gitClient.StashPop(stashRef)
-		}
 		return fmt.Errorf("pre-push validate failed: %w", err)
 	}
 
 	// 5. Diff (Snapshot vs Baseline)
 	baselineRef, err := gitPushBaselineRef(gitClient, spaceKey)
 	if err != nil {
-		if stashRef != "" {
-			_ = gitClient.StashPop(stashRef)
-		}
 		return err
 	}
 
 	wtClient = &git.Client{RootDir: worktreeDir}
 	syncChanges, err := collectSyncPushChanges(wtClient, baselineRef, spaceScopePath, gitClient.RootDir, spaceDir)
 	if err != nil {
-		if stashRef != "" {
-			_ = gitClient.StashPop(stashRef)
-		}
 		return err
 	}
 
 	if target.IsFile() {
 		syncChanges, err = collectSyncPushChanges(wtClient, baselineRef, changeScopePath, gitClient.RootDir, spaceDir)
 		if err != nil {
-			if stashRef != "" {
-				_ = gitClient.StashPop(stashRef)
-			}
 			return err
 		}
 	}
 
 	if len(syncChanges) == 0 {
 		fmt.Fprintln(out, "push completed with no in-scope markdown changes (no-op)")
-		if stashRef != "" {
-			_ = gitClient.StashPop(stashRef)
-		}
 		return nil
 	}
 
 	if err := requireSafetyConfirmation(cmd.InOrStdin(), out, "push", len(syncChanges), pushHasDeleteChange(syncChanges)); err != nil {
-		if stashRef != "" {
-			_ = gitClient.StashPop(stashRef)
-		}
 		return err
 	}
 
@@ -445,25 +407,16 @@ func runPush(cmd *cobra.Command, target config.Target, onConflict string, dryRun
 	envPath = findEnvPath(wtSpaceDir) // Load config from worktree
 	cfg, err = config.Load(envPath)
 	if err != nil {
-		if stashRef != "" {
-			_ = gitClient.StashPop(stashRef)
-		}
 		return fmt.Errorf("failed to load config: %w", err)
 	}
 
 	remote, err := newPushRemote(cfg)
 	if err != nil {
-		if stashRef != "" {
-			_ = gitClient.StashPop(stashRef)
-		}
 		return fmt.Errorf("create confluence client: %w", err)
 	}
 
 	state, err := fs.LoadState(wtSpaceDir)
 	if err != nil {
-		if stashRef != "" {
-			_ = gitClient.StashPop(stashRef)
-		}
 		return fmt.Errorf("load state: %w", err)
 	}
 
@@ -482,14 +435,12 @@ func runPush(cmd *cobra.Command, target config.Target, onConflict string, dryRun
 		Progress:       progress,
 	})
 	if err != nil {
-		if stashRef != "" {
-			// Restore workspace before reporting error or attempting pull-merge
-			_ = gitClient.StashPop(stashRef)
-		}
 		var conflictErr *syncflow.PushConflictError
 		if errors.As(err, &conflictErr) {
 			if onConflict == OnConflictPullMerge {
 				fmt.Fprintf(out, "conflict detected for %s; policy is %s, attempting automatic pull-merge...\n", conflictErr.Path, onConflict)
+				// Clear stashRef before pull-merge since pull will restore workspace
+				stashRef = ""
 				// Use the original target for pull
 				if pullErr := runPull(cmd, target); pullErr != nil {
 					return fmt.Errorf("automatic pull-merge failed: %w", pullErr)
@@ -504,9 +455,6 @@ func runPush(cmd *cobra.Command, target config.Target, onConflict string, dryRun
 
 	if len(result.Commits) == 0 {
 		fmt.Fprintln(out, "push completed with no pushable markdown changes (no-op)")
-		if stashRef != "" {
-			_ = gitClient.StashPop(stashRef)
-		}
 		return nil
 	}
 
@@ -519,9 +467,6 @@ func runPush(cmd *cobra.Command, target config.Target, onConflict string, dryRun
 
 	// 7. Commit in Worktree
 	if err := fs.SaveState(wtSpaceDir, result.State); err != nil {
-		if stashRef != "" {
-			_ = gitClient.StashPop(stashRef)
-		}
 		return fmt.Errorf("save state: %w", err)
 	}
 
@@ -541,9 +486,6 @@ func runPush(cmd *cobra.Command, target config.Target, onConflict string, dryRun
 		}
 
 		if err := wtClient.AddForce(repoPaths...); err != nil {
-			if stashRef != "" {
-				_ = gitClient.StashPop(stashRef)
-			}
 			return fmt.Errorf("git add failed: %w", err)
 		}
 
@@ -558,9 +500,6 @@ func runPush(cmd *cobra.Command, target config.Target, onConflict string, dryRun
 			commitPlan.URL,
 		)
 		if err := wtClient.Commit(subject, body); err != nil {
-			if stashRef != "" {
-				_ = gitClient.StashPop(stashRef)
-			}
 			return fmt.Errorf("git commit failed: %w", err)
 		}
 
@@ -569,17 +508,11 @@ func runPush(cmd *cobra.Command, target config.Target, onConflict string, dryRun
 
 	// 8. Rebase Sync Branch onto HEAD (main repo)
 	if err := gitClient.RemoveWorktree(worktreeDir); err != nil {
-		if stashRef != "" {
-			_ = gitClient.StashPop(stashRef)
-		}
 		return fmt.Errorf("remove worktree: %w", err)
 	}
 
 	// 9. Merge
 	if err := gitClient.Merge(syncBranchName, ""); err != nil {
-		if stashRef != "" {
-			_ = gitClient.StashPop(stashRef)
-		}
 		return fmt.Errorf("merge sync branch: %w", err)
 	}
 
@@ -590,12 +523,12 @@ func runPush(cmd *cobra.Command, target config.Target, onConflict string, dryRun
 		fmt.Fprintf(out, "warning: failed to create tag: %v\n", err)
 	}
 
-	// 11. Restore Stash
-	if stashRef != "" {
-		if err := gitClient.StashPop(stashRef); err != nil {
-			fmt.Fprintf(out, "warning: stash restore had conflicts: %v\n", err)
-		}
+	// 11. Restore Stash (manual pop to show warning on success)
+	if err := gitClient.StashPop(stashRef); err != nil {
+		fmt.Fprintf(out, "warning: stash restore had conflicts: %v\n", err)
 	}
+	// Clear stashRef so the defer doesn't try to pop again
+	stashRef = ""
 
 	fmt.Fprintf(out, "push completed: %d page change(s) synced\n", len(result.Commits))
 	return nil
