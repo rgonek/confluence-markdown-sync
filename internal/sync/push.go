@@ -93,10 +93,18 @@ type PushCommitPlan struct {
 	StagedPaths []string
 }
 
+// PushDiagnostic captures non-fatal push diagnostics.
+type PushDiagnostic struct {
+	Path    string
+	Code    string
+	Message string
+}
+
 // PushResult captures outputs of push orchestration.
 type PushResult struct {
-	State   fs.SpaceState
-	Commits []PushCommitPlan
+	State       fs.SpaceState
+	Commits     []PushCommitPlan
+	Diagnostics []PushDiagnostic
 }
 
 // PushConflictError indicates a remote-ahead page conflict.
@@ -174,8 +182,10 @@ func Push(ctx context.Context, remote PushRemote, opts PushOptions) (PushResult,
 	}
 
 	attachmentIDByPath := cloneStringMap(state.AttachmentIndex)
+	folderIDByPath := cloneStringMap(state.FolderPathIndex)
 	changes := normalizePushChanges(opts.Changes)
 	commits := make([]PushCommitPlan, 0, len(changes))
+	diagnostics := make([]PushDiagnostic, 0)
 
 	if opts.Progress != nil {
 		opts.Progress.SetDescription("Pushing changes")
@@ -210,8 +220,10 @@ func Push(ctx context.Context, remote PushRemote, opts PushOptions) (PushResult,
 				policy,
 				pageIDByPath,
 				attachmentIDByPath,
+				folderIDByPath,
 				remotePageByID,
 				relPath,
+				&diagnostics,
 			)
 			if err != nil {
 				return PushResult{}, err
@@ -236,10 +248,12 @@ func Push(ctx context.Context, remote PushRemote, opts PushOptions) (PushResult,
 	}
 
 	state.AttachmentIndex = attachmentIDByPath
+	state.FolderPathIndex = folderIDByPath
 
 	return PushResult{
-		State:   state,
-		Commits: commits,
+		State:       state,
+		Commits:     commits,
+		Diagnostics: diagnostics,
 	}, nil
 }
 
@@ -309,8 +323,10 @@ func pushUpsertPage(
 	policy PushConflictPolicy,
 	pageIDByPath PageIndex,
 	attachmentIDByPath map[string]string,
+	folderIDByPath map[string]string,
 	remotePageByID map[string]confluence.Page,
 	relPath string,
+	diagnostics *[]PushDiagnostic,
 ) (PushCommitPlan, error) {
 	absPath := filepath.Join(opts.SpaceDir, filepath.FromSlash(relPath))
 	doc, err := fs.ReadMarkdownDocument(absPath)
@@ -319,6 +335,14 @@ func pushUpsertPage(
 	}
 
 	pageID := strings.TrimSpace(doc.Frontmatter.ID)
+	if pageID == "" {
+		if existingID := strings.TrimSpace(state.PagePathIndex[relPath]); existingID != "" {
+			return PushCommitPlan{}, fmt.Errorf(
+				"page %q has no id in frontmatter but was previously synced (id=%s). Restore the id field or use a different filename",
+				relPath, existingID,
+			)
+		}
+	}
 	if !strings.EqualFold(strings.TrimSpace(doc.Frontmatter.Space), strings.TrimSpace(opts.SpaceKey)) {
 		return PushCommitPlan{}, fmt.Errorf("%s belongs to space %q, expected %q", relPath, doc.Frontmatter.Space, opts.SpaceKey)
 	}
@@ -365,9 +389,17 @@ func pushUpsertPage(
 			}
 		}
 	} else {
-		// Create a placeholder page to get an ID for attachments
+		dirPath := normalizeRelPath(filepath.ToSlash(filepath.Dir(filepath.FromSlash(relPath))))
+		if dirPath != "" && dirPath != "." {
+			var err error
+			folderIDByPath, err = ensureFolderHierarchy(ctx, remote, space.ID, dirPath, folderIDByPath, diagnostics)
+			if err != nil {
+				return PushCommitPlan{}, fmt.Errorf("ensure folder hierarchy for %s: %w", relPath, err)
+			}
+		}
+
 		title := resolveLocalTitle(doc, relPath)
-		resolvedParentID := resolveParentIDFromHierarchy(relPath, "", fallbackParentID, pageIDByPath)
+		resolvedParentID := resolveParentIDFromHierarchy(relPath, "", fallbackParentID, pageIDByPath, folderIDByPath)
 
 		targetState := doc.Frontmatter.State
 		if strings.TrimSpace(targetState) == "" {
@@ -379,12 +411,18 @@ func pushUpsertPage(
 			ParentPageID: resolvedParentID,
 			Title:        title,
 			Status:       targetState,
-			BodyADF:      []byte(`{"version":1,"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"Initial sync..."}]}]}`),
+			BodyADF:      []byte(`{"version":1,"type":"doc","content":[]}`),
 		})
 		if err != nil {
 			return PushCommitPlan{}, fmt.Errorf("create placeholder page for %s: %w", relPath, err)
 		}
 		pageID = created.ID
+
+		if resolvedParentID != "" && dirPath != "" && dirPath != "." {
+			if err := remote.MovePage(ctx, pageID, resolvedParentID); err != nil {
+				return PushCommitPlan{}, fmt.Errorf("move page %s to folder %s: %w", pageID, resolvedParentID, err)
+			}
+		}
 
 		if err := syncPageMetadata(ctx, remote, pageID, doc); err != nil {
 			return PushCommitPlan{}, fmt.Errorf("sync metadata for %s: %w", relPath, err)
@@ -481,7 +519,7 @@ func pushUpsertPage(
 	}
 
 	title := resolveLocalTitle(doc, relPath)
-	resolvedParentID := resolveParentIDFromHierarchy(relPath, pageID, fallbackParentID, pageIDByPath)
+	resolvedParentID := resolveParentIDFromHierarchy(relPath, pageID, fallbackParentID, pageIDByPath, folderIDByPath)
 	nextVersion := localVersion + 1
 	if policy == PushConflictPolicyForce && remotePage.Version >= nextVersion {
 		nextVersion = remotePage.Version + 1
@@ -538,7 +576,7 @@ func pushUpsertPage(
 	}, nil
 }
 
-func resolveParentIDFromHierarchy(relPath, pageID, fallbackParentID string, pageIDByPath PageIndex) string {
+func resolveParentIDFromHierarchy(relPath, pageID, fallbackParentID string, pageIDByPath PageIndex, folderIDByPath map[string]string) string {
 	resolvedFallback := strings.TrimSpace(fallbackParentID)
 	resolvedPageID := strings.TrimSpace(pageID)
 
@@ -551,6 +589,10 @@ func resolveParentIDFromHierarchy(relPath, pageID, fallbackParentID string, page
 	for currentDir != "" && currentDir != "." {
 		dirBase := filepath.Base(filepath.FromSlash(currentDir))
 		if strings.TrimSpace(dirBase) != "" && dirBase != "." {
+			if folderID, ok := folderIDByPath[currentDir]; ok && folderID != "" {
+				return folderID
+			}
+
 			candidatePath := normalizeRelPath(filepath.ToSlash(filepath.Join(currentDir, dirBase+".md")))
 			candidateID := strings.TrimSpace(pageIDByPath[candidatePath])
 			if candidateID != "" && candidateID != resolvedPageID {
@@ -566,6 +608,60 @@ func resolveParentIDFromHierarchy(relPath, pageID, fallbackParentID string, page
 	}
 
 	return resolvedFallback
+}
+
+func ensureFolderHierarchy(
+	ctx context.Context,
+	remote PushRemote,
+	spaceID, dirPath string,
+	folderIDByPath map[string]string,
+	diagnostics *[]PushDiagnostic,
+) (map[string]string, error) {
+	if dirPath == "" || dirPath == "." {
+		return folderIDByPath, nil
+	}
+
+	segments := strings.Split(filepath.ToSlash(dirPath), "/")
+	var currentPath string
+
+	for _, seg := range segments {
+		if currentPath == "" {
+			currentPath = seg
+		} else {
+			currentPath = filepath.ToSlash(filepath.Join(currentPath, seg))
+		}
+
+		if existingID, ok := folderIDByPath[currentPath]; ok && existingID != "" {
+			continue
+		}
+
+		var parentFolderID string
+		parentPath := filepath.ToSlash(filepath.Dir(currentPath))
+		if parentPath != "." && parentPath != "" {
+			parentFolderID = folderIDByPath[parentPath]
+		}
+
+		created, err := remote.CreateFolder(ctx, confluence.FolderCreateInput{
+			SpaceID:  spaceID,
+			ParentID: parentFolderID,
+			Title:    seg,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("create folder %q: %w", currentPath, err)
+		}
+
+		folderIDByPath[currentPath] = created.ID
+
+		if diagnostics != nil {
+			*diagnostics = append(*diagnostics, PushDiagnostic{
+				Path:    currentPath,
+				Code:    "FOLDER_CREATED",
+				Message: fmt.Sprintf("Auto-created Confluence folder %q (id=%s)", currentPath, created.ID),
+			})
+		}
+	}
+
+	return folderIDByPath, nil
 }
 
 func normalizePushState(state fs.SpaceState) fs.SpaceState {

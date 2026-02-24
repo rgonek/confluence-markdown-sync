@@ -271,6 +271,12 @@ func runPush(cmd *cobra.Command, target config.Target, onConflict string, dryRun
 		}
 
 		fmt.Fprintf(out, "\n[DRY-RUN] push completed: %d page change(s) would be synced\n", len(result.Commits))
+		if len(result.Diagnostics) > 0 {
+			fmt.Fprintln(out, "\nDiagnostics:")
+			for _, diag := range result.Diagnostics {
+				fmt.Fprintf(out, "  [%s] %s: %s\n", diag.Code, diag.Path, diag.Message)
+			}
+		}
 		return nil
 	}
 
@@ -502,6 +508,13 @@ func runPush(cmd *cobra.Command, target config.Target, onConflict string, dryRun
 			_ = gitClient.StashPop(stashRef)
 		}
 		return nil
+	}
+
+	if len(result.Diagnostics) > 0 {
+		fmt.Fprintln(out, "\nDiagnostics:")
+		for _, diag := range result.Diagnostics {
+			fmt.Fprintf(out, "  [%s] %s: %s\n", diag.Code, diag.Path, diag.Message)
+		}
 	}
 
 	// 7. Commit in Worktree
