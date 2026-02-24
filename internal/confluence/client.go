@@ -879,8 +879,11 @@ type pageDTO struct {
 	Title      string `json:"title"`
 	ParentID   string `json:"parentId"`
 	ParentType string `json:"parentType"`
+	AuthorID   string `json:"authorId"`
+	CreatedAt  string `json:"createdAt"`
 	Version    struct {
 		Number    int    `json:"number"`
+		AuthorID  string `json:"authorId"`
 		CreatedAt string `json:"createdAt"`
 		When      string `json:"when"`
 	} `json:"version"`
@@ -901,16 +904,19 @@ type pageDTO struct {
 
 func (p pageDTO) toModel(baseURL string) Page {
 	return Page{
-		ID:           p.ID,
-		SpaceID:      p.SpaceID,
-		Title:        p.Title,
-		Status:       p.Status,
-		ParentPageID: p.ParentID,
-		ParentType:   p.ParentType,
-		Version:      p.Version.Number,
-		LastModified: parseRemoteTime(p.Version.CreatedAt, p.Version.When, p.History.LastUpdated.When),
-		WebURL:       resolveWebURL(baseURL, p.Links.WebUI),
-		BodyADF:      normalizeADFValue(p.Body.AtlasDocFormat.Value),
+		ID:                   p.ID,
+		SpaceID:              p.SpaceID,
+		Title:                p.Title,
+		Status:               p.Status,
+		ParentPageID:         p.ParentID,
+		ParentType:           p.ParentType,
+		Version:              p.Version.Number,
+		AuthorID:             p.AuthorID,
+		CreatedAt:            parseRemoteTime(p.CreatedAt),
+		LastModifiedAuthorID: p.Version.AuthorID,
+		LastModified:         parseRemoteTime(p.Version.CreatedAt, p.Version.When, p.History.LastUpdated.When),
+		WebURL:               resolveWebURL(baseURL, p.Links.WebUI),
+		BodyADF:              normalizeADFValue(p.Body.AtlasDocFormat.Value),
 	}
 }
 
@@ -1127,4 +1133,43 @@ func isUUID(s string) bool {
 		}
 	}
 	return true
+}
+
+type userDTO struct {
+	AccountID   string `json:"accountId"`
+	DisplayName string `json:"displayName"`
+	Email       string `json:"email"`
+}
+
+// GetUser retrieves a Confluence user by account ID.
+func (c *Client) GetUser(ctx context.Context, accountID string) (User, error) {
+	id := strings.TrimSpace(accountID)
+	if id == "" {
+		return User{}, errors.New("account ID is required")
+	}
+
+	req, err := c.newRequest(
+		ctx,
+		http.MethodGet,
+		"/wiki/rest/api/user",
+		url.Values{"accountId": []string{id}},
+		nil,
+	)
+	if err != nil {
+		return User{}, err
+	}
+
+	var payload userDTO
+	if err := c.do(req, &payload); err != nil {
+		if isHTTPStatus(err, http.StatusNotFound) {
+			return User{}, ErrNotFound
+		}
+		return User{}, err
+	}
+
+	return User{
+		AccountID:   payload.AccountID,
+		DisplayName: payload.DisplayName,
+		Email:       payload.Email,
+	}, nil
 }

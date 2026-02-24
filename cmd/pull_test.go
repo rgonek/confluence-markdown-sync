@@ -130,6 +130,10 @@ func TestRunPull_NoopDoesNotCreateTag(t *testing.T) {
 			ID:                     "1",
 			Space:                  "ENG",
 			Version:                2,
+			Author:                 "User author-1",
+			CreatedAt:              "2026-02-01T10:00:00Z",
+			LastModifiedBy:         "User author-1",
+			LastModifiedAt:         "2026-02-01T11:00:00Z",
 			ConfluenceLastModified: "2026-02-01T11:00:00Z",
 		},
 		Body: "same body\n",
@@ -146,21 +150,27 @@ func TestRunPull_NoopDoesNotCreateTag(t *testing.T) {
 		space: confluence.Space{ID: "space-1", Key: "ENG", Name: "Engineering"},
 		pages: []confluence.Page{
 			{
-				ID:           "1",
-				SpaceID:      "space-1",
-				Title:        "Root",
-				Version:      2,
-				LastModified: time.Date(2026, time.February, 1, 11, 0, 0, 0, time.UTC),
+				ID:                   "1",
+				SpaceID:              "space-1",
+				Title:                "Root",
+				Version:              2,
+				AuthorID:             "author-1",
+				CreatedAt:            time.Date(2026, time.February, 1, 10, 0, 0, 0, time.UTC),
+				LastModifiedAuthorID: "author-1",
+				LastModified:         time.Date(2026, time.February, 1, 11, 0, 0, 0, time.UTC),
 			},
 		},
 		pagesByID: map[string]confluence.Page{
 			"1": {
-				ID:           "1",
-				SpaceID:      "space-1",
-				Title:        "Root",
-				Version:      2,
-				LastModified: time.Date(2026, time.February, 1, 11, 0, 0, 0, time.UTC),
-				BodyADF:      rawJSON(t, simpleADF("same body")),
+				ID:                   "1",
+				SpaceID:              "space-1",
+				Title:                "Root",
+				Version:              2,
+				AuthorID:             "author-1",
+				CreatedAt:            time.Date(2026, time.February, 1, 10, 0, 0, 0, time.UTC),
+				LastModifiedAuthorID: "author-1",
+				LastModified:         time.Date(2026, time.February, 1, 11, 0, 0, 0, time.UTC),
+				BodyADF:              rawJSON(t, simpleADF("same body")),
 			},
 		},
 		attachments: map[string][]byte{},
@@ -516,6 +526,10 @@ type cmdFakePullRemote struct {
 	changes     []confluence.Change
 	pagesByID   map[string]confluence.Page
 	attachments map[string][]byte
+}
+
+func (f *cmdFakePullRemote) GetUser(_ context.Context, accountID string) (confluence.User, error) {
+	return confluence.User{AccountID: accountID, DisplayName: "User " + accountID}, nil
 }
 
 func (f *cmdFakePullRemote) GetSpace(_ context.Context, _ string) (confluence.Space, error) {

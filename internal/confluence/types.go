@@ -7,8 +7,16 @@ import (
 	"time"
 )
 
+// User is a Confluence user.
+type User struct {
+	AccountID   string
+	DisplayName string
+	Email       string
+}
+
 // Service describes the Confluence operations required by sync orchestration.
 type Service interface {
+	GetUser(ctx context.Context, accountID string) (User, error)
 	ListSpaces(ctx context.Context, opts SpaceListOptions) (SpaceListResult, error)
 	GetSpace(ctx context.Context, spaceKey string) (Space, error)
 	ListPages(ctx context.Context, opts PageListOptions) (PageListResult, error)
@@ -48,18 +56,21 @@ type SpaceListResult struct {
 
 // Page is a Confluence page.
 type Page struct {
-	ID            string
-	SpaceID       string
-	Title         string
-	Status        string // maps to draft vs current
-	ContentStatus string // maps to UI lozenge (e.g. "Ready to review")
-	Labels        []string
-	ParentPageID  string
-	ParentType    string
-	Version       int
-	LastModified  time.Time
-	WebURL        string
-	BodyADF       json.RawMessage
+	ID                   string
+	SpaceID              string
+	Title                string
+	Status               string // maps to draft vs current
+	ContentStatus        string // maps to UI lozenge (e.g. "Ready to review")
+	Labels               []string
+	ParentPageID         string
+	ParentType           string
+	Version              int
+	AuthorID             string
+	CreatedAt            time.Time
+	LastModifiedAuthorID string
+	LastModified         time.Time
+	WebURL               string
+	BodyADF              json.RawMessage
 }
 
 // PageListOptions configures page listing.
