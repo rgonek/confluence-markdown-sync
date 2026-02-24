@@ -18,9 +18,10 @@ import (
 )
 
 const (
-	defaultHTTPTimeout = 300 * time.Second
-	defaultUserAgent   = "conf/dev"
-	maxErrorBodyBytes  = 1 << 20 // 1 MiB
+	defaultHTTPTimeout         = 60 * time.Second
+	defaultDownloadTimeout     = 30 * time.Minute
+	defaultUserAgent           = "conf/dev"
+	maxErrorBodyBytes          = 1 << 20 // 1 MiB
 )
 
 var (
@@ -45,6 +46,7 @@ type Client struct {
 	apiToken       string
 	httpClient     *http.Client
 	downloadClient *http.Client
+	limiter        *rateLimiter
 	userAgent      string
 	verbose        bool
 }
@@ -91,13 +93,29 @@ func NewClient(cfg ClientConfig) (*Client, error) {
 		return nil, fmt.Errorf("invalid confluence base URL: %w", err)
 	}
 
+	var transport http.RoundTripper
 	httpClient := cfg.HTTPClient
 	if httpClient == nil {
-		httpClient = &http.Client{Timeout: defaultHTTPTimeout}
+		// Clone DefaultTransport so both clients share the same connection pool
+		// and TLS settings, but we can tune timeouts independently.
+		t := http.DefaultTransport.(*http.Transport).Clone()
+		transport = t
+		httpClient = &http.Client{
+			Timeout:   defaultHTTPTimeout,
+			Transport: transport,
+		}
+	} else {
+		transport = httpClient.Transport
 	}
+
 	userAgent := strings.TrimSpace(cfg.UserAgent)
 	if userAgent == "" {
 		userAgent = defaultUserAgent
+	}
+
+	downloadClient := &http.Client{
+		Timeout:   defaultDownloadTimeout,
+		Transport: transport,
 	}
 
 	return &Client{
@@ -105,7 +123,8 @@ func NewClient(cfg ClientConfig) (*Client, error) {
 		email:          email,
 		apiToken:       token,
 		httpClient:     httpClient,
-		downloadClient: &http.Client{Timeout: 0}, // No global timeout for downloads
+		downloadClient: downloadClient,
+		limiter:        newRateLimiter(defaultRateLimit),
 		userAgent:      userAgent,
 		verbose:        cfg.Verbose,
 	}, nil
@@ -310,14 +329,7 @@ func (c *Client) DownloadAttachment(ctx context.Context, attachmentID string, pa
 		return fmt.Errorf("attachment %s download URL is empty", id)
 	}
 
-	downloadCtx := ctx
-	if deadline, ok := ctx.Deadline(); !ok || time.Until(deadline) < 30*time.Minute {
-		var cancel context.CancelFunc
-		downloadCtx, cancel = context.WithTimeout(ctx, 30*time.Minute)
-		defer cancel()
-	}
-
-	downloadReq, err := http.NewRequestWithContext(downloadCtx, http.MethodGet, resolvedDownloadURL, nil)
+	downloadReq, err := http.NewRequestWithContext(ctx, http.MethodGet, resolvedDownloadURL, nil)
 	if err != nil {
 		return err
 	}
@@ -628,6 +640,76 @@ func (c *Client) DeletePage(ctx context.Context, pageID string, hardDelete bool)
 	return nil
 }
 
+// CreateFolder creates a Confluence folder under a space or parent folder.
+func (c *Client) CreateFolder(ctx context.Context, input FolderCreateInput) (Folder, error) {
+	if strings.TrimSpace(input.SpaceID) == "" {
+		return Folder{}, errors.New("space ID is required")
+	}
+	if strings.TrimSpace(input.Title) == "" {
+		return Folder{}, errors.New("folder title is required")
+	}
+
+	parentType := input.ParentType
+	if parentType == "" {
+		if input.ParentID != "" {
+			parentType = "folder"
+		} else {
+			parentType = "space"
+		}
+	}
+
+	body := map[string]any{
+		"spaceId":    strings.TrimSpace(input.SpaceID),
+		"title":      strings.TrimSpace(input.Title),
+		"parentType": parentType,
+	}
+	if input.ParentID != "" {
+		body["parentId"] = strings.TrimSpace(input.ParentID)
+	}
+
+	req, err := c.newRequest(ctx, http.MethodPost, "/wiki/api/v2/folders", nil, body)
+	if err != nil {
+		return Folder{}, err
+	}
+
+	var payload folderDTO
+	if err := c.do(req, &payload); err != nil {
+		return Folder{}, err
+	}
+	return payload.toModel(), nil
+}
+
+// MovePage moves a page to be a child of the target folder.
+// Uses the v1 content move API: PUT /wiki/rest/api/content/{id}/move/append/{targetId}
+func (c *Client) MovePage(ctx context.Context, pageID string, targetID string) error {
+	id := strings.TrimSpace(pageID)
+	if id == "" {
+		return errors.New("page ID is required")
+	}
+	target := strings.TrimSpace(targetID)
+	if target == "" {
+		return errors.New("target ID is required")
+	}
+
+	req, err := c.newRequest(
+		ctx,
+		http.MethodPut,
+		"/wiki/rest/api/content/"+url.PathEscape(id)+"/move/append/"+url.PathEscape(target),
+		nil,
+		nil,
+	)
+	if err != nil {
+		return err
+	}
+	if err := c.do(req, nil); err != nil {
+		if isHTTPStatus(err, http.StatusNotFound) {
+			return ErrNotFound
+		}
+		return err
+	}
+	return nil
+}
+
 func (c *Client) newRequest(
 	ctx context.Context,
 	method string,
@@ -677,33 +759,58 @@ func (c *Client) do(req *http.Request, out any) error {
 	if c.verbose {
 		fmt.Printf("%s %s\n", req.Method, req.URL.String())
 	}
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
+
+	if err := c.limiter.wait(req.Context()); err != nil {
 		return err
 	}
-	defer resp.Body.Close()
 
-	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-		bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrorBodyBytes))
-		return &APIError{
-			StatusCode: resp.StatusCode,
-			Method:     req.Method,
-			URL:        req.URL.String(),
-			Message:    decodeAPIErrorMessage(bodyBytes),
-			Body:       string(bodyBytes),
+	for attempt := 0; ; attempt++ {
+		resp, err := c.httpClient.Do(req)
+		if err != nil {
+			return err
 		}
-	}
 
-	if out == nil {
+		if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+			bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrorBodyBytes))
+			resp.Body.Close()
+
+			if isRetryableStatus(resp.StatusCode) && attempt < maxRetryAttempts {
+				delay := retryDelay(attempt+1, resp)
+				if sleepErr := contextSleep(req.Context(), delay); sleepErr != nil {
+					return sleepErr
+				}
+				if req.GetBody != nil {
+					newBody, gbErr := req.GetBody()
+					if gbErr != nil {
+						return fmt.Errorf("reset request body for retry: %w", gbErr)
+					}
+					req.Body = newBody
+				}
+				continue
+			}
+
+			return &APIError{
+				StatusCode: resp.StatusCode,
+				Method:     req.Method,
+				URL:        req.URL.String(),
+				Message:    decodeAPIErrorMessage(bodyBytes),
+				Body:       string(bodyBytes),
+			}
+		}
+
+		defer resp.Body.Close()
+
+		if out == nil {
+			_, _ = io.Copy(io.Discard, resp.Body)
+			return nil
+		}
+
+		if err := json.NewDecoder(resp.Body).Decode(out); err != nil && !errors.Is(err, io.EOF) {
+			return fmt.Errorf("decode response JSON: %w", err)
+		}
 		_, _ = io.Copy(io.Discard, resp.Body)
 		return nil
 	}
-
-	if err := json.NewDecoder(resp.Body).Decode(out); err != nil && !errors.Is(err, io.EOF) {
-		return fmt.Errorf("decode response JSON: %w", err)
-	}
-	_, _ = io.Copy(io.Discard, resp.Body)
-	return nil
 }
 
 func isHTTPStatus(err error, status int) bool {

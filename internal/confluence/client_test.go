@@ -539,3 +539,127 @@ func TestDeleteAttachment_InvalidLegacyIDReturnsNotFound(t *testing.T) {
 		t.Fatalf("DeleteAttachment() error = %v, want ErrNotFound", err)
 	}
 }
+
+func TestCreateFolder_PostsCorrectPayload(t *testing.T) {
+	var receivedBody map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			t.Fatalf("method = %s, want POST", r.Method)
+		}
+		if r.URL.Path != "/wiki/api/v2/folders" {
+			t.Fatalf("path = %s, want /wiki/api/v2/folders", r.URL.Path)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&receivedBody); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		io.WriteString(w, `{"id":"f-1","spaceId":"SP1","title":"Policies","parentId":"","parentType":"space"}`)
+	}))
+	t.Cleanup(server.Close)
+
+	client, _ := NewClient(ClientConfig{
+		BaseURL:  server.URL,
+		Email:    "u",
+		APIToken: "t",
+	})
+
+	folder, err := client.CreateFolder(context.Background(), FolderCreateInput{
+		SpaceID: "SP1",
+		Title:   "Policies",
+	})
+	if err != nil {
+		t.Fatalf("CreateFolder() error: %v", err)
+	}
+	if folder.ID != "f-1" {
+		t.Fatalf("folder ID = %q, want f-1", folder.ID)
+	}
+	if receivedBody["spaceId"] != "SP1" {
+		t.Fatalf("payload spaceId = %v, want SP1", receivedBody["spaceId"])
+	}
+	if receivedBody["title"] != "Policies" {
+		t.Fatalf("payload title = %v, want Policies", receivedBody["title"])
+	}
+	if receivedBody["parentType"] != "space" {
+		t.Fatalf("payload parentType = %v, want space", receivedBody["parentType"])
+	}
+}
+
+func TestCreateFolder_WithParentID(t *testing.T) {
+	var receivedBody map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewDecoder(r.Body).Decode(&receivedBody)
+		w.Header().Set("Content-Type", "application/json")
+		io.WriteString(w, `{"id":"f-2","spaceId":"SP1","title":"Sub","parentId":"f-1","parentType":"folder"}`)
+	}))
+	t.Cleanup(server.Close)
+
+	client, _ := NewClient(ClientConfig{
+		BaseURL:  server.URL,
+		Email:    "u",
+		APIToken: "t",
+	})
+
+	folder, err := client.CreateFolder(context.Background(), FolderCreateInput{
+		SpaceID:  "SP1",
+		ParentID: "f-1",
+		Title:    "Sub",
+	})
+	if err != nil {
+		t.Fatalf("CreateFolder() error: %v", err)
+	}
+	if folder.ID != "f-2" {
+		t.Fatalf("folder ID = %q, want f-2", folder.ID)
+	}
+	if receivedBody["parentId"] != "f-1" {
+		t.Fatalf("payload parentId = %v, want f-1", receivedBody["parentId"])
+	}
+	if receivedBody["parentType"] != "folder" {
+		t.Fatalf("payload parentType = %v, want folder", receivedBody["parentType"])
+	}
+}
+
+func TestMovePage_PutsToCorrectEndpoint(t *testing.T) {
+	var calledPath string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPut {
+			t.Fatalf("method = %s, want PUT", r.Method)
+		}
+		calledPath = r.URL.Path
+		w.WriteHeader(http.StatusOK)
+		io.WriteString(w, `{}`)
+	}))
+	t.Cleanup(server.Close)
+
+	client, _ := NewClient(ClientConfig{
+		BaseURL:  server.URL,
+		Email:    "u",
+		APIToken: "t",
+	})
+
+	err := client.MovePage(context.Background(), "page-42", "folder-7")
+	if err != nil {
+		t.Fatalf("MovePage() error: %v", err)
+	}
+	want := "/wiki/rest/api/content/page-42/move/append/folder-7"
+	if calledPath != want {
+		t.Fatalf("path = %q, want %q", calledPath, want)
+	}
+}
+
+func TestMovePage_NotFound(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, `{"message":"not found"}`, http.StatusNotFound)
+	}))
+	t.Cleanup(server.Close)
+
+	client, _ := NewClient(ClientConfig{
+		BaseURL:  server.URL,
+		Email:    "u",
+		APIToken: "t",
+	})
+
+	err := client.MovePage(context.Background(), "p1", "t1")
+	if !errors.Is(err, ErrNotFound) {
+		t.Fatalf("MovePage() error = %v, want ErrNotFound", err)
+	}
+}

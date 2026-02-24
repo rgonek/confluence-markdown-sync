@@ -7,6 +7,9 @@ import (
 	"time"
 )
 
+// Compile-time assertion that *Client implements Service.
+var _ Service = (*Client)(nil)
+
 // User is a Confluence user.
 type User struct {
 	AccountID   string
@@ -31,6 +34,8 @@ type Service interface {
 	ListChanges(ctx context.Context, opts ChangeListOptions) (ChangeListResult, error)
 	ArchivePages(ctx context.Context, pageIDs []string) (ArchiveResult, error)
 	DeletePage(ctx context.Context, pageID string, hardDelete bool) error
+	CreateFolder(ctx context.Context, input FolderCreateInput) (Folder, error)
+	MovePage(ctx context.Context, pageID string, targetID string) error
 }
 
 // Space is a Confluence space.
@@ -151,4 +156,12 @@ type AttachmentUploadInput struct {
 	Filename    string
 	ContentType string
 	Data        []byte
+}
+
+// FolderCreateInput is used to create a Confluence folder.
+type FolderCreateInput struct {
+	SpaceID      string
+	ParentID     string // optional parent folder ID
+	ParentType   string // "space" or "folder" (defaults to "space" when ParentID is empty)
+	Title        string
 }
