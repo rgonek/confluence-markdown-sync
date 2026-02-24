@@ -842,9 +842,10 @@ func plannedPageRelPath(page confluence.Page, pageByID map[string]confluence.Pag
 		return normalizeRelPath(filename)
 	}
 
-	if len(ancestorSegments) > 0 && hasChildren {
+	if hasChildren {
 		ancestorSegments = append(ancestorSegments, fs.SanitizePathSegment(title))
 	}
+
 	parts := append(ancestorSegments, filename)
 	return normalizeRelPath(filepath.Join(parts...))
 }
@@ -901,12 +902,9 @@ func ancestorPathSegments(parentID string, parentType string, pageByID map[strin
 			}
 		}
 
-		// Collapse only top-level page ancestors (space home level) to avoid
-		// creating an extra directory that duplicates the space directory name.
 		// Keep folder ancestors intact, including top-level folders.
-		if currentType == "folder" || nextID != "" {
-			segmentsReversed = append(segmentsReversed, fs.SanitizePathSegment(title))
-		}
+		// Also keep all page ancestors to preserve hierarchy exactly as in Confluence.
+		segmentsReversed = append(segmentsReversed, fs.SanitizePathSegment(title))
 
 		currentID = nextID
 		currentType = nextType
