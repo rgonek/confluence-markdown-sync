@@ -39,6 +39,8 @@ type PushRemote interface {
 	DeletePage(ctx context.Context, pageID string, hardDelete bool) error
 	UploadAttachment(ctx context.Context, input confluence.AttachmentUploadInput) (confluence.Attachment, error)
 	DeleteAttachment(ctx context.Context, attachmentID string, pageID string) error
+	CreateFolder(ctx context.Context, input confluence.FolderCreateInput) (confluence.Folder, error)
+	MovePage(ctx context.Context, pageID string, targetID string) error
 }
 
 // PushConflictPolicy controls remote-ahead conflict behavior.
