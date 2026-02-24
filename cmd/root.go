@@ -2,6 +2,8 @@
 package cmd
 
 import (
+	"context"
+
 	"github.com/spf13/cobra"
 )
 
@@ -24,7 +26,22 @@ and converts Markdown back to ADF for publishing updates.`,
 
 // Execute runs the root command.
 func Execute() error {
-	return rootCmd.Execute()
+	return rootCmd.ExecuteContext(context.Background())
+}
+
+// ExecuteContext runs the root command with the given context.
+// This enables graceful signal handling (SIGINT/SIGTERM) when called
+// with a signal-aware context.
+func ExecuteContext(ctx context.Context) error {
+	return rootCmd.ExecuteContext(ctx)
+}
+
+func getCommandContext(cmd *cobra.Command) context.Context {
+	ctx := cmd.Context()
+	if ctx == nil {
+		return context.Background()
+	}
+	return ctx
 }
 
 func init() {
