@@ -30,7 +30,7 @@ The agent manages the full sync cycle.
 - Mutable-by-sync frontmatter keys:
   - `version`
 - User-editable frontmatter keys:
-  - `status` (can be `draft` or `current`. Omitted means `current`. Cannot be set back to `draft` once published remotely).
+  - `state` (can be `draft` or `current`. Omitted means `current`. Cannot be set back to `draft` once published remotely).
 - Remote deletions are hard-deleted locally during `pull` (recovery is via Git history).
 - `.confluence-state.json` is local state and must stay gitignored.
 

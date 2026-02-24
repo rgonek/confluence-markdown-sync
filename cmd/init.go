@@ -60,6 +60,7 @@ In this mode, the agent is responsible for the entire lifecycle.
 - **Frontmatter**:
   - ` + "`id`" + `, ` + "`space`" + `: Immutable.
   - ` + "`version`" + `: Managed by ` + "`conf`" + `.
+  - ` + "`state`" + `: Can be ` + "`draft`" + ` or ` + "`current`" + ` (published). Omitted means ` + "`current`" + `.
 - **State**: ` + "`.confluence-state.json`" + ` tracks sync state. Do not delete.
 
 ## Space-Specific Rules

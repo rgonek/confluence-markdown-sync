@@ -606,12 +606,43 @@ func normalizePushChanges(changes []PushFileChange) []PushFileChange {
 	}
 
 	sort.Slice(out, func(i, j int) bool {
-		if out[i].Path == out[j].Path {
+		pi := out[i].Path
+		pj := out[j].Path
+
+		if pi == pj {
 			return out[i].Type < out[j].Type
 		}
-		return out[i].Path < out[j].Path
+
+		// Count segments to sort by depth (shallowest first)
+		di := strings.Count(pi, "/")
+		dj := strings.Count(pj, "/")
+
+		if di != dj {
+			return di < dj
+		}
+
+		// Within same depth, check if it's an "index" file (BaseName/BaseName.md)
+		// Index files should be pushed before their siblings to establish hierarchy.
+		bi := isIndexFile(pi)
+		bj := isIndexFile(pj)
+
+		if bi != bj {
+			return bi // true (index) comes before false
+		}
+
+		return pi < pj
 	})
 	return out
+}
+
+func isIndexFile(path string) bool {
+	base := filepath.Base(filepath.FromSlash(path))
+	if !strings.HasSuffix(base, ".md") {
+		return false
+	}
+	name := strings.TrimSuffix(base, ".md")
+	dir := filepath.Base(filepath.FromSlash(filepath.Dir(filepath.FromSlash(path))))
+	return name == dir
 }
 
 func collectReferencedAssetPaths(spaceDir, sourcePath, body string) ([]string, error) {
