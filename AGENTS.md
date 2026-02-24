@@ -31,6 +31,8 @@ The agent manages the full sync cycle.
   - `version`
 - User-editable frontmatter keys:
   - `state` (can be `draft` or `current`. Omitted means `current`. Cannot be set back to `draft` once published remotely).
+  - `status` (Confluence "Content Status" visual lozenge, e.g., "Ready to review").
+  - `labels` (array of strings for Confluence page labels).
 - Remote deletions are hard-deleted locally during `pull` (recovery is via Git history).
 - `.confluence-state.json` is local state and must stay gitignored.
 

@@ -36,14 +36,16 @@ Compatibility and precedence:
   - `id`: Stable page ID for update/delete operations.
   - `space`: Confluence space key for validation.
   - `version`: Last synced remote version.
-- **Frontmatter (optional fields)**:
-  - `status`: Target page status (`draft` or `current`). Defaults to `current` if omitted. When pulling, if the remote page is published, this key is omitted to keep frontmatter clean.
+- **Frontmatter (optional/mutable fields)**:
+  - `state`: Target page lifecycle state (`draft` or `current`). Defaults to `current` if omitted. When pulling, if the remote page is published, this key is omitted to keep frontmatter clean.
+  - `status`: Confluence "Content Status" visual lozenge (e.g., "Ready to review"). Syncs with the page state lozenge in the UI.
+  - `labels`: Confluence page labels (array of strings).
 - **Frontmatter Mutability Rules**:
   - Immutable: `id`, `space`.
   - Mutable by sync only: `version`.
-  - Mutable by user: `status` (only allowed transitions: missing/`draft` -> `current`).
+  - Mutable by user: `state`, `status`, `labels`.
   - Manual or AI edits to immutable keys fail validation.
-  - Changing `status` from `current` to `draft` on a page that is already published remotely fails validation (Confluence API limitation: cannot unpublish pages).
+  - Changing `state` from `current` to `draft` on a page that is already published remotely fails validation (Confluence API limitation: cannot unpublish pages).
 - **State**:
     - **Per-Space State File**: `XXX/<SpaceKey>/.confluence-state.json`.
     - **State Keys**:

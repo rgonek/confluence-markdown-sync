@@ -60,7 +60,9 @@ In this mode, the agent is responsible for the entire lifecycle.
 - **Frontmatter**:
   - ` + "`id`" + `, ` + "`space`" + `: Immutable.
   - ` + "`version`" + `: Managed by ` + "`conf`" + `.
-  - ` + "`state`" + `: Can be ` + "`draft`" + ` or ` + "`current`" + ` (published). Omitted means ` + "`current`" + `.
+  - ` + "`state`" + `: Lifecycle state (` + "`draft`" + ` or ` + "`current`" + `). Omitted means ` + "`current`" + `.
+  - ` + "`status`" + `: Confluence visual lozenge (e.g., "Ready to review").
+  - ` + "`labels`" + `: Confluence page labels (array of strings).
 - **State**: ` + "`.confluence-state.json`" + ` tracks sync state. Do not delete.
 
 ## Space-Specific Rules
@@ -99,7 +101,12 @@ ATLASSIAN_API_TOKEN=<your-api-token>
 ` + "```" + `
 
 ## Notes
-- Frontmatter fields ` + "`id`" + ` and ` + "`space`" + ` are immutable — do not edit them.
+- Frontmatter fields:
+  - ` + "`id`" + `, ` + "`space`" + `: Immutable — do not edit.
+  - ` + "`version`" + `: Managed by ` + "`conf`" + `.
+  - ` + "`state`" + `: Lifecycle state (` + "`draft`" + ` or ` + "`current`" + `).
+  - ` + "`status`" + `: Confluence visual lozenge (e.g., "Ready to review").
+  - ` + "`labels`" + `: Confluence page labels (list).
 - ` + "`.confluence-state.json`" + ` is local state and is gitignored.
 - Recovery from a failed push is CLI-guided — no manual Git commands required.
 `

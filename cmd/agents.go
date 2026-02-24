@@ -204,6 +204,7 @@ This space directory is managed by `+"`conf`"+`.
 
 ## Rules
 - Do not edit `+"`id`"+` or `+"`space`"+` in frontmatter.
+- `+"`state`"+` (draft/current), `+"`status`"+` (lozenge), and `+"`labels`"+` are user-editable.
 - Always `+"`pull`"+` before `+"`push`"+`.
 - Run `+"`validate`"+` before publishing.
 
