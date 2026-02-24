@@ -750,32 +750,6 @@ func PlanPagePaths(
 	if folderByID == nil {
 		folderByID = map[string]confluence.Folder{}
 	}
-	pageHasChildren := map[string]bool{}
-	for _, page := range pages {
-		parentType := strings.ToLower(strings.TrimSpace(page.ParentType))
-		if parentType == "" {
-			parentType = "page"
-		}
-		if parentType != "page" {
-			continue
-		}
-		parentID := strings.TrimSpace(page.ParentPageID)
-		if parentID == "" {
-			continue
-		}
-		pageHasChildren[parentID] = true
-	}
-	for _, folder := range folderByID {
-		if !strings.EqualFold(strings.TrimSpace(folder.ParentType), "page") {
-			continue
-		}
-		parentID := strings.TrimSpace(folder.ParentID)
-		if parentID == "" {
-			continue
-		}
-		pageHasChildren[parentID] = true
-	}
-
 	previousPathByID := map[string]string{}
 	for _, previousPath := range sortedStringKeys(previousPageIndex) {
 		pageID := previousPageIndex[previousPath]
@@ -801,7 +775,7 @@ func PlanPagePaths(
 	}
 	plans := make([]pagePathPlan, 0, len(pages))
 	for _, page := range pages {
-		baseRelPath := plannedPageRelPath(page, pageByID, folderByID, pageHasChildren[page.ID])
+		baseRelPath := plannedPageRelPath(page, pageByID, folderByID)
 		if previousPath := previousPathByID[page.ID]; previousPath != "" && sameParentDirectory(previousPath, baseRelPath) {
 			baseRelPath = previousPath
 		}
@@ -829,7 +803,7 @@ func PlanPagePaths(
 	return absByID, relByID
 }
 
-func plannedPageRelPath(page confluence.Page, pageByID map[string]confluence.Page, folderByID map[string]confluence.Folder, hasChildren bool) string {
+func plannedPageRelPath(page confluence.Page, pageByID map[string]confluence.Page, folderByID map[string]confluence.Folder) string {
 	title := strings.TrimSpace(page.Title)
 	if title == "" {
 		title = "page-" + page.ID
@@ -840,10 +814,6 @@ func plannedPageRelPath(page confluence.Page, pageByID map[string]confluence.Pag
 	if !ok {
 		// Fallback to flat if hierarchy is broken
 		return normalizeRelPath(filename)
-	}
-
-	if hasChildren {
-		ancestorSegments = append(ancestorSegments, fs.SanitizePathSegment(title))
 	}
 
 	parts := append(ancestorSegments, filename)
@@ -902,9 +872,12 @@ func ancestorPathSegments(parentID string, parentType string, pageByID map[strin
 			}
 		}
 
-		// Keep folder ancestors intact, including top-level folders.
-		// Also keep all page ancestors to preserve hierarchy exactly as in Confluence.
-		segmentsReversed = append(segmentsReversed, fs.SanitizePathSegment(title))
+		// Folders always contribute a directory segment (even top-level folders).
+		// Pages only contribute a segment when they themselves have a parent; the
+		// space-root page (no parent) does not create its own subdirectory.
+		if currentType == "folder" || nextID != "" {
+			segmentsReversed = append(segmentsReversed, fs.SanitizePathSegment(title))
+		}
 
 		currentID = nextID
 		currentType = nextType
