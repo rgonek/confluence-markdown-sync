@@ -447,6 +447,8 @@ type fakePullRemote struct {
 	changes         []confluence.Change
 	pagesByID       map[string]confluence.Page
 	attachments     map[string][]byte
+	labels          map[string][]string
+	contentStatuses map[string]string
 	lastChangeSince time.Time
 }
 
@@ -480,6 +482,20 @@ func (f *fakePullRemote) GetPage(_ context.Context, pageID string) (confluence.P
 		return confluence.Page{}, confluence.ErrNotFound
 	}
 	return page, nil
+}
+
+func (f *fakePullRemote) GetContentStatus(_ context.Context, pageID string) (string, error) {
+	if f.contentStatuses == nil {
+		return "", nil
+	}
+	return f.contentStatuses[pageID], nil
+}
+
+func (f *fakePullRemote) GetLabels(_ context.Context, pageID string) ([]string, error) {
+	if f.labels == nil {
+		return nil, nil
+	}
+	return f.labels[pageID], nil
 }
 
 func (f *fakePullRemote) DownloadAttachment(_ context.Context, attachmentID string, pageID string, out io.Writer) error {
@@ -653,8 +669,8 @@ func TestPull_DraftRecovery(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read draft.md: %v", err)
 	}
-	if doc.Frontmatter.Status != "draft" {
-		t.Errorf("draft.md status = %q, want draft", doc.Frontmatter.Status)
+	if doc.Frontmatter.State != "draft" {
+		t.Errorf("draft.md status = %q, want draft", doc.Frontmatter.State)
 	}
 }
 

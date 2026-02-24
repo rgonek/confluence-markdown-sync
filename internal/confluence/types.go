@@ -48,16 +48,18 @@ type SpaceListResult struct {
 
 // Page is a Confluence page.
 type Page struct {
-	ID           string
-	SpaceID      string
-	Title        string
-	Status       string
-	ParentPageID string
-	ParentType   string
-	Version      int
-	LastModified time.Time
-	WebURL       string
-	BodyADF      json.RawMessage
+	ID            string
+	SpaceID       string
+	Title         string
+	Status        string // maps to draft vs current
+	ContentStatus string // maps to UI lozenge (e.g. "Ready to review")
+	Labels        []string
+	ParentPageID  string
+	ParentType    string
+	Version       int
+	LastModified  time.Time
+	WebURL        string
+	BodyADF       json.RawMessage
 }
 
 // PageListOptions configures page listing.

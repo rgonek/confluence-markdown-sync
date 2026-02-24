@@ -549,6 +549,14 @@ func (f *cmdFakePullRemote) GetPage(_ context.Context, pageID string) (confluenc
 	return page, nil
 }
 
+func (f *cmdFakePullRemote) GetContentStatus(_ context.Context, pageID string) (string, error) {
+	return "", nil
+}
+
+func (f *cmdFakePullRemote) GetLabels(_ context.Context, pageID string) ([]string, error) {
+	return nil, nil
+}
+
 func (f *cmdFakePullRemote) DownloadAttachment(_ context.Context, attachmentID string, pageID string, out io.Writer) error {
 	raw, ok := f.attachments[attachmentID]
 	if !ok {
@@ -629,7 +637,7 @@ func TestRunPull_DraftSpaceListing(t *testing.T) {
 	if !strings.Contains(doc.Body, "remote draft body") {
 		t.Errorf("draft.md not updated from remote, body = %q", doc.Body)
 	}
-	if doc.Frontmatter.Status != "draft" {
-		t.Errorf("draft.md status = %q, want draft", doc.Frontmatter.Status)
+	if doc.Frontmatter.State != "draft" {
+		t.Errorf("draft.md status = %q, want draft", doc.Frontmatter.State)
 	}
 }

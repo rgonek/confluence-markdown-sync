@@ -31,6 +31,8 @@ type PullRemote interface {
 	GetFolder(ctx context.Context, folderID string) (confluence.Folder, error)
 	ListChanges(ctx context.Context, opts confluence.ChangeListOptions) (confluence.ChangeListResult, error)
 	GetPage(ctx context.Context, pageID string) (confluence.Page, error)
+	GetContentStatus(ctx context.Context, pageID string) (string, error)
+	GetLabels(ctx context.Context, pageID string) ([]string, error)
 	DownloadAttachment(ctx context.Context, attachmentID string, pageID string, out io.Writer) error
 }
 
@@ -200,6 +202,29 @@ func Pull(ctx context.Context, remote PullRemote, opts PullOptions) (PullResult,
 			}
 			return PullResult{}, fmt.Errorf("fetch page %s: %w", pageID, err)
 		}
+
+		status, err := remote.GetContentStatus(ctx, pageID)
+		if err != nil {
+			diagnostics = append(diagnostics, PullDiagnostic{
+				Path:    pageID,
+				Code:    "CONTENT_STATUS_FETCH_FAILED",
+				Message: fmt.Sprintf("fetch content status for page %s: %v", pageID, err),
+			})
+		} else {
+			page.ContentStatus = status
+		}
+
+		labels, err := remote.GetLabels(ctx, pageID)
+		if err != nil {
+			diagnostics = append(diagnostics, PullDiagnostic{
+				Path:    pageID,
+				Code:    "LABELS_FETCH_FAILED",
+				Message: fmt.Sprintf("fetch labels for page %s: %v", pageID, err),
+			})
+		} else {
+			page.Labels = labels
+		}
+
 		changedPages[pageID] = page
 		if page.Version > maxVersion {
 			maxVersion = page.Version
@@ -402,7 +427,9 @@ func Pull(ctx context.Context, remote PullRemote, opts PullOptions) (PullResult,
 				ID:      page.ID,
 				Space:   opts.SpaceKey,
 				Version: page.Version,
-				Status:  page.Status,
+				State:   page.Status,
+				Status:  page.ContentStatus,
+				Labels:  page.Labels,
 			},
 			Body: forward.Markdown,
 		}

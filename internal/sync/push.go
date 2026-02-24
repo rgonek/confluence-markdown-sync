@@ -27,6 +27,12 @@ type PushRemote interface {
 	GetSpace(ctx context.Context, spaceKey string) (confluence.Space, error)
 	ListPages(ctx context.Context, opts confluence.PageListOptions) (confluence.PageListResult, error)
 	GetPage(ctx context.Context, pageID string) (confluence.Page, error)
+	GetContentStatus(ctx context.Context, pageID string) (string, error)
+	SetContentStatus(ctx context.Context, pageID string, statusName string) error
+	DeleteContentStatus(ctx context.Context, pageID string) error
+	GetLabels(ctx context.Context, pageID string) ([]string, error)
+	AddLabels(ctx context.Context, pageID string, labels []string) error
+	RemoveLabel(ctx context.Context, pageID string, labelName string) error
 	CreatePage(ctx context.Context, input confluence.PageUpsertInput) (confluence.Page, error)
 	UpdatePage(ctx context.Context, pageID string, input confluence.PageUpsertInput) (confluence.Page, error)
 	ArchivePages(ctx context.Context, pageIDs []string) (confluence.ArchiveResult, error)
@@ -361,22 +367,27 @@ func pushUpsertPage(
 		title := resolveLocalTitle(doc, relPath)
 		resolvedParentID := resolveParentIDFromHierarchy(relPath, "", fallbackParentID, pageIDByPath)
 
-		targetStatus := doc.Frontmatter.Status
-		if strings.TrimSpace(targetStatus) == "" {
-			targetStatus = "current"
+		targetState := doc.Frontmatter.State
+		if strings.TrimSpace(targetState) == "" {
+			targetState = "current"
 		}
 
 		created, err := remote.CreatePage(ctx, confluence.PageUpsertInput{
 			SpaceID:      space.ID,
 			ParentPageID: resolvedParentID,
 			Title:        title,
-			Status:       targetStatus,
+			Status:       targetState,
 			BodyADF:      []byte(`{"version":1,"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"Initial sync..."}]}]}`),
 		})
 		if err != nil {
 			return PushCommitPlan{}, fmt.Errorf("create placeholder page for %s: %w", relPath, err)
 		}
 		pageID = created.ID
+
+		if err := syncPageMetadata(ctx, remote, pageID, doc); err != nil {
+			return PushCommitPlan{}, fmt.Errorf("sync metadata for %s: %w", relPath, err)
+		}
+
 		doc.Frontmatter.ID = pageID
 		doc.Frontmatter.Space = opts.SpaceKey
 		doc.Frontmatter.Version = created.Version
@@ -480,21 +491,25 @@ func pushUpsertPage(
 		return PushCommitPlan{}, fmt.Errorf("post-process ADF for %s: %w", relPath, err)
 	}
 
-	targetStatus := doc.Frontmatter.Status
-	if strings.TrimSpace(targetStatus) == "" {
-		targetStatus = "current"
+	targetState := doc.Frontmatter.State
+	if strings.TrimSpace(targetState) == "" {
+		targetState = "current"
 	}
 
 	updatedPage, err := remote.UpdatePage(ctx, pageID, confluence.PageUpsertInput{
 		SpaceID:      space.ID,
 		ParentPageID: resolvedParentID,
 		Title:        title,
-		Status:       targetStatus,
+		Status:       targetState,
 		Version:      nextVersion,
 		BodyADF:      finalADF,
 	})
 	if err != nil {
 		return PushCommitPlan{}, fmt.Errorf("update page %s: %w", pageID, err)
+	}
+
+	if err := syncPageMetadata(ctx, remote, pageID, doc); err != nil {
+		return PushCommitPlan{}, fmt.Errorf("sync metadata for %s: %w", relPath, err)
 	}
 
 	doc.Frontmatter.Title = title
@@ -832,4 +847,63 @@ func walkAndFixMediaNodes(node any, pageID string) bool {
 		}
 	}
 	return modified
+}
+
+func syncPageMetadata(ctx context.Context, remote PushRemote, pageID string, doc fs.MarkdownDocument) error {
+	// 1. Sync Content Status
+	targetStatus := strings.TrimSpace(doc.Frontmatter.Status)
+	currentStatus, err := remote.GetContentStatus(ctx, pageID)
+	if err != nil {
+		return fmt.Errorf("get content status: %w", err)
+	}
+	if targetStatus != currentStatus {
+		if targetStatus == "" {
+			if err := remote.DeleteContentStatus(ctx, pageID); err != nil {
+				return fmt.Errorf("delete content status: %w", err)
+			}
+		} else {
+			if err := remote.SetContentStatus(ctx, pageID, targetStatus); err != nil {
+				return fmt.Errorf("set content status: %w", err)
+			}
+		}
+	}
+
+	// 2. Sync Labels
+	remoteLabels, err := remote.GetLabels(ctx, pageID)
+	if err != nil {
+		return fmt.Errorf("get labels: %w", err)
+	}
+
+	remoteLabelSet := map[string]struct{}{}
+	for _, l := range remoteLabels {
+		remoteLabelSet[l] = struct{}{}
+	}
+
+	localLabelSet := map[string]struct{}{}
+	for _, l := range doc.Frontmatter.Labels {
+		localLabelSet[strings.TrimSpace(l)] = struct{}{}
+	}
+
+	var toAdd []string
+	for l := range localLabelSet {
+		if _, ok := remoteLabelSet[l]; !ok {
+			toAdd = append(toAdd, l)
+		}
+	}
+
+	for l := range remoteLabelSet {
+		if _, ok := localLabelSet[l]; !ok {
+			if err := remote.RemoveLabel(ctx, pageID, l); err != nil {
+				return fmt.Errorf("remove label %q: %w", l, err)
+			}
+		}
+	}
+
+	if len(toAdd) > 0 {
+		if err := remote.AddLabels(ctx, pageID, toAdd); err != nil {
+			return fmt.Errorf("add labels: %w", err)
+		}
+	}
+
+	return nil
 }
