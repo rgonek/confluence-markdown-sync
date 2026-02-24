@@ -37,4 +37,4 @@ test-output/
 # .vscode/
 
 !agents
-!plans
+!plansconf
