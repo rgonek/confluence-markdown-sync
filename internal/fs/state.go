@@ -15,8 +15,10 @@ const StateFileName = ".confluence-state.json"
 // SpaceState stores per-space sync metadata used for pull/push planning.
 type SpaceState struct {
 	LastPullHighWatermark string            `json:"last_pull_high_watermark,omitempty"`
+	SpaceKey              string            `json:"space_key,omitempty"`
 	PagePathIndex         map[string]string `json:"page_path_index,omitempty"`
 	AttachmentIndex       map[string]string `json:"attachment_index,omitempty"`
+	FolderPathIndex       map[string]string `json:"folder_path_index,omitempty"`
 }
 
 // NewSpaceState returns an initialized empty state object.
@@ -24,6 +26,7 @@ func NewSpaceState() SpaceState {
 	return SpaceState{
 		PagePathIndex:   map[string]string{},
 		AttachmentIndex: map[string]string{},
+		FolderPathIndex: map[string]string{},
 	}
 }
 
@@ -112,6 +115,9 @@ func (s *SpaceState) normalize() {
 	}
 	if s.AttachmentIndex == nil {
 		s.AttachmentIndex = map[string]string{}
+	}
+	if s.FolderPathIndex == nil {
+		s.FolderPathIndex = map[string]string{}
 	}
 }
 

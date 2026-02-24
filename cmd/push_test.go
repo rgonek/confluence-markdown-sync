@@ -1011,6 +1011,21 @@ func (f *cmdFakePushRemote) DeleteAttachment(_ context.Context, attachmentID str
 	return nil
 }
 
+func (f *cmdFakePushRemote) CreateFolder(_ context.Context, input confluence.FolderCreateInput) (confluence.Folder, error) {
+	id := fmt.Sprintf("folder-%d", len(f.pagesByID)+1)
+	return confluence.Folder{
+		ID:         id,
+		SpaceID:    input.SpaceID,
+		Title:      input.Title,
+		ParentID:   input.ParentID,
+		ParentType: input.ParentType,
+	}, nil
+}
+
+func (f *cmdFakePushRemote) MovePage(_ context.Context, pageID string, targetID string) error {
+	return nil
+}
+
 func firstOrDefault(value, fallback string) string {
 	if strings.TrimSpace(value) == "" {
 		return fallback
