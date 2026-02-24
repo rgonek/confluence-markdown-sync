@@ -10,7 +10,10 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	gosync "sync"
 	"time"
+
+	"golang.org/x/sync/errgroup"
 
 	"github.com/rgonek/confluence-markdown-sync/internal/confluence"
 	"github.com/rgonek/confluence-markdown-sync/internal/converter"
@@ -22,6 +25,7 @@ const (
 	DefaultPullOverlapWindow = 2 * time.Minute
 	pullPageBatchSize        = 100
 	pullChangeBatchSize      = 100
+	maxPaginationIterations  = 500
 )
 
 // PullRemote defines the remote operations required by pull orchestration.
@@ -214,50 +218,98 @@ func Pull(ctx context.Context, remote PullRemote, opts PullOptions) (PullResult,
 	}
 
 	changedPages := make(map[string]confluence.Page, len(changedPageIDs))
-	for _, pageID := range changedPageIDs {
-		page, err := remote.GetPage(ctx, pageID)
+	var changedPagesMu gosync.Mutex
+	var diagMu gosync.Mutex
+
+	readExistingFrontmatter := func(pageID string) (fs.Frontmatter, bool) {
+		absPath, ok := pagePathByIDAbs[pageID]
+		if !ok {
+			return fs.Frontmatter{}, false
+		}
+		raw, err := os.ReadFile(absPath)
 		if err != nil {
+			return fs.Frontmatter{}, false
+		}
+		doc, err := fs.ParseMarkdownDocument(raw)
+		if err != nil {
+			return fs.Frontmatter{}, false
+		}
+		return doc.Frontmatter, true
+	}
+
+	g, gCtx := errgroup.WithContext(ctx)
+	g.SetLimit(5)
+
+	for _, pageID := range changedPageIDs {
+		pageID := pageID // copy for goroutine
+		g.Go(func() error {
+			if opts.Progress != nil {
+				opts.Progress.SetCurrentItem(pageID)
+			}
+
+			page, err := remote.GetPage(gCtx, pageID)
+			if err != nil {
+				if opts.Progress != nil {
+					opts.Progress.Add(1)
+				}
+				if errors.Is(err, confluence.ErrNotFound) {
+					return nil
+				}
+				return fmt.Errorf("fetch page %s: %w", pageID, err)
+			}
+
+			status, err := remote.GetContentStatus(gCtx, pageID)
+			if err != nil {
+				existingFM, ok := readExistingFrontmatter(pageID)
+				if ok && existingFM.Status != "" {
+					page.ContentStatus = existingFM.Status
+				}
+				diagMu.Lock()
+				diagnostics = append(diagnostics, PullDiagnostic{
+					Path:    pageID,
+					Code:    "CONTENT_STATUS_FETCH_FAILED",
+					Message: fmt.Sprintf("fetch content status for page %s: %v", pageID, err),
+				})
+				diagMu.Unlock()
+			} else {
+				page.ContentStatus = status
+			}
+
+			labels, err := remote.GetLabels(gCtx, pageID)
+			if err != nil {
+				existingFM, ok := readExistingFrontmatter(pageID)
+				if ok && len(existingFM.Labels) > 0 {
+					page.Labels = existingFM.Labels
+				}
+				diagMu.Lock()
+				diagnostics = append(diagnostics, PullDiagnostic{
+					Path:    pageID,
+					Code:    "LABELS_FETCH_FAILED",
+					Message: fmt.Sprintf("fetch labels for page %s: %v", pageID, err),
+				})
+				diagMu.Unlock()
+			} else {
+				page.Labels = labels
+			}
+
+			changedPagesMu.Lock()
+			changedPages[pageID] = page
+			if page.Version > maxVersion {
+				maxVersion = page.Version
+			}
+			if page.LastModified.After(maxRemoteModified) {
+				maxRemoteModified = page.LastModified
+			}
+			changedPagesMu.Unlock()
+
 			if opts.Progress != nil {
 				opts.Progress.Add(1)
 			}
-			if errors.Is(err, confluence.ErrNotFound) {
-				continue
-			}
-			return PullResult{}, fmt.Errorf("fetch page %s: %w", pageID, err)
-		}
-
-		status, err := remote.GetContentStatus(ctx, pageID)
-		if err != nil {
-			diagnostics = append(diagnostics, PullDiagnostic{
-				Path:    pageID,
-				Code:    "CONTENT_STATUS_FETCH_FAILED",
-				Message: fmt.Sprintf("fetch content status for page %s: %v", pageID, err),
-			})
-		} else {
-			page.ContentStatus = status
-		}
-
-		labels, err := remote.GetLabels(ctx, pageID)
-		if err != nil {
-			diagnostics = append(diagnostics, PullDiagnostic{
-				Path:    pageID,
-				Code:    "LABELS_FETCH_FAILED",
-				Message: fmt.Sprintf("fetch labels for page %s: %v", pageID, err),
-			})
-		} else {
-			page.Labels = labels
-		}
-
-		changedPages[pageID] = page
-		if page.Version > maxVersion {
-			maxVersion = page.Version
-		}
-		if page.LastModified.After(maxRemoteModified) {
-			maxRemoteModified = page.LastModified
-		}
-		if opts.Progress != nil {
-			opts.Progress.Add(1)
-		}
+			return nil
+		})
+	}
+	if err := g.Wait(); err != nil {
+		return PullResult{}, err
 	}
 
 	attachmentIndex := cloneStringMap(state.AttachmentIndex)
@@ -291,7 +343,10 @@ func Pull(ctx context.Context, remote PullRemote, opts PullOptions) (PullResult,
 			continue
 		}
 
-		refs := collectAttachmentRefs(page.BodyADF, page.ID)
+		refs, diag := collectAttachmentRefs(page.BodyADF, page.ID)
+		if diag != nil {
+			diagnostics = append(diagnostics, *diag)
+		}
 		for _, removedPath := range removeStaleAttachmentsForPage(attachmentIndex, page.ID, refs) {
 			staleAttachmentPaths[removedPath] = struct{}{}
 			// Sync reverse index
@@ -354,18 +409,29 @@ func Pull(ctx context.Context, remote PullRemote, opts PullOptions) (PullResult,
 			var lastErr error
 			for retry := 0; retry < 3; retry++ {
 				if retry > 0 {
-					time.Sleep(time.Duration(retry) * time.Second)
-				}
-				f, err := os.Create(assetPath)
-				if err != nil {
-					return fmt.Errorf("create attachment file %s: %w", assetPath, err)
+					if err := contextSleep(ctx, time.Duration(retry)*time.Second); err != nil {
+						return err
+					}
 				}
 
-				err = remote.DownloadAttachment(ctx, attachmentID, pageID, f)
-				_ = f.Close()
+				tempFile, err := os.CreateTemp(filepath.Dir(assetPath), "asset-*")
+				if err != nil {
+					return fmt.Errorf("create temp attachment file %s: %w", assetPath, err)
+				}
+				tempName := tempFile.Name()
+
+				err = remote.DownloadAttachment(ctx, attachmentID, pageID, tempFile)
+				tempFile.Close()
+
 				if err == nil {
+					if err := os.Rename(tempName, assetPath); err != nil {
+						os.Remove(tempName)
+						return fmt.Errorf("rename attachment file %s: %w", assetPath, err)
+					}
 					return nil
 				}
+				os.Remove(tempName)
+
 				lastErr = err
 				if errors.Is(err, confluence.ErrNotFound) {
 					break // No point in retrying 404
@@ -512,6 +578,7 @@ func Pull(ctx context.Context, remote PullRemote, opts PullOptions) (PullResult,
 		if err := os.Remove(absPath); err != nil && !os.IsNotExist(err) {
 			return PullResult{}, fmt.Errorf("delete markdown %s: %w", relPath, err)
 		}
+		_ = removeEmptyParentDirs(filepath.Dir(absPath), spaceDir)
 	}
 
 	assetsRoot := filepath.Join(spaceDir, "assets")
@@ -621,7 +688,12 @@ func shouldIgnoreFolderHierarchyError(err error) bool {
 func listAllPages(ctx context.Context, remote PullRemote, opts confluence.PageListOptions, progress Progress) ([]confluence.Page, error) {
 	result := []confluence.Page{}
 	cursor := opts.Cursor
+	iterations := 0
 	for {
+		if iterations >= maxPaginationIterations {
+			return nil, fmt.Errorf("pagination loop exceeded %d iterations for space %s", maxPaginationIterations, opts.SpaceID)
+		}
+		iterations++
 		opts.Cursor = cursor
 		pageResult, err := remote.ListPages(ctx, opts)
 		if err != nil {
@@ -708,7 +780,12 @@ func resolveFolderHierarchyFromPages(ctx context.Context, remote PullRemote, pag
 func listAllChanges(ctx context.Context, remote PullRemote, opts confluence.ChangeListOptions, progress Progress) ([]confluence.Change, error) {
 	result := []confluence.Change{}
 	start := opts.Start
+	iterations := 0
 	for {
+		if iterations >= maxPaginationIterations {
+			return nil, fmt.Errorf("pagination loop exceeded %d iterations for changes since %v", maxPaginationIterations, opts.Since)
+		}
+		iterations++
 		opts.Start = start
 		changeResult, err := remote.ListChanges(ctx, opts)
 		if err != nil {
@@ -721,14 +798,7 @@ func listAllChanges(ctx context.Context, remote PullRemote, opts confluence.Chan
 		if !changeResult.HasMore {
 			break
 		}
-		next := changeResult.NextStart
-		if next <= start {
-			next = start + opts.Limit
-		}
-		if next <= start {
-			break
-		}
-		start = next
+		start += len(changeResult.Changes)
 	}
 	return result, nil
 }
@@ -984,14 +1054,18 @@ func attachmentBelongsToPage(relPath, pageID string) bool {
 	return parts[1] == pageID
 }
 
-func collectAttachmentRefs(adfJSON []byte, defaultPageID string) map[string]attachmentRef {
+func collectAttachmentRefs(adfJSON []byte, defaultPageID string) (map[string]attachmentRef, *PullDiagnostic) {
 	if len(adfJSON) == 0 {
-		return map[string]attachmentRef{}
+		return map[string]attachmentRef{}, nil
 	}
 
 	var raw any
 	if err := json.Unmarshal(adfJSON, &raw); err != nil {
-		return map[string]attachmentRef{}
+		return map[string]attachmentRef{}, &PullDiagnostic{
+			Path:    defaultPageID,
+			Code:    "MALFORMED_ADF",
+			Message: fmt.Sprintf("failed to parse ADF for page %s: %v", defaultPageID, err),
+		}
 	}
 
 	out := map[string]attachmentRef{}
@@ -1040,7 +1114,7 @@ func collectAttachmentRefs(adfJSON []byte, defaultPageID string) map[string]atta
 		}
 	})
 
-	return out
+	return out, nil
 }
 
 func walkADFNode(node any, visit func(map[string]any)) {
@@ -1222,4 +1296,13 @@ func sortedStringKeys[V any](in map[string]V) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+func contextSleep(ctx context.Context, d time.Duration) error {
+	select {
+	case <-time.After(d):
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }

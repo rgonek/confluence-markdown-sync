@@ -7,6 +7,7 @@ require (
 	github.com/rgonek/jira-adf-converter v0.0.0-20260223190613-93e1aff53086
 	github.com/schollz/progressbar/v3 v3.19.0
 	github.com/spf13/cobra v1.10.2
+	golang.org/x/sync v0.19.0
 	gopkg.in/yaml.v3 v3.0.1
 )
 

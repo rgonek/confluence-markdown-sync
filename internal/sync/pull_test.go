@@ -451,6 +451,7 @@ type fakePullRemote struct {
 	users           map[string]confluence.User
 	contentStatuses map[string]string
 	lastChangeSince time.Time
+	getPageHook     func(pageID string)
 }
 
 func (f *fakePullRemote) GetUser(_ context.Context, accountID string) (confluence.User, error) {
@@ -489,6 +490,9 @@ func (f *fakePullRemote) ListChanges(_ context.Context, opts confluence.ChangeLi
 }
 
 func (f *fakePullRemote) GetPage(_ context.Context, pageID string) (confluence.Page, error) {
+	if f.getPageHook != nil {
+		f.getPageHook(pageID)
+	}
 	page, ok := f.pagesByID[pageID]
 	if !ok {
 		return confluence.Page{}, confluence.ErrNotFound

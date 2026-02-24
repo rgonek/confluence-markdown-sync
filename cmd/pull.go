@@ -17,6 +17,8 @@ import (
 	"github.com/spf13/cobra"
 )
 
+const maxPaginationIterations = 500
+
 var (
 	flagPullForce        = false
 	flagPullDiscardLocal = false
@@ -723,7 +725,12 @@ func listAllPullPagesForEstimate(
 ) ([]confluence.Page, error) {
 	result := []confluence.Page{}
 	cursor := opts.Cursor
+	iterations := 0
 	for {
+		if iterations >= maxPaginationIterations {
+			return nil, fmt.Errorf("pagination loop exceeded %d iterations for space %s", maxPaginationIterations, opts.SpaceID)
+		}
+		iterations++
 		opts.Cursor = cursor
 		pageResult, err := remote.ListPages(ctx, opts)
 		if err != nil {
@@ -749,7 +756,12 @@ func listAllPullChangesForEstimate(
 ) ([]confluence.Change, error) {
 	result := []confluence.Change{}
 	start := opts.Start
+	iterations := 0
 	for {
+		if iterations >= maxPaginationIterations {
+			return nil, fmt.Errorf("pagination loop exceeded %d iterations for changes since %v", maxPaginationIterations, opts.Since)
+		}
+		iterations++
 		opts.Start = start
 		changeResult, err := remote.ListChanges(ctx, opts)
 		if err != nil {
