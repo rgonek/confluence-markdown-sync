@@ -25,6 +25,10 @@ var (
 	// MutableBySyncFrontmatterKeys contains keys that are managed by sync operations.
 	MutableBySyncFrontmatterKeys = []string{
 		"version",
+		"author",
+		"created_at",
+		"last_modified_at",
+		"last_modified_by",
 	}
 )
 
@@ -37,13 +41,17 @@ var (
 
 // Frontmatter holds known Confluence sync metadata keys plus optional custom keys.
 type Frontmatter struct {
-	Title   string
-	ID      string
-	Space   string
-	Version int
-	State   string
-	Status  string
-	Labels  []string
+	Title          string
+	ID             string
+	Space          string
+	Version        int
+	State          string
+	Status         string
+	Labels         []string
+	Author         string
+	CreatedAt      string
+	LastModifiedAt string
+	LastModifiedBy string
 
 	// Legacy metadata retained in-memory only for transitional behavior.
 	ConfluenceLastModified string `yaml:"-"`
@@ -53,13 +61,17 @@ type Frontmatter struct {
 }
 
 type frontmatterYAML struct {
-	Title   string   `yaml:"title,omitempty"`
-	ID      string   `yaml:"id,omitempty"`
-	Space   string   `yaml:"space,omitempty"`
-	Version int      `yaml:"version,omitempty"`
-	State   string   `yaml:"state,omitempty"`
-	Status  string   `yaml:"status,omitempty"`
-	Labels  []string `yaml:"labels,omitempty"`
+	Title          string   `yaml:"title,omitempty"`
+	ID             string   `yaml:"id,omitempty"`
+	Space          string   `yaml:"space,omitempty"`
+	Version        int      `yaml:"version,omitempty"`
+	State          string   `yaml:"state,omitempty"`
+	Status         string   `yaml:"status,omitempty"`
+	Labels         []string `yaml:"labels,omitempty"`
+	Author         string   `yaml:"author,omitempty"`
+	CreatedAt      string   `yaml:"created_at,omitempty"`
+	LastModifiedAt string   `yaml:"last_modified_at,omitempty"`
+	LastModifiedBy string   `yaml:"last_modified_by,omitempty"`
 
 	LegacyPageID       string `yaml:"confluence_page_id,omitempty"`
 	LegacySpaceKey     string `yaml:"confluence_space_key,omitempty"`
@@ -75,6 +87,7 @@ func (fm Frontmatter) MarshalYAML() (any, error) {
 	for key, value := range fm.Extra {
 		switch key {
 		case "title", "id", "space", "version", "state", "status", "labels",
+			"author", "created_at", "last_modified_at", "last_modified_by",
 			"confluence_page_id", "confluence_space_key", "confluence_version",
 			"confluence_last_modified", "confluence_parent_page_id":
 			continue
@@ -84,14 +97,18 @@ func (fm Frontmatter) MarshalYAML() (any, error) {
 	}
 
 	return frontmatterYAML{
-		Title:   fm.Title,
-		ID:      fm.ID,
-		Space:   fm.Space,
-		Version: fm.Version,
-		State:   normalizeStateForMarshal(fm.State),
-		Status:  fm.Status,
-		Labels:  fm.Labels,
-		Extra:   extra,
+		Title:          fm.Title,
+		ID:             fm.ID,
+		Space:          fm.Space,
+		Version:        fm.Version,
+		State:          normalizeStateForMarshal(fm.State),
+		Status:         fm.Status,
+		Labels:         fm.Labels,
+		Author:         fm.Author,
+		CreatedAt:      fm.CreatedAt,
+		LastModifiedAt: fm.LastModifiedAt,
+		LastModifiedBy: fm.LastModifiedBy,
+		Extra:          extra,
 	}, nil
 }
 
@@ -116,6 +133,10 @@ func (fm *Frontmatter) UnmarshalYAML(value *yaml.Node) error {
 	fm.State = strings.TrimSpace(decoded.State)
 	fm.Status = strings.TrimSpace(decoded.Status)
 	fm.Labels = decoded.Labels
+	fm.Author = strings.TrimSpace(decoded.Author)
+	fm.CreatedAt = strings.TrimSpace(decoded.CreatedAt)
+	fm.LastModifiedAt = strings.TrimSpace(decoded.LastModifiedAt)
+	fm.LastModifiedBy = strings.TrimSpace(decoded.LastModifiedBy)
 
 	if fm.ID == "" {
 		fm.ID = strings.TrimSpace(decoded.LegacyPageID)
@@ -142,6 +163,10 @@ func (fm *Frontmatter) UnmarshalYAML(value *yaml.Node) error {
 	delete(decoded.Extra, "state")
 	delete(decoded.Extra, "status")
 	delete(decoded.Extra, "labels")
+	delete(decoded.Extra, "author")
+	delete(decoded.Extra, "created_at")
+	delete(decoded.Extra, "last_modified_at")
+	delete(decoded.Extra, "last_modified_by")
 	delete(decoded.Extra, "confluence_page_id")
 	delete(decoded.Extra, "confluence_space_key")
 	delete(decoded.Extra, "confluence_version")

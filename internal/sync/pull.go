@@ -26,6 +26,7 @@ const (
 
 // PullRemote defines the remote operations required by pull orchestration.
 type PullRemote interface {
+	GetUser(ctx context.Context, accountID string) (confluence.User, error)
 	GetSpace(ctx context.Context, spaceKey string) (confluence.Space, error)
 	ListPages(ctx context.Context, opts confluence.PageListOptions) (confluence.PageListResult, error)
 	GetFolder(ctx context.Context, folderID string) (confluence.Folder, error)
@@ -114,6 +115,28 @@ func Pull(ctx context.Context, remote PullRemote, opts PullOptions) (PullResult,
 		overlapWindow = DefaultPullOverlapWindow
 	}
 	diagnostics := []PullDiagnostic{}
+
+	userCache := map[string]string{}
+	getUserDisplayName := func(ctx context.Context, accountID string) string {
+		accountID = strings.TrimSpace(accountID)
+		if accountID == "" {
+			return ""
+		}
+		if name, ok := userCache[accountID]; ok {
+			return name
+		}
+		user, err := remote.GetUser(ctx, accountID)
+		if err != nil {
+			userCache[accountID] = accountID // fallback to ID on error
+			return accountID
+		}
+		name := strings.TrimSpace(user.DisplayName)
+		if name == "" {
+			name = accountID
+		}
+		userCache[accountID] = name
+		return name
+	}
 
 	space, err := remote.GetSpace(ctx, opts.SpaceKey)
 	if err != nil {
@@ -421,15 +444,27 @@ func Pull(ctx context.Context, remote PullRemote, opts PullOptions) (PullResult,
 			return PullResult{}, fmt.Errorf("convert page %s: %w", page.ID, err)
 		}
 
+		var createdDate, lastModifiedDate string
+		if !page.CreatedAt.IsZero() {
+			createdDate = page.CreatedAt.Format(time.RFC3339)
+		}
+		if !page.LastModified.IsZero() {
+			lastModifiedDate = page.LastModified.Format(time.RFC3339)
+		}
+
 		doc := fs.MarkdownDocument{
 			Frontmatter: fs.Frontmatter{
-				Title:   page.Title,
-				ID:      page.ID,
-				Space:   opts.SpaceKey,
-				Version: page.Version,
-				State:   page.Status,
-				Status:  page.ContentStatus,
-				Labels:  page.Labels,
+				Title:          page.Title,
+				ID:             page.ID,
+				Space:          opts.SpaceKey,
+				Version:        page.Version,
+				State:          page.Status,
+				Status:         page.ContentStatus,
+				Labels:         page.Labels,
+				Author:         getUserDisplayName(ctx, page.AuthorID),
+				CreatedAt:      createdDate,
+				LastModifiedBy: getUserDisplayName(ctx, page.LastModifiedAuthorID),
+				LastModifiedAt: lastModifiedDate,
 			},
 			Body: forward.Markdown,
 		}

@@ -448,8 +448,20 @@ type fakePullRemote struct {
 	pagesByID       map[string]confluence.Page
 	attachments     map[string][]byte
 	labels          map[string][]string
+	users           map[string]confluence.User
 	contentStatuses map[string]string
 	lastChangeSince time.Time
+}
+
+func (f *fakePullRemote) GetUser(_ context.Context, accountID string) (confluence.User, error) {
+	if f.users == nil {
+		return confluence.User{AccountID: accountID, DisplayName: "User " + accountID}, nil
+	}
+	user, ok := f.users[accountID]
+	if !ok {
+		return confluence.User{}, confluence.ErrNotFound
+	}
+	return user, nil
 }
 
 func (f *fakePullRemote) GetSpace(_ context.Context, _ string) (confluence.Space, error) {

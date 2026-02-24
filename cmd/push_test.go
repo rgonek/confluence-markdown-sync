@@ -896,6 +896,10 @@ func newCmdFakePushRemote(remoteVersion int) *cmdFakePushRemote {
 	}
 }
 
+func (f *cmdFakePushRemote) GetUser(_ context.Context, accountID string) (confluence.User, error) {
+	return confluence.User{AccountID: accountID, DisplayName: "User " + accountID}, nil
+}
+
 func (f *cmdFakePushRemote) GetSpace(_ context.Context, _ string) (confluence.Space, error) {
 	return f.space, nil
 }
