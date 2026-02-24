@@ -151,3 +151,22 @@ func (d *dryRunPushRemote) DeleteAttachment(ctx context.Context, attachmentID st
 	fmt.Fprintf(d.out, "[DRY-RUN] DELETE ATTACHMENT (DELETE %s/wiki/api/v2/attachments/%s, page %s)\n\n", d.domain, attachmentID, pageID)
 	return nil
 }
+
+func (d *dryRunPushRemote) CreateFolder(ctx context.Context, input confluence.FolderCreateInput) (confluence.Folder, error) {
+	fmt.Fprintf(d.out, "[DRY-RUN] CREATE FOLDER (POST %s/wiki/api/v2/folders)\n", d.domain)
+	fmt.Fprintf(d.out, "  Title: %s\n", input.Title)
+	if input.ParentPageID != "" {
+		fmt.Fprintf(d.out, "  ParentPageID: %s\n", input.ParentPageID)
+	}
+	fmt.Fprintln(d.out)
+	return confluence.Folder{
+		ID:      "dry-run-folder-id",
+		SpaceID: input.SpaceID,
+		Title:   input.Title,
+	}, nil
+}
+
+func (d *dryRunPushRemote) MovePage(ctx context.Context, pageID, targetID string) error {
+	fmt.Fprintf(d.out, "[DRY-RUN] MOVE PAGE (PUT %s/wiki/rest/api/content/%s/move/append/%s)\n\n", d.domain, pageID, targetID)
+	return nil
+}
