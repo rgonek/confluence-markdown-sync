@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/charmbracelet/huh"
 	"github.com/rgonek/confluence-markdown-sync/internal/config"
 	"github.com/rgonek/confluence-markdown-sync/internal/confluence"
 	"github.com/rgonek/confluence-markdown-sync/internal/fs"
@@ -657,7 +658,35 @@ func handlePullConflict(repoRoot, stashRef, scopePath string, in io.Reader, out 
 		return fmt.Errorf("local changes could not be automatically merged with remote updates (CONFLICT). Please resolve the conflicts in the affected files and then run 'git stash drop %s' to clean up", stashRef)
 	}
 
-	_, _ = fmt.Fprintln(out, "\n⚠️  CONFLICT DETECTED")
+	const (
+		choiceKeepBoth = "keep"
+		choiceRemote   = "remote"
+		choiceLocal    = "local"
+	)
+
+	if outputSupportsProgress(out) {
+		var choice string
+		form := huh.NewForm(
+			huh.NewGroup(
+				huh.NewSelect[string]().
+					Title("⚠️  CONFLICT DETECTED").
+					Description("Local changes could not be automatically merged with remote updates.\nHow would you like to proceed?").
+					Options(
+						huh.NewOption("Keep both (add conflict markers to files) — RECOMMENDED", choiceKeepBoth),
+						huh.NewOption("Use Remote version (discard my local changes)", choiceRemote),
+						huh.NewOption("Use Local version (overwrite remote updates)", choiceLocal),
+					).
+					Value(&choice),
+			),
+		).WithOutput(out)
+		if err := form.Run(); err != nil {
+			return err
+		}
+		return applyPullConflictChoice(choice, repoRoot, stashRef, scopePath, out)
+	}
+
+	// Plain-text fallback for non-TTY environments.
+	_, _ = fmt.Fprintln(out, "\n"+warningStyle.Render("⚠️  CONFLICT DETECTED"))
 	_, _ = fmt.Fprintln(out, "Local changes could not be automatically merged with remote updates.")
 	_, _ = fmt.Fprintln(out, "How would you like to proceed?")
 	_, _ = fmt.Fprintln(out, " [1] Keep both (add conflict markers to files) - RECOMMENDED")
@@ -669,34 +698,42 @@ func handlePullConflict(repoRoot, stashRef, scopePath string, in io.Reader, out 
 	if !scanner.Scan() {
 		return fmt.Errorf("failed to read user input")
 	}
-	choice := scanner.Text()
-
-	switch strings.TrimSpace(choice) {
+	rawChoice := strings.TrimSpace(scanner.Text())
+	var choice string
+	switch rawChoice {
 	case "2":
+		choice = choiceRemote
+	case "3":
+		choice = choiceLocal
+	default:
+		choice = choiceKeepBoth
+	}
+	return applyPullConflictChoice(choice, repoRoot, stashRef, scopePath, out)
+}
+
+func applyPullConflictChoice(choice, repoRoot, stashRef, scopePath string, out io.Writer) error {
+	switch choice {
+	case "remote":
 		_, _ = fmt.Fprintln(out, "Discarding local changes...")
-		// We already pulled remote, so we just need to reset the conflicted files or drop the stash.
-		// Actually, stash apply already modified the files with markers.
-		// We should checkout from HEAD.
 		_, err := runGit(repoRoot, "checkout", "HEAD", "--", scopePath)
 		if err != nil {
 			return fmt.Errorf("failed to discard local changes: %w", err)
 		}
 		_, _ = runGit(repoRoot, "stash", "drop", stashRef)
-		_, _ = fmt.Fprintln(out, "Local changes discarded. Remote version kept.")
+		_, _ = fmt.Fprintln(out, successStyle.Render("Local changes discarded. Remote version kept."))
 		return nil
-	case "3":
+	case "local":
 		_, _ = fmt.Fprintln(out, "Keeping local version...")
-		// Checkout from stash
 		_, err := runGit(repoRoot, "checkout", stashRef, "--", scopePath)
 		if err != nil {
 			return fmt.Errorf("failed to keep local version: %w", err)
 		}
 		_, _ = runGit(repoRoot, "stash", "drop", stashRef)
-		_, _ = fmt.Fprintln(out, "Remote updates overwritten by local version.")
+		_, _ = fmt.Fprintln(out, successStyle.Render("Remote updates overwritten by local version."))
 		return nil
-	default:
-		_, _ = fmt.Fprintf(out, "Conflict markers kept. Please resolve them manually and then run 'git stash drop %s'\n", stashRef)
-		return nil // Return nil because the user "handled" it by choosing to keep markers
+	default: // "keep"
+		_, _ = fmt.Fprintf(out, warningStyle.Render("Conflict markers kept. Please resolve them manually and then run 'git stash drop %s'.\n"), stashRef)
+		return nil
 	}
 }
 

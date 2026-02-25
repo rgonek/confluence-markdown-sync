@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/charmbracelet/huh"
 	"github.com/spf13/cobra"
 )
 
@@ -135,11 +136,13 @@ func runInit(cmd *cobra.Command, _ []string) error {
 	out := cmd.OutOrStdout()
 	repoCreated := false
 
+	ok := func(msg string) { _, _ = fmt.Fprintln(out, successStyle.Render("✓ "+msg)) }
+
 	// 1. Verify git is installed.
 	if _, err := exec.LookPath("git"); err != nil {
 		return fmt.Errorf("git is required but was not found in PATH: %w", err)
 	}
-	_, _ = fmt.Fprintln(out, "✓ git found")
+	ok("git found")
 
 	// 2. Initialize git repo if not already inside one.
 	if !isInsideGitRepo() {
@@ -147,17 +150,17 @@ func runInit(cmd *cobra.Command, _ []string) error {
 		if out, err := exec.Command("git", "init", "-b", "main").CombinedOutput(); err != nil {
 			return fmt.Errorf("git init failed: %s: %w", strings.TrimSpace(string(out)), err)
 		}
-		_, _ = fmt.Fprintln(cmd.OutOrStdout(), "✓ git repository initialized")
+		ok("git repository initialized")
 		repoCreated = true
 	} else {
-		_, _ = fmt.Fprintln(out, "✓ existing git repository detected")
+		ok("existing git repository detected")
 	}
 
 	// 3. Create or update .gitignore.
 	if err := ensureGitignore(); err != nil {
 		return fmt.Errorf("failed to update .gitignore: %w", err)
 	}
-	_, _ = fmt.Fprintln(out, "✓ .gitignore updated")
+	ok(".gitignore updated")
 
 	// 4. Ensure .env exists (prompt if missing).
 	envCreated, err := ensureDotEnv(cmd)
@@ -165,22 +168,22 @@ func runInit(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("failed to create .env: %w", err)
 	}
 	if envCreated {
-		_, _ = fmt.Fprintln(out, "✓ .env created")
+		ok(".env created")
 	} else {
-		_, _ = fmt.Fprintln(out, "✓ .env already exists")
+		ok(".env already exists")
 	}
 
 	// 5. Create AGENTS.md if missing.
 	if err := createIfMissing("AGENTS.md", agentsMDTemplate); err != nil {
 		return fmt.Errorf("failed to create AGENTS.md: %w", err)
 	}
-	_, _ = fmt.Fprintln(out, "✓ AGENTS.md ready")
+	ok("AGENTS.md ready")
 
 	// 6. Create README.md if missing.
 	if err := createIfMissing("README.md", readmeMDTemplate); err != nil {
 		return fmt.Errorf("failed to create README.md: %w", err)
 	}
-	_, _ = fmt.Fprintln(out, "✓ README.md ready")
+	ok("README.md ready")
 
 	if repoCreated {
 		committed, err := createInitCommit()
@@ -188,13 +191,13 @@ func runInit(cmd *cobra.Command, _ []string) error {
 			return err
 		}
 		if committed {
-			_, _ = fmt.Fprintln(out, "✓ initial commit created")
+			ok("initial commit created")
 		} else {
-			_, _ = fmt.Fprintln(out, "✓ initial commit skipped (no staged changes)")
+			ok("initial commit skipped (no staged changes)")
 		}
 	}
 
-	_, _ = fmt.Fprintln(out, "\nconf workspace initialized successfully.")
+	_, _ = fmt.Fprintln(out, "\n"+headingStyle.Render("conf workspace initialized successfully."))
 	return nil
 }
 
@@ -254,20 +257,45 @@ func ensureGitignore() error {
 }
 
 // ensureDotEnv creates .env with prompted credentials; returns true if file was created.
+// When running in a TTY it uses a huh.Form with password masking for the API token.
+// In non-TTY environments (pipes, tests) it falls back to plain-text prompts.
 func ensureDotEnv(cmd *cobra.Command) (bool, error) {
 	if _, err := os.Stat(".env"); err == nil {
 		return false, nil
 	}
 
-	in := cmd.InOrStdin()
 	out := cmd.OutOrStdout()
-
 	_, _ = fmt.Fprintln(out, "\nNo .env file found. Please enter your Atlassian credentials.")
-	scanner := bufio.NewScanner(in)
 
-	domain := promptField(scanner, out, "ATLASSIAN_DOMAIN (e.g. https://your-domain.atlassian.net)")
-	email := promptField(scanner, out, "ATLASSIAN_EMAIL")
-	token := promptField(scanner, out, "ATLASSIAN_API_TOKEN")
+	var domain, email, token string
+
+	if outputSupportsProgress(out) {
+		form := huh.NewForm(
+			huh.NewGroup(
+				huh.NewInput().
+					Title("ATLASSIAN_DOMAIN").
+					Placeholder("https://your-domain.atlassian.net").
+					Value(&domain),
+				huh.NewInput().
+					Title("ATLASSIAN_EMAIL").
+					Value(&email),
+				huh.NewInput().
+					Title("ATLASSIAN_API_TOKEN").
+					EchoMode(huh.EchoModePassword).
+					Value(&token),
+			),
+		).WithOutput(out)
+		if err := form.Run(); err != nil {
+			return false, err
+		}
+	} else {
+		// Plain-text fallback for non-TTY environments.
+		in := cmd.InOrStdin()
+		scanner := bufio.NewScanner(in)
+		domain = promptField(scanner, out, "ATLASSIAN_DOMAIN (e.g. https://your-domain.atlassian.net)")
+		email = promptField(scanner, out, "ATLASSIAN_EMAIL")
+		token = promptField(scanner, out, "ATLASSIAN_API_TOKEN")
+	}
 
 	lines := []string{
 		"# Atlassian / Confluence credentials",
