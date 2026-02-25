@@ -80,6 +80,9 @@ func runPull(cmd *cobra.Command, target config.Target) (runErr error) {
 	if err != nil {
 		return err
 	}
+	if flagPullForce && strings.TrimSpace(initialCtx.targetPageID) != "" {
+		return errors.New("--force is only supported for space targets")
+	}
 
 	// 2. Load config to talk to Confluence
 	envPath := findEnvPath(initialCtx.spaceDir)
@@ -112,9 +115,6 @@ func runPull(cmd *cobra.Command, target config.Target) (runErr error) {
 		targetPageID: initialCtx.targetPageID,
 	}
 
-	if flagPullForce && strings.TrimSpace(pullCtx.targetPageID) != "" {
-		return errors.New("--force is only supported for space targets")
-	}
 	scopeDirExisted := dirExists(pullCtx.spaceDir)
 
 	if err := os.MkdirAll(pullCtx.spaceDir, 0o750); err != nil {

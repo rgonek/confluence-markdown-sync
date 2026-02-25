@@ -138,7 +138,7 @@ func TestRunPull_NoopDoesNotCreateTag(t *testing.T) {
 		},
 		Body: "same body\n",
 	}
-	writeMarkdown(t, filepath.Join(spaceDir, "root.md"), baselineDoc)
+	writeMarkdown(t, filepath.Join(spaceDir, "Root.md"), baselineDoc)
 	if err := os.WriteFile(filepath.Join(repo, ".gitignore"), []byte(".env\n.confluence-state.json\n"), 0o600); err != nil {
 		t.Fatalf("write .gitignore: %v", err)
 	}
@@ -292,7 +292,7 @@ func TestRunPull_RecreatesMissingSpaceDirWithoutRestoringDeletionStash(t *testin
 	if err := os.MkdirAll(spaceDir, 0o750); err != nil {
 		t.Fatalf("mkdir space: %v", err)
 	}
-	writeMarkdown(t, filepath.Join(spaceDir, "root.md"), fs.MarkdownDocument{
+	writeMarkdown(t, filepath.Join(spaceDir, "Root.md"), fs.MarkdownDocument{
 		Frontmatter: fs.Frontmatter{
 			Title:                  "Root",
 			ID:                     "1",
@@ -349,8 +349,8 @@ func TestRunPull_RecreatesMissingSpaceDirWithoutRestoringDeletionStash(t *testin
 		t.Fatalf("runPull() error: %v", err)
 	}
 
-	if _, err := os.Stat(filepath.Join(spaceDir, "root.md")); err != nil {
-		t.Fatalf("expected root.md to be recreated after pull: %v", err)
+	if _, err := os.Stat(filepath.Join(spaceDir, "Root.md")); err != nil {
+		t.Fatalf("expected Root.md to be recreated after pull: %v", err)
 	}
 }
 
