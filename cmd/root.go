@@ -3,6 +3,7 @@ package cmd
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"os"
 
@@ -11,10 +12,12 @@ import (
 
 // automation flags shared by pull and push.
 var (
+	Version               = "dev"
 	flagYes               bool
 	flagNonInteractive    bool
 	flagSkipMissingAssets bool
 	flagVerbose           bool
+	flagVersion           bool
 )
 
 var rootCmd = &cobra.Command{
@@ -24,6 +27,13 @@ var rootCmd = &cobra.Command{
 
 It converts Confluence ADF content to Markdown for local editing,
 and converts Markdown back to ADF for publishing updates.`,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		if flagVersion {
+			_, err := fmt.Fprintln(cmd.OutOrStdout(), Version)
+			return err
+		}
+		return cmd.Help()
+	},
 }
 
 // Execute runs the root command.
@@ -48,6 +58,7 @@ func getCommandContext(cmd *cobra.Command) context.Context {
 
 func init() {
 	rootCmd.PersistentFlags().BoolVarP(&flagVerbose, "verbose", "v", false, "Enable verbose output (log HTTP requests)")
+	rootCmd.Flags().BoolVar(&flagVersion, "version", false, "Print conf version and exit")
 	rootCmd.PersistentPreRunE = func(cmd *cobra.Command, args []string) error {
 		level := slog.LevelWarn
 		if flagVerbose {
@@ -62,7 +73,7 @@ func init() {
 		newPushCmd(),
 		newValidateCmd(),
 		newDiffCmd(),
-		newAgentsCmd(),
 		newRelinkCmd(),
+		newVersionCmd(),
 	)
 }

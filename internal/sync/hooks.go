@@ -244,10 +244,20 @@ func NewReverseMediaHook(spaceDir string, attachmentIndex map[string]string) mdc
 		}
 
 		return mdconv.MediaParseOutput{
-			MediaType: "image", // TODO: Detect type based on extension if needed
+			MediaType: mediaTypeForDestination(destination),
 			ID:        id,
 			Handled:   true,
 			Alt:       in.Alt,
 		}, nil
+	}
+}
+
+func mediaTypeForDestination(destination string) string {
+	ext := strings.ToLower(filepath.Ext(destination))
+	switch ext {
+	case ".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp", ".bmp", ".ico", ".tif", ".tiff", ".avif", ".apng":
+		return "image"
+	default:
+		return "file"
 	}
 }

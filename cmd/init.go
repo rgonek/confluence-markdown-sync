@@ -112,7 +112,7 @@ ATLASSIAN_API_TOKEN=<your-api-token>
 `
 
 func newInitCmd() *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:   "init",
 		Short: "Initialize a conf workspace",
 		Long: `Init sets up the current directory as a conf workspace.
@@ -125,6 +125,10 @@ It will:
 		Args: cobra.NoArgs,
 		RunE: runInit,
 	}
+
+	cmd.AddCommand(newInitAgentsCmd())
+
+	return cmd
 }
 
 func runInit(cmd *cobra.Command, _ []string) error {

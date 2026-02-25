@@ -21,6 +21,8 @@ import (
 )
 
 func TestRunPush_UnresolvedValidationStopsBeforeRemoteWrites(t *testing.T) {
+	runParallelCommandTest(t)
+
 	repo := t.TempDir()
 	spaceDir := preparePushRepoWithBaseline(t, repo)
 
@@ -77,6 +79,8 @@ func TestRunPush_UnresolvedValidationStopsBeforeRemoteWrites(t *testing.T) {
 }
 
 func TestRunPush_ConflictPolicies(t *testing.T) {
+	runParallelCommandTest(t)
+
 	testCases := []struct {
 		name            string
 		policy          string
@@ -172,6 +176,8 @@ func TestRunPush_ConflictPolicies(t *testing.T) {
 }
 
 func TestRunPush_WritesStructuredCommitTrailers(t *testing.T) {
+	runParallelCommandTest(t)
+
 	repo := t.TempDir()
 	spaceDir := preparePushRepoWithBaseline(t, repo)
 
@@ -233,6 +239,8 @@ func TestRunPush_WritesStructuredCommitTrailers(t *testing.T) {
 }
 
 func TestRunPush_KeepsStateFileUntracked(t *testing.T) {
+	runParallelCommandTest(t)
+
 	repo := t.TempDir()
 	spaceDir := preparePushRepoWithBaseline(t, repo)
 
@@ -295,6 +303,8 @@ func TestRunPush_KeepsStateFileUntracked(t *testing.T) {
 }
 
 func TestRunPush_FileModeStillRequiresOnConflict(t *testing.T) {
+	runParallelCommandTest(t)
+
 	repo := t.TempDir()
 	spaceDir := preparePushRepoWithBaseline(t, repo)
 	rootFile := filepath.Join(spaceDir, "root.md")
@@ -349,6 +359,8 @@ func TestRunPush_FileModeStillRequiresOnConflict(t *testing.T) {
 }
 
 func TestRunPush_FileTargetDetectsWorkspaceChanges(t *testing.T) {
+	runParallelCommandTest(t)
+
 	repo := t.TempDir()
 	spaceDir := preparePushRepoWithBaseline(t, repo)
 	rootFile := filepath.Join(spaceDir, "root.md")
@@ -389,6 +401,8 @@ func TestRunPush_FileTargetDetectsWorkspaceChanges(t *testing.T) {
 }
 
 func TestRunPush_DryRunDoesNotMutateFrontmatter(t *testing.T) {
+	runParallelCommandTest(t)
+
 	repo := t.TempDir()
 	spaceDir := preparePushRepoWithBaseline(t, repo)
 
@@ -435,6 +449,8 @@ func TestRunPush_DryRunDoesNotMutateFrontmatter(t *testing.T) {
 }
 
 func TestRunPush_DryRunDoesNotMutateExistingFrontmatter(t *testing.T) {
+	runParallelCommandTest(t)
+
 	repo := t.TempDir()
 	spaceDir := preparePushRepoWithBaseline(t, repo)
 
@@ -468,6 +484,8 @@ func TestRunPush_DryRunDoesNotMutateExistingFrontmatter(t *testing.T) {
 }
 
 func TestRunPush_IncludesUntrackedAssetsFromWorkspaceSnapshot(t *testing.T) {
+	runParallelCommandTest(t)
+
 	repo := t.TempDir()
 	spaceDir := preparePushRepoWithBaseline(t, repo)
 
@@ -515,6 +533,8 @@ func TestRunPush_IncludesUntrackedAssetsFromWorkspaceSnapshot(t *testing.T) {
 }
 
 func TestRunPush_PreflightShowsPlanWithoutRemoteWrites(t *testing.T) {
+	runParallelCommandTest(t)
+
 	repo := t.TempDir()
 	spaceDir := preparePushRepoWithBaseline(t, repo)
 
@@ -574,6 +594,8 @@ func TestRunPush_PreflightShowsPlanWithoutRemoteWrites(t *testing.T) {
 }
 
 func TestRunPush_PreflightRejectsDryRunCombination(t *testing.T) {
+	runParallelCommandTest(t)
+
 	previousPreflight := flagPushPreflight
 	flagPushPreflight = true
 	t.Cleanup(func() { flagPushPreflight = previousPreflight })
@@ -589,6 +611,8 @@ func TestRunPush_PreflightRejectsDryRunCombination(t *testing.T) {
 }
 
 func TestRunPush_NoopSkipsSnapshotBranchAndTag(t *testing.T) {
+	runParallelCommandTest(t)
+
 	repo := t.TempDir()
 	spaceDir := preparePushRepoWithBaseline(t, repo)
 
@@ -638,6 +662,8 @@ func TestRunPush_NoopSkipsSnapshotBranchAndTag(t *testing.T) {
 }
 
 func TestRunPush_UsesStagedTrackedSnapshotContent(t *testing.T) {
+	runParallelCommandTest(t)
+
 	repo := t.TempDir()
 	spaceDir := preparePushRepoWithBaseline(t, repo)
 	rootPath := filepath.Join(spaceDir, "root.md")
@@ -682,6 +708,8 @@ func TestRunPush_UsesStagedTrackedSnapshotContent(t *testing.T) {
 }
 
 func TestRunPush_UsesUnstagedTrackedSnapshotContent(t *testing.T) {
+	runParallelCommandTest(t)
+
 	repo := t.TempDir()
 	spaceDir := preparePushRepoWithBaseline(t, repo)
 	rootPath := filepath.Join(spaceDir, "root.md")
@@ -725,6 +753,8 @@ func TestRunPush_UsesUnstagedTrackedSnapshotContent(t *testing.T) {
 }
 
 func TestRunPush_UsesStagedDeletionFromWorkspaceSnapshot(t *testing.T) {
+	runParallelCommandTest(t)
+
 	repo := t.TempDir()
 	spaceDir := preparePushRepoWithBaseline(t, repo)
 	rootPath := filepath.Join(spaceDir, "root.md")
@@ -760,6 +790,8 @@ func TestRunPush_UsesStagedDeletionFromWorkspaceSnapshot(t *testing.T) {
 }
 
 func TestRunPush_SpaceModeAssumesPullMerge(t *testing.T) {
+	runParallelCommandTest(t)
+
 	repo := t.TempDir()
 	spaceDir := preparePushRepoWithBaseline(t, repo)
 
@@ -813,6 +845,8 @@ func TestRunPush_SpaceModeAssumesPullMerge(t *testing.T) {
 }
 
 func TestRunPush_NonInteractiveRequiresYesForDeleteConfirmation(t *testing.T) {
+	runParallelCommandTest(t)
+
 	repo := t.TempDir()
 	spaceDir := preparePushRepoWithBaseline(t, repo)
 
@@ -854,6 +888,8 @@ func TestRunPush_NonInteractiveRequiresYesForDeleteConfirmation(t *testing.T) {
 }
 
 func TestRunPush_YesBypassesDeleteConfirmation(t *testing.T) {
+	runParallelCommandTest(t)
+
 	repo := t.TempDir()
 	spaceDir := preparePushRepoWithBaseline(t, repo)
 
@@ -887,6 +923,8 @@ func TestRunPush_YesBypassesDeleteConfirmation(t *testing.T) {
 }
 
 func TestRunPush_WorksWithoutGitRemoteConfigured(t *testing.T) {
+	runParallelCommandTest(t)
+
 	repo := t.TempDir()
 	spaceDir := preparePushRepoWithBaseline(t, repo)
 
@@ -928,6 +966,8 @@ func TestRunPush_WorksWithoutGitRemoteConfigured(t *testing.T) {
 }
 
 func TestRunPush_FailureRetainsSnapshotAndSyncBranch(t *testing.T) {
+	runParallelCommandTest(t)
+
 	repo := t.TempDir()
 	spaceDir := preparePushRepoWithBaseline(t, repo)
 
@@ -980,6 +1020,8 @@ func TestRunPush_FailureRetainsSnapshotAndSyncBranch(t *testing.T) {
 }
 
 func TestRunPush_PreservesOutOfScopeChanges(t *testing.T) {
+	runParallelCommandTest(t)
+
 	repo := t.TempDir()
 	spaceDir := preparePushRepoWithBaseline(t, repo)
 

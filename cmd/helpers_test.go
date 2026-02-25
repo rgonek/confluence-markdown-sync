@@ -5,10 +5,25 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/rgonek/confluence-markdown-sync/internal/fs"
 )
+
+var (
+	commandTestMu sync.Mutex
+	setupEnvOnce  sync.Once
+	setupEnvErr   error
+)
+
+func runParallelCommandTest(t *testing.T) {
+	t.Helper()
+	t.Parallel()
+
+	commandTestMu.Lock()
+	t.Cleanup(commandTestMu.Unlock)
+}
 
 func setupGitRepo(t *testing.T, repo string) {
 	t.Helper()
@@ -64,9 +79,24 @@ func simpleADF(text string) map[string]any {
 
 func setupEnv(t *testing.T) {
 	t.Helper()
-	t.Setenv("ATLASSIAN_DOMAIN", "https://example.atlassian.net")
-	t.Setenv("ATLASSIAN_EMAIL", "user@example.com")
-	t.Setenv("ATLASSIAN_API_TOKEN", "token-123")
+
+	setupEnvOnce.Do(func() {
+		if err := os.Setenv("ATLASSIAN_DOMAIN", "https://example.atlassian.net"); err != nil {
+			setupEnvErr = err
+			return
+		}
+		if err := os.Setenv("ATLASSIAN_EMAIL", "user@example.com"); err != nil {
+			setupEnvErr = err
+			return
+		}
+		if err := os.Setenv("ATLASSIAN_API_TOKEN", "token-123"); err != nil {
+			setupEnvErr = err
+		}
+	})
+
+	if setupEnvErr != nil {
+		t.Fatalf("setup env: %v", setupEnvErr)
+	}
 }
 
 func chdirRepo(t *testing.T, repo string) {

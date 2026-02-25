@@ -71,7 +71,7 @@ jobs:
         run: |
           mkdir -p dist
           output="dist/conf-${GOOS}-${GOARCH}${{ matrix.ext }}"
-          go build -trimpath -ldflags "-s -w" -o "$output" ./cmd/conf
+          go build -trimpath -ldflags "-s -w -X github.com/rgonek/confluence-markdown-sync/cmd.Version=${{ github.ref_name }}" -o "$output" ./cmd/conf
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
