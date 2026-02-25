@@ -165,6 +165,10 @@ Markdown frontmatter keys:
   - `space`
 - sync-managed keys:
   - `version`
+  - `created_by`
+  - `created_at`
+  - `updated_by`
+  - `updated_at`
 - user-editable keys:
   - `state` (lifecycle: `draft` | `current`)
   - `status` (visual lozenge: e.g., "Ready to review")
