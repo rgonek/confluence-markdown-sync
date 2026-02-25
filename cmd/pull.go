@@ -160,10 +160,13 @@ func runPull(cmd *cobra.Command, target config.Target) (runErr error) {
 		}
 		if stashRef != "" {
 			defer func() {
-				if flagPullDiscardLocal {
+				if flagPullDiscardLocal && runErr == nil {
 					_, _ = fmt.Fprintf(out, "Discarding local changes (dropped stash %s)\n", stashRef)
 					_, _ = runGit(repoRoot, "stash", "drop", stashRef)
 					return
+				}
+				if flagPullDiscardLocal && runErr != nil {
+					_, _ = fmt.Fprintf(out, "Pull failed; preserving local changes from stash %s\n", stashRef)
 				}
 
 				if runErr != nil {
@@ -406,8 +409,52 @@ func resolveInitialPullContext(target config.Target) (initialPullContext, error)
 }
 
 func cleanupFailedPullScope(repoRoot, scopePath string) {
-	_, _ = runGit(repoRoot, "clean", "-fd", "--", scopePath)
-	_, _ = runGit(repoRoot, "checkout", "HEAD", "--", scopePath)
+	if _, err := runGit(repoRoot, "restore", "--source=HEAD", "--staged", "--worktree", "--", scopePath); err != nil {
+		_, _ = runGit(repoRoot, "checkout", "HEAD", "--", scopePath)
+	}
+	removeScopedPullGeneratedFiles(repoRoot, scopePath)
+}
+
+func removeScopedPullGeneratedFiles(repoRoot, scopePath string) {
+	out, err := runGit(repoRoot, "ls-files", "--others", "--exclude-standard", "--", scopePath)
+	if err != nil {
+		return
+	}
+
+	for _, line := range strings.Split(strings.ReplaceAll(out, "\r\n", "\n"), "\n") {
+		repoPath := strings.TrimSpace(line)
+		if repoPath == "" {
+			continue
+		}
+		repoPath = filepath.ToSlash(filepath.Clean(repoPath))
+		if !isPullGeneratedPath(repoPath) {
+			continue
+		}
+		_ = os.RemoveAll(filepath.Join(repoRoot, filepath.FromSlash(repoPath)))
+	}
+}
+
+func isPullGeneratedPath(repoPath string) bool {
+	normalized := strings.TrimSpace(filepath.ToSlash(filepath.Clean(repoPath)))
+	if normalized == "" || normalized == "." {
+		return false
+	}
+
+	if strings.EqualFold(filepath.Base(normalized), fs.StateFileName) {
+		return true
+	}
+	if strings.HasSuffix(strings.ToLower(normalized), ".md") {
+		return true
+	}
+
+	segments := strings.Split(normalized, "/")
+	for _, segment := range segments {
+		if strings.EqualFold(segment, "assets") {
+			return true
+		}
+	}
+
+	return false
 }
 
 func findSpaceDirFromFile(filePath, spaceKey string) string {

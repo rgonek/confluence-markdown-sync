@@ -16,8 +16,8 @@ Deliver a production-grade reliability and operations baseline for conf by closi
 - [x] Remove placeholder fallback in strict reverse link handling so unresolved internal links fail consistently in validate and push (internal/sync/hooks.go:179, cmd/validate.go:326, internal/sync/push.go:468).
 - [ ] Split push into preflight planning and mutation phases so intent is resolved before remote writes begin (internal/sync/push.go:430, internal/sync/push.go:491, internal/sync/push.go:554).
 - [ ] Add rollback handlers for partial push failures, including created pages, uploaded assets, and metadata drift, and report rollback outcomes in diagnostics (internal/sync/push.go:317, internal/sync/push.go:1034).
-- [ ] Change pull discard-local semantics to drop stash only after successful pull completion, preventing local loss on unrelated failures (cmd/pull.go:163).
-- [ ] Replace broad pull cleanup with scoped restoration that minimizes destructive resets while preserving user-authored content (cmd/pull.go:423, cmd/pull.go:424).
+- [x] Change pull discard-local semantics to drop stash only after successful pull completion, preventing local loss on unrelated failures (cmd/pull.go:163).
+- [x] Replace broad pull cleanup with scoped restoration that minimizes destructive resets while preserving user-authored content (cmd/pull.go:423, cmd/pull.go:424).
 - [x] Unify incremental pagination to use continuation semantics across estimate and execution paths and prevent offset drift (internal/sync/pull.go:793, internal/sync/pull.go:814, cmd/pull.go:776).
 - [x] Persist SpaceKey as authoritative sync state and remove markdown-scan fallback inference during target resolution (internal/fs/state.go:18, internal/sync/pull.go:619, cmd/pull.go:319).
 - [x] Propagate command context through diff and validate conversion paths so cancellation immediately stops expensive operations (cmd/conf/main.go:13, cmd/diff.go:58, cmd/validate.go:326).
