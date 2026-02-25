@@ -24,7 +24,7 @@ Deliver a production-grade reliability and operations baseline for conf by closi
 - [x] Extend retry behavior to include transient network and timeout failures while preserving idempotent remote interactions (internal/confluence/client.go:763, internal/confluence/retry.go:18).
 - [x] Make retry and rate-limit policies operator-configurable through flags and environment to handle tenant-specific quotas (internal/confluence/ratelimit.go:8, cmd/root.go:59).
 - [x] Add explicit client close lifecycle for limiter resources so long-running automation does not leak background goroutines (internal/confluence/ratelimit.go:60, internal/confluence/client.go:120).
-- [ ] Raise quality gates and add tests for uncovered high-risk paths in push, relink, progress, and root command wiring (internal/sync/push.go:260, internal/sync/push.go:1034, cmd/relink.go:139, cmd/progress.go:17, cmd/root.go:40, tools/coveragecheck/main.go:22, .golangci.yml:7).
+- [x] Raise quality gates and add tests for uncovered high-risk paths in push, relink, progress, and root command wiring (internal/sync/push.go:260, internal/sync/push.go:1034, cmd/relink.go:139, cmd/progress.go:17, cmd/root.go:40, tools/coveragecheck/main.go:22, .golangci.yml:7).
 - [ ] Rework e2e suites to require sandbox configuration and remove hardcoded live identifiers so tests align with safety policy (cmd/e2e_test.go:25, cmd/e2e_test.go:171, cmd/e2e_test.go:258, AGENTS.md:55).
 - [ ] Expand release workflow with checksums, signing, SBOM generation, vulnerability scanning, and publish steps for verifiable artifacts (.github/workflows/release.yml:34).
 - [ ] Replace shell-specific clean behavior and validate developer targets on Windows and Linux to improve portability (Makefile:44, .github/workflows/ci.yml:21).

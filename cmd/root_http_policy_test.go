@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -94,6 +95,24 @@ func TestApplyHTTPPolicyEnvOverrides_RejectsInvalidDuration(t *testing.T) {
 	err := applyHTTPPolicyEnvOverrides(&cobra.Command{Use: "test"})
 	if err == nil {
 		t.Fatal("expected invalid duration error")
+	}
+}
+
+func TestGetCommandContext_FallsBackToBackground(t *testing.T) {
+	ctx := getCommandContext(&cobra.Command{})
+	if ctx == nil {
+		t.Fatal("expected non-nil context")
+	}
+}
+
+func TestGetCommandContext_UsesCommandContext(t *testing.T) {
+	parent := context.WithValue(context.Background(), "k", "v") //nolint:revive // test key is intentionally local
+	cmd := &cobra.Command{}
+	cmd.SetContext(parent)
+
+	ctx := getCommandContext(cmd)
+	if got := ctx.Value("k"); got != "v" {
+		t.Fatalf("context value = %v, want v", got)
 	}
 }
 

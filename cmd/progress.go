@@ -8,6 +8,8 @@ import (
 	"github.com/schollz/progressbar/v3"
 )
 
+var progressDescriptionSwitchDelay = 100 * time.Millisecond
+
 type consoleProgress struct {
 	bar         *progressbar.ProgressBar
 	out         io.Writer
@@ -33,7 +35,9 @@ func newConsoleProgress(out io.Writer, description string) *consoleProgress {
 func (p *consoleProgress) SetDescription(desc string) {
 	// Add a small sleep when switching descriptions to prevent flickering
 	// and ensure the user can see the transition
-	time.Sleep(100 * time.Millisecond)
+	if progressDescriptionSwitchDelay > 0 {
+		time.Sleep(progressDescriptionSwitchDelay)
+	}
 	p.description = desc
 	p.bar.Describe(desc)
 }
