@@ -21,6 +21,8 @@ import (
 )
 
 func TestRunPull_RestoresScopedStashAndCreatesTag(t *testing.T) {
+	runParallelCommandTest(t)
+
 	repo := t.TempDir()
 	setupGitRepo(t, repo)
 
@@ -121,6 +123,8 @@ func TestRunPull_RestoresScopedStashAndCreatesTag(t *testing.T) {
 }
 
 func TestRunPull_FailureCleanupPreservesStateFile(t *testing.T) {
+	runParallelCommandTest(t)
+
 	repo := t.TempDir()
 	setupGitRepo(t, repo)
 
@@ -216,6 +220,8 @@ func TestRunPull_FailureCleanupPreservesStateFile(t *testing.T) {
 }
 
 func TestRunPull_NoopDoesNotCreateTag(t *testing.T) {
+	runParallelCommandTest(t)
+
 	repo := t.TempDir()
 	setupGitRepo(t, repo)
 
@@ -309,6 +315,8 @@ func TestRunPull_NoopDoesNotCreateTag(t *testing.T) {
 }
 
 func TestRunPull_NonInteractiveRequiresYesForHighImpact(t *testing.T) {
+	runParallelCommandTest(t)
+
 	repo := t.TempDir()
 	setupGitRepo(t, repo)
 
@@ -345,6 +353,8 @@ func TestRunPull_NonInteractiveRequiresYesForHighImpact(t *testing.T) {
 }
 
 func TestRunPull_YesBypassesHighImpactConfirmation(t *testing.T) {
+	runParallelCommandTest(t)
+
 	repo := t.TempDir()
 	setupGitRepo(t, repo)
 
@@ -385,6 +395,8 @@ func TestRunPull_YesBypassesHighImpactConfirmation(t *testing.T) {
 }
 
 func TestRunPull_RecreatesMissingSpaceDirWithoutRestoringDeletionStash(t *testing.T) {
+	runParallelCommandTest(t)
+
 	repo := t.TempDir()
 	setupGitRepo(t, repo)
 
@@ -455,6 +467,8 @@ func TestRunPull_RecreatesMissingSpaceDirWithoutRestoringDeletionStash(t *testin
 }
 
 func TestRunPull_ForcePullRefreshesEntireSpace(t *testing.T) {
+	runParallelCommandTest(t)
+
 	repo := t.TempDir()
 	setupGitRepo(t, repo)
 
@@ -539,6 +553,8 @@ func TestRunPull_ForcePullRefreshesEntireSpace(t *testing.T) {
 }
 
 func TestRunPull_ForceFlagRejectedForFileTarget(t *testing.T) {
+	runParallelCommandTest(t)
+
 	repo := t.TempDir()
 	setupGitRepo(t, repo)
 
@@ -685,6 +701,8 @@ func (f *cmdFakePullRemote) DownloadAttachment(_ context.Context, attachmentID s
 }
 
 func TestRunPull_DraftSpaceListing(t *testing.T) {
+	runParallelCommandTest(t)
+
 	repo := t.TempDir()
 	setupGitRepo(t, repo)
 
