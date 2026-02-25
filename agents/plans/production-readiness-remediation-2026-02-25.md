@@ -102,6 +102,8 @@ Close production-readiness gaps in `conf` before broad rollout.
 ---
 
 ### P0-5: Tighten strict media/link validation behavior
+**Status (2026-02-25): ✅ Completed in PR-C (`phase/pr-c-strict-media-links`).**
+
 **Problem**
 - Strict reverse conversion should fail unresolved assets/links consistently with push behavior; placeholders can mask unresolved states.
 

@@ -91,13 +91,12 @@ func runValidateTarget(out io.Writer, target config.Target) error {
 	immutableResolver := newValidateImmutableFrontmatterResolver(ctx.spaceDir, ctx.spaceKey, state)
 
 	linkHook := syncflow.NewReverseLinkHook(ctx.spaceDir, index, cfg.Domain)
-	mediaHook := syncflow.NewReverseMediaHook(ctx.spaceDir, state.AttachmentIndex)
 
 	hasErrors := false
 	for _, file := range ctx.files {
 		rel, _ := filepath.Rel(ctx.spaceDir, file)
 
-		issues := validateFile(file, linkHook, mediaHook)
+		issues := validateFile(file, ctx.spaceDir, linkHook, state.AttachmentIndex)
 		issues = append(issues, immutableResolver.validate(file)...)
 		if len(issues) == 0 {
 			continue
@@ -297,7 +296,7 @@ func (r *validateImmutableFrontmatterResolver) readBaselineFrontmatter(absPath s
 	return doc.Frontmatter, true
 }
 
-func validateFile(path string, linkHook mdconverter.LinkParseHook, mediaHook mdconverter.MediaParseHook) []fs.ValidationIssue {
+func validateFile(path, spaceDir string, linkHook mdconverter.LinkParseHook, attachmentIndex map[string]string) []fs.ValidationIssue {
 	var issues []fs.ValidationIssue
 
 	// Read full document
@@ -312,6 +311,16 @@ func validateFile(path string, linkHook mdconverter.LinkParseHook, mediaHook mdc
 	// 1. Validate Schema
 	res := fs.ValidateFrontmatterSchema(doc.Frontmatter)
 	issues = append(issues, res.Issues...)
+
+	strictAttachmentIndex, _, err := syncflow.BuildStrictAttachmentIndex(spaceDir, path, doc.Body, attachmentIndex)
+	if err != nil {
+		issues = append(issues, fs.ValidationIssue{
+			Code:    "conversion_error",
+			Message: err.Error(),
+		})
+		return issues
+	}
+	mediaHook := syncflow.NewReverseMediaHook(spaceDir, strictAttachmentIndex)
 
 	// 2. Strict Conversion
 	_, err = converter.Reverse(context.Background(), []byte(doc.Body), converter.ReverseConfig{

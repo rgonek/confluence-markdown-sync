@@ -402,3 +402,53 @@ func TestPush_BlocksCurrentToDraftTransition(t *testing.T) {
 		t.Fatalf("markdown file should remain present: %v", statErr)
 	}
 }
+
+func TestBuildStrictAttachmentIndex_AssignsPendingIDsForLocalAssets(t *testing.T) {
+	spaceDir := t.TempDir()
+	sourcePath := filepath.Join(spaceDir, "root.md")
+	assetPath := filepath.Join(spaceDir, "assets", "new.png")
+
+	if err := os.MkdirAll(filepath.Dir(assetPath), 0o750); err != nil {
+		t.Fatalf("mkdir assets dir: %v", err)
+	}
+	if err := os.WriteFile(assetPath, []byte("png"), 0o600); err != nil {
+		t.Fatalf("write asset: %v", err)
+	}
+
+	index, refs, err := BuildStrictAttachmentIndex(
+		spaceDir,
+		sourcePath,
+		"![asset](assets/new.png)\n",
+		map[string]string{},
+	)
+	if err != nil {
+		t.Fatalf("BuildStrictAttachmentIndex() error: %v", err)
+	}
+	if len(refs) != 1 || refs[0] != "assets/new.png" {
+		t.Fatalf("referenced assets = %v, want [assets/new.png]", refs)
+	}
+	if got := strings.TrimSpace(index["assets/new.png"]); !strings.HasPrefix(got, "pending-attachment-") {
+		t.Fatalf("expected pending attachment id for assets/new.png, got %q", got)
+	}
+}
+
+func TestCollectReferencedAssetPaths_FailsForNonAssetsReference(t *testing.T) {
+	spaceDir := t.TempDir()
+	sourcePath := filepath.Join(spaceDir, "root.md")
+	nonAssetPath := filepath.Join(spaceDir, "images", "outside.png")
+
+	if err := os.MkdirAll(filepath.Dir(nonAssetPath), 0o750); err != nil {
+		t.Fatalf("mkdir images dir: %v", err)
+	}
+	if err := os.WriteFile(nonAssetPath, []byte("png"), 0o600); err != nil {
+		t.Fatalf("write image: %v", err)
+	}
+
+	_, err := CollectReferencedAssetPaths(spaceDir, sourcePath, "![asset](images/outside.png)\n")
+	if err == nil {
+		t.Fatal("expected non-assets media reference to fail")
+	}
+	if !strings.Contains(err.Error(), "assets/") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}

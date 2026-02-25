@@ -459,7 +459,11 @@ func pushUpsertPage(
 	}
 
 	linkHook := NewReverseLinkHook(opts.SpaceDir, pageIDByPath, opts.Domain)
-	mediaHook := NewReverseMediaHook(opts.SpaceDir, attachmentIDByPath)
+	strictAttachmentIndex, referencedAssetPaths, err := BuildStrictAttachmentIndex(opts.SpaceDir, absPath, doc.Body, attachmentIDByPath)
+	if err != nil {
+		return PushCommitPlan{}, fmt.Errorf("resolve assets for %s: %w", relPath, err)
+	}
+	mediaHook := NewReverseMediaHook(opts.SpaceDir, strictAttachmentIndex)
 
 	if _, err := converter.Reverse(ctx, []byte(doc.Body), converter.ReverseConfig{
 		LinkHook:  linkHook,
@@ -467,11 +471,6 @@ func pushUpsertPage(
 		Strict:    true,
 	}, absPath); err != nil {
 		return PushCommitPlan{}, fmt.Errorf("strict conversion failed for %s: %w", relPath, err)
-	}
-
-	referencedAssetPaths, err := collectReferencedAssetPaths(opts.SpaceDir, absPath, doc.Body)
-	if err != nil {
-		return PushCommitPlan{}, fmt.Errorf("resolve assets for %s: %w", relPath, err)
 	}
 
 	touchedAssets := make([]string, 0)
@@ -759,7 +758,37 @@ func isIndexFile(path string) bool {
 	return name == dir
 }
 
-func collectReferencedAssetPaths(spaceDir, sourcePath, body string) ([]string, error) {
+func BuildStrictAttachmentIndex(spaceDir, sourcePath, body string, attachmentIndex map[string]string) (map[string]string, []string, error) {
+	referencedAssetPaths, err := CollectReferencedAssetPaths(spaceDir, sourcePath, body)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	strictAttachmentIndex := cloneStringMap(attachmentIndex)
+	seedPendingAttachmentIDs(strictAttachmentIndex, referencedAssetPaths)
+	return strictAttachmentIndex, referencedAssetPaths, nil
+}
+
+func seedPendingAttachmentIDs(attachmentIndex map[string]string, assetPaths []string) {
+	for _, assetPath := range assetPaths {
+		if strings.TrimSpace(attachmentIndex[assetPath]) != "" {
+			continue
+		}
+		attachmentIndex[assetPath] = pendingAttachmentID(assetPath)
+	}
+}
+
+func pendingAttachmentID(assetPath string) string {
+	normalized := strings.TrimSpace(strings.ToLower(filepath.ToSlash(assetPath)))
+	normalized = strings.ReplaceAll(normalized, "/", "-")
+	normalized = strings.ReplaceAll(normalized, " ", "-")
+	if normalized == "" {
+		normalized = "asset"
+	}
+	return "pending-attachment-" + normalized
+}
+
+func CollectReferencedAssetPaths(spaceDir, sourcePath, body string) ([]string, error) {
 	matches := markdownImageRefPattern.FindAllStringSubmatch(body, -1)
 	if len(matches) == 0 {
 		return nil, nil
@@ -799,7 +828,7 @@ func collectReferencedAssetPaths(spaceDir, sourcePath, body string) ([]string, e
 		}
 		relPath = normalizeRelPath(relPath)
 		if !strings.HasPrefix(relPath, "assets/") {
-			continue
+			return nil, fmt.Errorf("asset reference must remain under assets/: %s", destination)
 		}
 		paths[relPath] = struct{}{}
 	}
