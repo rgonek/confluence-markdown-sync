@@ -4,10 +4,12 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/rgonek/confluence-markdown-sync/internal/config"
 	"github.com/rgonek/confluence-markdown-sync/internal/converter"
@@ -57,13 +59,34 @@ If omitted, the space is inferred from the current directory name.`,
 				raw = args[0]
 			}
 			target := config.ParseTarget(raw)
-			return runValidateTargetWithContext(getCommandContext(cmd), cmd.OutOrStdout(), target)
+			return runValidateCommand(cmd, target)
 		},
 	}
 }
 
 func runValidateTarget(out io.Writer, target config.Target) error {
 	return runValidateTargetWithContext(context.Background(), out, target)
+}
+
+func runValidateCommand(cmd *cobra.Command, target config.Target) (runErr error) {
+	_, restoreLogger := beginCommandRun("validate")
+	defer restoreLogger()
+
+	startedAt := time.Now()
+	slog.Info("validate_started", "target_mode", target.Mode, "target", target.Value)
+	defer func() {
+		duration := time.Since(startedAt)
+		if runErr != nil {
+			slog.Warn("validate_finished",
+				"duration_ms", duration.Milliseconds(),
+				"error", runErr.Error(),
+			)
+			return
+		}
+		slog.Info("validate_finished", "duration_ms", duration.Milliseconds())
+	}()
+
+	return runValidateTargetWithContext(getCommandContext(cmd), cmd.OutOrStdout(), target)
 }
 
 func runValidateTargetWithContext(ctx context.Context, out io.Writer, target config.Target) error {

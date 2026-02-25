@@ -115,6 +115,33 @@ func TestListSpaces_UsesExpectedEndpointAndAuth(t *testing.T) {
 	}
 }
 
+func TestListSpaces_UsesConfiguredUserAgent(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("User-Agent"); got != "conf/1.2.3" {
+			t.Fatalf("User-Agent = %q, want conf/1.2.3", got)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		if _, err := io.WriteString(w, `{"results":[]}`); err != nil {
+			t.Fatalf("write response: %v", err)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	client, err := NewClient(ClientConfig{
+		BaseURL:   server.URL,
+		Email:     "user@example.com",
+		APIToken:  "token-123",
+		UserAgent: "conf/1.2.3",
+	})
+	if err != nil {
+		t.Fatalf("NewClient() unexpected error: %v", err)
+	}
+
+	if _, err := client.ListSpaces(context.Background(), SpaceListOptions{Limit: 1}); err != nil {
+		t.Fatalf("ListSpaces() unexpected error: %v", err)
+	}
+}
+
 func TestGetPage_NotFound(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"message":"missing"}`, http.StatusNotFound)

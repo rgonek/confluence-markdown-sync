@@ -85,6 +85,9 @@ func validateOnConflict(v string) error {
 func runPush(cmd *cobra.Command, target config.Target, onConflict string, dryRun bool) (runErr error) {
 	ctx := getCommandContext(cmd)
 	out := ensureSynchronizedCmdOutput(cmd)
+	_, restoreLogger := beginCommandRun("push")
+	defer restoreLogger()
+
 	preflight := flagPushPreflight
 	startedAt := time.Now()
 	telemetrySpaceKey := "unknown"

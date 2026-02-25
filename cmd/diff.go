@@ -5,11 +5,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/rgonek/confluence-markdown-sync/internal/config"
 	"github.com/rgonek/confluence-markdown-sync/internal/confluence"
@@ -50,7 +52,29 @@ If omitted, the space is inferred from the current directory name.`,
 	}
 }
 
-func runDiff(cmd *cobra.Command, target config.Target) error {
+func runDiff(cmd *cobra.Command, target config.Target) (runErr error) {
+	_, restoreLogger := beginCommandRun("diff")
+	defer restoreLogger()
+
+	startedAt := time.Now()
+	telemetrySpaceKey := "unknown"
+	slog.Info("diff_started", "target_mode", target.Mode, "target", target.Value)
+	defer func() {
+		duration := time.Since(startedAt)
+		if runErr != nil {
+			slog.Warn("diff_finished",
+				"space_key", telemetrySpaceKey,
+				"duration_ms", duration.Milliseconds(),
+				"error", runErr.Error(),
+			)
+			return
+		}
+		slog.Info("diff_finished",
+			"space_key", telemetrySpaceKey,
+			"duration_ms", duration.Milliseconds(),
+		)
+	}()
+
 	ctx := getCommandContext(cmd)
 	if err := ctx.Err(); err != nil {
 		return err
@@ -89,6 +113,7 @@ func runDiff(cmd *cobra.Command, target config.Target) error {
 		spaceDir:     spaceDir,
 		targetPageID: initialCtx.targetPageID,
 	}
+	telemetrySpaceKey = diffCtx.spaceKey
 	if target.IsFile() {
 		absPath, err := filepath.Abs(target.Value)
 		if err == nil {

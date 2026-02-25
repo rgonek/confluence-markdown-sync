@@ -153,6 +153,7 @@ Highlights:
 - isolated sync branch and worktree execution,
 - per-page commit metadata with Confluence trailers,
 - recovery refs retained on failures,
+- archive deletes require long-task completion (`--archive-task-timeout`, `--archive-task-poll-interval`),
 - `--preflight` for a concise local push plan (change summary + validation) without remote writes.
 
 ## Metadata and State

@@ -163,7 +163,10 @@ Each slice should be mergeable independently with tests and docs updates.
   - Replaced regex relink matching with Goldmark AST traversal to plan true link destination rewrites.
   - Added a destination-span markdown rewriter that updates only link destination tokens while preserving surrounding text.
   - Added coverage for code spans/fences, anchors + titles, escaped/nested labels, and no-op documents.
-- [ ] Slice 5: Versioned UA and run-correlation logging.
+- [x] Slice 5: Versioned UA and run-correlation logging.
+  - Added versioned user-agent propagation (`conf/<version>`) from CLI version into Confluence client config.
+  - Added per-command run IDs for `pull`, `push`, `diff`, and `validate` with lifecycle logs carrying `run_id` + `command`.
+  - Added tests for UA propagation, run ID stability across lifecycle logs, and existing non-leak logging guarantees.
 
 ## Verification Criteria
 
