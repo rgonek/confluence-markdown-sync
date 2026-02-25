@@ -16,6 +16,8 @@ Close production-readiness gaps in `conf` before broad rollout.
 ## P0 - Release Blockers
 
 ### P0-1: Enforce immutable frontmatter integrity in `validate`
+**Status (2026-02-25): ✅ Completed in PR-B (`phase/pr-b-validation-integrity`).**
+
 **Problem**
 - `validate` currently checks schema + strict conversion but does not enforce immutable key integrity (`id`, `space`) or `current -> draft` restriction.
 
