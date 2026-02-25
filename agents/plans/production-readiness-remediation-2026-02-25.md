@@ -145,6 +145,8 @@ Close production-readiness gaps in `conf` before broad rollout.
 ## P1 - High-Value Hardening
 
 ### P1-1: CI gate hardening
+**Status (2026-02-25): ✅ Completed in PR-F (`phase/pr-f-ci-docs-relink`).**
+
 - Make lint blocking (remove `continue-on-error` for lint in CI).
 - Keep `vet` + tests as required checks.
 
@@ -154,7 +156,7 @@ Close production-readiness gaps in `conf` before broad rollout.
 ---
 
 ### P1-2: Docs and behavior alignment
-**Status (2026-02-25): 🟡 Partially completed in PR-A (`phase/pr-a-state-invariant-docs`).**
+**Status (2026-02-25): ✅ Completed across PR-A + PR-F (`phase/pr-a-state-invariant-docs`, `phase/pr-f-ci-docs-relink`).**
 
 - Update docs to reflect actual command set (`agents`, `relink` included).
 - Correct CI/build snippet to `go build -o conf ./cmd/conf`.
@@ -168,6 +170,8 @@ Close production-readiness gaps in `conf` before broad rollout.
 ---
 
 ### P1-3: Relink confirmation semantics
+**Status (2026-02-25): ✅ Completed in PR-F (`phase/pr-f-ci-docs-relink`).**
+
 - Ensure relink confirmation is actually enforced for impactful changes.
 - Pass real changed counts into safety confirmation path.
 
