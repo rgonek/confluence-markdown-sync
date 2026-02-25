@@ -3,6 +3,8 @@ package cmd
 
 import (
 	"context"
+	"log/slog"
+	"os"
 
 	"github.com/spf13/cobra"
 )
@@ -46,6 +48,14 @@ func getCommandContext(cmd *cobra.Command) context.Context {
 
 func init() {
 	rootCmd.PersistentFlags().BoolVarP(&flagVerbose, "verbose", "v", false, "Enable verbose output (log HTTP requests)")
+	rootCmd.PersistentPreRunE = func(cmd *cobra.Command, args []string) error {
+		level := slog.LevelWarn
+		if flagVerbose {
+			level = slog.LevelDebug
+		}
+		slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level})))
+		return nil
+	}
 	rootCmd.AddCommand(
 		newInitCmd(),
 		newPullCmd(),

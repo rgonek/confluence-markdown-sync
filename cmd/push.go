@@ -1,8 +1,10 @@
 package cmd
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -27,7 +29,6 @@ var newPushRemote = func(cfg *config.Config) (syncflow.PushRemote, error) {
 		BaseURL:  cfg.Domain,
 		Email:    cfg.Email,
 		APIToken: cfg.APIToken,
-		Verbose:  flagVerbose,
 	})
 }
 
@@ -139,144 +140,14 @@ func runPush(cmd *cobra.Command, target config.Target, onConflict string, dryRun
 	}
 
 	if preflight {
-		baselineRef, err := gitPushBaselineRef(gitClient, spaceKey)
-		if err != nil {
-			return err
-		}
-		syncChanges, err := collectSyncPushChanges(gitClient, baselineRef, spaceScopePath, gitClient.RootDir, spaceDir)
-		if err != nil {
-			return err
-		}
-		if target.IsFile() {
-			syncChanges, err = collectSyncPushChanges(gitClient, baselineRef, changeScopePath, gitClient.RootDir, spaceDir)
-			if err != nil {
-				return err
-			}
-		}
-
-		fmt.Fprintf(out, "preflight for space %s\n", spaceKey)
-		if len(syncChanges) == 0 {
-			fmt.Fprintln(out, "no in-scope markdown changes")
-			return nil
-		}
-
-		var currentTarget config.Target
-		if target.IsFile() {
-			abs, _ := filepath.Abs(target.Value)
-			currentTarget = config.Target{Mode: config.TargetModeFile, Value: abs}
-		} else {
-			currentTarget = config.Target{Mode: config.TargetModeSpace, Value: spaceDir}
-		}
-		if err := runValidateTarget(out, currentTarget); err != nil {
-			return fmt.Errorf("preflight validate failed: %w", err)
-		}
-
-		addCount, modifyCount, deleteCount := summarizePushChanges(syncChanges)
-		fmt.Fprintf(out, "changes: %d (A:%d M:%d D:%d)\n", len(syncChanges), addCount, modifyCount, deleteCount)
-		for _, change := range syncChanges {
-			fmt.Fprintf(out, "  %s %s\n", change.Type, change.Path)
-		}
-		if len(syncChanges) > 10 || deleteCount > 0 {
-			fmt.Fprintln(out, "safety confirmation would be required")
-		}
-		return nil
+		return runPushPreflight(out, target, spaceKey, spaceDir, gitClient, spaceScopePath, changeScopePath)
 	}
 
 	ts := nowUTC()
 	tsStr := ts.Format("20060102T150405Z")
 
 	if dryRun {
-		fmt.Fprintln(out, "[DRY-RUN] Simulating push (no git or confluence state will be modified)")
-
-		baselineRef, err := gitPushBaselineRef(gitClient, spaceKey)
-		if err != nil {
-			return err
-		}
-
-		syncChanges, err := collectSyncPushChanges(gitClient, baselineRef, spaceScopePath, gitClient.RootDir, spaceDir)
-		if err != nil {
-			return err
-		}
-
-		if target.IsFile() {
-			syncChanges, err = collectSyncPushChanges(gitClient, baselineRef, changeScopePath, gitClient.RootDir, spaceDir)
-			if err != nil {
-				return err
-			}
-		}
-
-		if len(syncChanges) == 0 {
-			fmt.Fprintln(out, "push completed with no in-scope markdown changes (no-op)")
-			return nil
-		}
-
-		// validate
-		var currentTarget config.Target
-		if target.IsFile() {
-			abs, _ := filepath.Abs(target.Value)
-			currentTarget = config.Target{Mode: config.TargetModeFile, Value: abs}
-		} else {
-			currentTarget = config.Target{Mode: config.TargetModeSpace, Value: spaceDir}
-		}
-		if err := runValidateTarget(out, currentTarget); err != nil {
-			return fmt.Errorf("pre-push validate failed: %w", err)
-		}
-
-		envPath = findEnvPath(spaceDir)
-		cfg, err = config.Load(envPath)
-		if err != nil {
-			return fmt.Errorf("failed to load config: %w", err)
-		}
-
-		realRemote, err := newPushRemote(cfg)
-		if err != nil {
-			return fmt.Errorf("create confluence client: %w", err)
-		}
-
-		remote := &dryRunPushRemote{inner: realRemote, out: out, domain: cfg.Domain}
-
-		dryRunSpaceDir, cleanupDryRun, err := prepareDryRunSpaceDir(spaceDir)
-		if err != nil {
-			return err
-		}
-		defer cleanupDryRun()
-
-		state, err := fs.LoadState(dryRunSpaceDir)
-		if err != nil {
-			return fmt.Errorf("load state: %w", err)
-		}
-
-		var progress syncflow.Progress
-		if !flagVerbose {
-			progress = newConsoleProgress(out, "[DRY-RUN] Syncing to Confluence")
-		}
-
-		result, err := syncflow.Push(ctx, remote, syncflow.PushOptions{
-			SpaceKey:       spaceKey,
-			SpaceDir:       dryRunSpaceDir,
-			Domain:         cfg.Domain,
-			State:          state,
-			Changes:        syncChanges,
-			ConflictPolicy: toSyncConflictPolicy(onConflict),
-			DryRun:         true,
-			Progress:       progress,
-		})
-		if err != nil {
-			var conflictErr *syncflow.PushConflictError
-			if errors.As(err, &conflictErr) {
-				return formatPushConflictError(conflictErr)
-			}
-			return err
-		}
-
-		fmt.Fprintf(out, "\n[DRY-RUN] push completed: %d page change(s) would be synced\n", len(result.Commits))
-		if len(result.Diagnostics) > 0 {
-			fmt.Fprintln(out, "\nDiagnostics:")
-			for _, diag := range result.Diagnostics {
-				fmt.Fprintf(out, "  [%s] %s: %s\n", diag.Code, diag.Path, diag.Message)
-			}
-		}
-		return nil
+		return runPushDryRun(ctx, cmd, out, target, spaceKey, spaceDir, onConflict, gitClient, spaceScopePath, changeScopePath)
 	}
 
 	// 1. Capture Snapshot
@@ -342,29 +213,195 @@ func runPush(cmd *cobra.Command, target config.Target, onConflict string, dryRun
 		_ = gitClient.RemoveWorktree(worktreeDir)
 	}()
 
-	// Resolve HEAD from main repo to reset SyncBranch
-	currentHead, err := gitClient.ResolveRef("HEAD")
+	return runPushInWorktree(ctx, cmd, out, target, spaceKey, spaceDir, onConflict, tsStr,
+		gitClient, spaceScopePath, changeScopePath, worktreeDir, syncBranchName, &stashRef)
+}
+
+func runPushPreflight(
+	out io.Writer,
+	target config.Target,
+	spaceKey, spaceDir string,
+	gitClient *git.Client,
+	spaceScopePath, changeScopePath string,
+) error {
+	baselineRef, err := gitPushBaselineRef(gitClient, spaceKey)
 	if err != nil {
-		return fmt.Errorf("resolve HEAD: %w", err)
+		return err
+	}
+	syncChanges, err := collectSyncPushChanges(gitClient, baselineRef, spaceScopePath, gitClient.RootDir, spaceDir)
+	if err != nil {
+		return err
+	}
+	if target.IsFile() {
+		syncChanges, err = collectSyncPushChanges(gitClient, baselineRef, changeScopePath, gitClient.RootDir, spaceDir)
+		if err != nil {
+			return err
+		}
 	}
 
+	fmt.Fprintf(out, "preflight for space %s\n", spaceKey)
+	if len(syncChanges) == 0 {
+		fmt.Fprintln(out, "no in-scope markdown changes")
+		return nil
+	}
+
+	var currentTarget config.Target
+	if target.IsFile() {
+		abs, _ := filepath.Abs(target.Value)
+		currentTarget = config.Target{Mode: config.TargetModeFile, Value: abs}
+	} else {
+		currentTarget = config.Target{Mode: config.TargetModeSpace, Value: spaceDir}
+	}
+	if err := runValidateTarget(out, currentTarget); err != nil {
+		return fmt.Errorf("preflight validate failed: %w", err)
+	}
+
+	addCount, modifyCount, deleteCount := summarizePushChanges(syncChanges)
+	fmt.Fprintf(out, "changes: %d (A:%d M:%d D:%d)\n", len(syncChanges), addCount, modifyCount, deleteCount)
+	for _, change := range syncChanges {
+		fmt.Fprintf(out, "  %s %s\n", change.Type, change.Path)
+	}
+	if len(syncChanges) > 10 || deleteCount > 0 {
+		fmt.Fprintln(out, "safety confirmation would be required")
+	}
+	return nil
+}
+
+func runPushDryRun(
+	ctx context.Context,
+	cmd *cobra.Command,
+	out io.Writer,
+	target config.Target,
+	spaceKey, spaceDir, onConflict string,
+	gitClient *git.Client,
+	spaceScopePath, changeScopePath string,
+) error {
+	fmt.Fprintln(out, "[DRY-RUN] Simulating push (no git or confluence state will be modified)")
+
+	baselineRef, err := gitPushBaselineRef(gitClient, spaceKey)
+	if err != nil {
+		return err
+	}
+
+	syncChanges, err := collectSyncPushChanges(gitClient, baselineRef, spaceScopePath, gitClient.RootDir, spaceDir)
+	if err != nil {
+		return err
+	}
+
+	if target.IsFile() {
+		syncChanges, err = collectSyncPushChanges(gitClient, baselineRef, changeScopePath, gitClient.RootDir, spaceDir)
+		if err != nil {
+			return err
+		}
+	}
+
+	if len(syncChanges) == 0 {
+		fmt.Fprintln(out, "push completed with no in-scope markdown changes (no-op)")
+		return nil
+	}
+
+	var currentTarget config.Target
+	if target.IsFile() {
+		abs, _ := filepath.Abs(target.Value)
+		currentTarget = config.Target{Mode: config.TargetModeFile, Value: abs}
+	} else {
+		currentTarget = config.Target{Mode: config.TargetModeSpace, Value: spaceDir}
+	}
+	if err := runValidateTarget(out, currentTarget); err != nil {
+		return fmt.Errorf("pre-push validate failed: %w", err)
+	}
+
+	envPath := findEnvPath(spaceDir)
+	cfg, err := config.Load(envPath)
+	if err != nil {
+		return fmt.Errorf("failed to load config: %w", err)
+	}
+
+	realRemote, err := newPushRemote(cfg)
+	if err != nil {
+		return fmt.Errorf("create confluence client: %w", err)
+	}
+
+	remote := &dryRunPushRemote{inner: realRemote, out: out, domain: cfg.Domain}
+
+	dryRunSpaceDir, cleanupDryRun, err := prepareDryRunSpaceDir(spaceDir)
+	if err != nil {
+		return err
+	}
+	defer cleanupDryRun()
+
+	state, err := fs.LoadState(dryRunSpaceDir)
+	if err != nil {
+		return fmt.Errorf("load state: %w", err)
+	}
+
+	var progress syncflow.Progress
+	if !flagVerbose {
+		progress = newConsoleProgress(out, "[DRY-RUN] Syncing to Confluence")
+	}
+
+	result, err := syncflow.Push(ctx, remote, syncflow.PushOptions{
+		SpaceKey:       spaceKey,
+		SpaceDir:       dryRunSpaceDir,
+		Domain:         cfg.Domain,
+		State:          state,
+		Changes:        syncChanges,
+		ConflictPolicy: toSyncConflictPolicy(onConflict),
+		DryRun:         true,
+		Progress:       progress,
+	})
+	if err != nil {
+		var conflictErr *syncflow.PushConflictError
+		if errors.As(err, &conflictErr) {
+			return formatPushConflictError(conflictErr)
+		}
+		return err
+	}
+
+	fmt.Fprintf(out, "\n[DRY-RUN] push completed: %d page change(s) would be synced\n", len(result.Commits))
+	if len(result.Diagnostics) > 0 {
+		fmt.Fprintln(out, "\nDiagnostics:")
+		for _, diag := range result.Diagnostics {
+			fmt.Fprintf(out, "  [%s] %s: %s\n", diag.Code, diag.Path, diag.Message)
+		}
+	}
+	return nil
+}
+
+// runPushInWorktree executes validate → diff → push → commit → merge → tag
+// inside the already-created sync worktree. stashRef is a pointer so the
+// pull-merge conflict path can clear it and prevent a double-pop in the defer.
+func runPushInWorktree(
+	ctx context.Context,
+	cmd *cobra.Command,
+	out io.Writer,
+	target config.Target,
+	spaceKey, spaceDir, onConflict, tsStr string,
+	gitClient *git.Client,
+	spaceScopePath, changeScopePath string,
+	worktreeDir, syncBranchName string,
+	stashRef *string,
+) error {
 	// 4. Validate (in worktree)
 	wtSpaceDir := filepath.Join(worktreeDir, spaceScopePath)
 	wtClient := &git.Client{RootDir: worktreeDir}
 
 	// Reset SyncBranch to HEAD (mixed) to ensure commits are granular and based on HEAD
+	currentHead, err := gitClient.ResolveRef("HEAD")
+	if err != nil {
+		return fmt.Errorf("resolve HEAD: %w", err)
+	}
 	if _, err := wtClient.Run("reset", "--mixed", currentHead); err != nil {
 		return fmt.Errorf("reset worktree: %w", err)
 	}
-	if err := restoreUntrackedFromStashParent(wtClient, stashRef, spaceScopePath); err != nil {
+	if err := restoreUntrackedFromStashParent(wtClient, *stashRef, spaceScopePath); err != nil {
 		return err
 	}
 
 	var wtTarget config.Target
-
 	if target.IsFile() {
 		abs, _ := filepath.Abs(target.Value)
-		relFile, _ := filepath.Rel(spaceDir, abs) // Assumes single file
+		relFile, _ := filepath.Rel(spaceDir, abs)
 		wtFile := filepath.Join(wtSpaceDir, relFile)
 		wtTarget = config.Target{Mode: config.TargetModeFile, Value: wtFile}
 	} else {
@@ -404,8 +441,8 @@ func runPush(cmd *cobra.Command, target config.Target, onConflict string, dryRun
 	}
 
 	// 6. Push (in worktree)
-	envPath = findEnvPath(wtSpaceDir) // Load config from worktree
-	cfg, err = config.Load(envPath)
+	envPath := findEnvPath(wtSpaceDir)
+	cfg, err := config.Load(envPath)
 	if err != nil {
 		return fmt.Errorf("failed to load config: %w", err)
 	}
@@ -427,7 +464,7 @@ func runPush(cmd *cobra.Command, target config.Target, onConflict string, dryRun
 
 	result, err := syncflow.Push(ctx, remote, syncflow.PushOptions{
 		SpaceKey:       spaceKey,
-		SpaceDir:       wtSpaceDir, // Use worktree dir!
+		SpaceDir:       wtSpaceDir,
 		Domain:         cfg.Domain,
 		State:          state,
 		Changes:        syncChanges,
@@ -440,8 +477,7 @@ func runPush(cmd *cobra.Command, target config.Target, onConflict string, dryRun
 			if onConflict == OnConflictPullMerge {
 				fmt.Fprintf(out, "conflict detected for %s; policy is %s, attempting automatic pull-merge...\n", conflictErr.Path, onConflict)
 				// Clear stashRef before pull-merge since pull will restore workspace
-				stashRef = ""
-				// Use the original target for pull
+				*stashRef = ""
 				if pullErr := runPull(cmd, target); pullErr != nil {
 					return fmt.Errorf("automatic pull-merge failed: %w", pullErr)
 				}
@@ -506,7 +542,7 @@ func runPush(cmd *cobra.Command, target config.Target, onConflict string, dryRun
 		fmt.Fprintf(out, "pushed %s (page %s, v%d)\n", commitPlan.Path, commitPlan.PageID, commitPlan.Version)
 	}
 
-	// 8. Rebase Sync Branch onto HEAD (main repo)
+	// 8. Remove Worktree
 	if err := gitClient.RemoveWorktree(worktreeDir); err != nil {
 		return fmt.Errorf("remove worktree: %w", err)
 	}
@@ -517,6 +553,7 @@ func runPush(cmd *cobra.Command, target config.Target, onConflict string, dryRun
 	}
 
 	// 10. Tag
+	refKey := fs.SanitizePathSegment(spaceKey)
 	tagName := fmt.Sprintf("confluence-sync/push/%s/%s", refKey, tsStr)
 	tagMsg := fmt.Sprintf("Confluence push sync for %s at %s", spaceKey, tsStr)
 	if err := gitClient.Tag(tagName, tagMsg); err != nil {
@@ -524,11 +561,11 @@ func runPush(cmd *cobra.Command, target config.Target, onConflict string, dryRun
 	}
 
 	// 11. Restore Stash (manual pop to show warning on success)
-	if err := gitClient.StashPop(stashRef); err != nil {
+	if err := gitClient.StashPop(*stashRef); err != nil {
 		fmt.Fprintf(out, "warning: stash restore had conflicts: %v\n", err)
 	}
-	// Clear stashRef so the defer doesn't try to pop again
-	stashRef = ""
+	// Clear stashRef so the defer in runPush doesn't try to pop again
+	*stashRef = ""
 
 	fmt.Fprintf(out, "push completed: %d page change(s) synced\n", len(result.Commits))
 	return nil
