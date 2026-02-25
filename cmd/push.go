@@ -82,7 +82,7 @@ func validateOnConflict(v string) error {
 
 func runPush(cmd *cobra.Command, target config.Target, onConflict string, dryRun bool) (runErr error) {
 	ctx := getCommandContext(cmd)
-	out := cmd.OutOrStdout()
+	out := ensureSynchronizedCmdOutput(cmd)
 	preflight := flagPushPreflight
 
 	if preflight && dryRun {

@@ -73,7 +73,7 @@ If omitted, the space is inferred from the current directory name.`,
 
 func runPull(cmd *cobra.Command, target config.Target) (runErr error) {
 	ctx := getCommandContext(cmd)
-	out := cmd.OutOrStdout()
+	out := ensureSynchronizedCmdOutput(cmd)
 
 	// 1. Initial resolution of key/dir
 	initialCtx, err := resolveInitialPullContext(target)
