@@ -110,7 +110,7 @@ func TestValidateFrontmatterSchema(t *testing.T) {
 	}
 
 	result = ValidateFrontmatterSchema(Frontmatter{
-		Space:  "OPS",
+		Space: "OPS",
 		State: "draft",
 	})
 	if !result.IsValid() {
@@ -118,7 +118,7 @@ func TestValidateFrontmatterSchema(t *testing.T) {
 	}
 
 	result = ValidateFrontmatterSchema(Frontmatter{
-		Space:  "OPS",
+		Space: "OPS",
 		State: "invalid",
 	})
 	if result.IsValid() {
@@ -128,13 +128,13 @@ func TestValidateFrontmatterSchema(t *testing.T) {
 
 func TestValidateImmutableFrontmatter_State(t *testing.T) {
 	previous := Frontmatter{
-		ID:     "1",
-		Space:  "ENG",
+		ID:    "1",
+		Space: "ENG",
 		State: "current",
 	}
 	current := Frontmatter{
-		ID:     "1",
-		Space:  "ENG",
+		ID:    "1",
+		Space: "ENG",
 		State: "draft",
 	}
 

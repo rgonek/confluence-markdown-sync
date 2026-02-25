@@ -160,8 +160,8 @@ type AttachmentUploadInput struct {
 
 // FolderCreateInput is used to create a Confluence folder.
 type FolderCreateInput struct {
-	SpaceID      string
-	ParentID     string // optional parent folder ID
-	ParentType   string // "space" or "folder" (defaults to "space" when ParentID is empty)
-	Title        string
+	SpaceID    string
+	ParentID   string // optional parent folder ID
+	ParentType string // "space" or "folder" (defaults to "space" when ParentID is empty)
+	Title      string
 }
