@@ -336,7 +336,7 @@ func runPushDryRun(
 	}
 
 	var progress syncflow.Progress
-	if !flagVerbose {
+	if !flagVerbose && outputSupportsProgress(out) {
 		progress = newConsoleProgress(out, "[DRY-RUN] Syncing to Confluence")
 	}
 
@@ -458,7 +458,7 @@ func runPushInWorktree(
 	}
 
 	var progress syncflow.Progress
-	if !flagVerbose {
+	if !flagVerbose && outputSupportsProgress(out) {
 		progress = newConsoleProgress(out, "Syncing to Confluence")
 	}
 

@@ -127,7 +127,7 @@ func runPull(cmd *cobra.Command, target config.Target) (runErr error) {
 	}
 
 	var progress syncflow.Progress
-	if !flagVerbose {
+	if !flagVerbose && outputSupportsProgress(out) {
 		progress = newConsoleProgress(out, "Syncing from Confluence")
 	}
 

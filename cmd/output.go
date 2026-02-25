@@ -5,6 +5,7 @@ import (
 	"sync"
 
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 )
 
 type synchronizedWriter struct {
@@ -26,4 +27,19 @@ func ensureSynchronizedCmdOutput(cmd *cobra.Command) io.Writer {
 	out := &synchronizedWriter{w: cmd.OutOrStdout()}
 	cmd.SetOut(out)
 	return out
+}
+
+type fdWriter interface {
+	Fd() uintptr
+}
+
+func outputSupportsProgress(out io.Writer) bool {
+	if synced, ok := out.(*synchronizedWriter); ok {
+		out = synced.w
+	}
+	fileLike, ok := out.(fdWriter)
+	if !ok {
+		return false
+	}
+	return term.IsTerminal(int(fileLike.Fd()))
 }
