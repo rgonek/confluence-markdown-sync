@@ -150,7 +150,10 @@ Each slice should be mergeable independently with tests and docs updates.
   - Updated push delete flow to block local state mutation until archive completion is confirmed.
   - Added diagnostics for `ARCHIVE_TASK_TIMEOUT` and `ARCHIVE_TASK_FAILED`.
   - Added unit coverage for polling behavior and integration coverage for delete blocking semantics.
-- [ ] Slice 2: Push content compensation rollback.
+- [x] Slice 2: Push content compensation rollback.
+  - Added existing-page content snapshots (title, parent, status, ADF) before mutation.
+  - Added rollback content restore for post-update failures with `ROLLBACK_PAGE_CONTENT_RESTORED` / `ROLLBACK_PAGE_CONTENT_FAILED` diagnostics.
+  - Ensured rollback is skipped in dry-run mode and added tests for both restore and dry-run behavior.
 - [ ] Slice 3: Label normalization/validation hardening.
 - [ ] Slice 4: AST-based relink engine.
 - [ ] Slice 5: Versioned UA and run-correlation logging.

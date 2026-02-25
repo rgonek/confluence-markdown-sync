@@ -117,6 +117,14 @@ type pushMetadataSnapshot struct {
 	Labels        []string
 }
 
+type pushContentSnapshot struct {
+	SpaceID      string
+	Title        string
+	ParentPageID string
+	Status       string
+	BodyADF      json.RawMessage
+}
+
 type rollbackAttachment struct {
 	PageID       string
 	AttachmentID string
@@ -127,6 +135,9 @@ type pushRollbackTracker struct {
 	relPath            string
 	createdPageID      string
 	uploadedAssets     []rollbackAttachment
+	contentPageID      string
+	contentSnapshot    *pushContentSnapshot
+	contentRestoreReq  bool
 	metadataPageID     string
 	metadataSnapshot   *pushMetadataSnapshot
 	metadataRestoreReq bool
@@ -434,8 +445,13 @@ func pushUpsertPage(
 			"error", opErr.Error(),
 			"rollback_created_page", strings.TrimSpace(rollback.createdPageID) != "",
 			"rollback_uploaded_assets", len(rollback.uploadedAssets),
+			"rollback_content_snapshot", rollback.contentRestoreReq,
 			"rollback_metadata_snapshot", rollback.metadataRestoreReq,
 		)
+		if opts.DryRun {
+			slog.Info("push_rollback_skipped", "path", relPath, "reason", "dry_run")
+			return PushCommitPlan{}, opErr
+		}
 		if rollbackErr := rollback.rollback(ctx, remote); rollbackErr != nil {
 			return PushCommitPlan{}, errors.Join(opErr, fmt.Errorf("rollback for %s: %w", relPath, rollbackErr))
 		}
@@ -454,6 +470,7 @@ func pushUpsertPage(
 		}
 		remotePage = fetched
 		remotePageByID[pageID] = fetched
+		rollback.trackContentSnapshot(pageID, snapshotPageContent(fetched))
 
 		fallbackParentID = strings.TrimSpace(remotePage.ParentPageID)
 		if normalizePageLifecycleState(remotePage.Status) == "current" && targetState == "draft" {
@@ -630,6 +647,7 @@ func pushUpsertPage(
 	if err != nil {
 		return failWithRollback(fmt.Errorf("update page %s: %w", pageID, err))
 	}
+	rollback.markContentRestoreRequired()
 
 	if isExistingPage {
 		snapshot, snapshotErr := capturePageMetadataSnapshot(ctx, remote, pageID)
@@ -653,6 +671,7 @@ func pushUpsertPage(
 	}
 
 	state.PagePathIndex[relPath] = pageID
+	rollback.clearContentSnapshot()
 	stagedPaths := append([]string{relPath}, touchedAssets...)
 	stagedPaths = dedupeSortedPaths(stagedPaths)
 
@@ -706,6 +725,27 @@ func (r *pushRollbackTracker) trackUploadedAttachment(pageID, attachmentID, path
 	})
 }
 
+func (r *pushRollbackTracker) trackContentSnapshot(pageID string, snapshot pushContentSnapshot) {
+	pageID = strings.TrimSpace(pageID)
+	if pageID == "" {
+		return
+	}
+	r.contentPageID = pageID
+	r.contentSnapshot = &snapshot
+	r.contentRestoreReq = false
+}
+
+func (r *pushRollbackTracker) markContentRestoreRequired() {
+	if r.contentSnapshot == nil || strings.TrimSpace(r.contentPageID) == "" {
+		return
+	}
+	r.contentRestoreReq = true
+}
+
+func (r *pushRollbackTracker) clearContentSnapshot() {
+	r.contentRestoreReq = false
+}
+
 func (r *pushRollbackTracker) trackMetadataSnapshot(pageID string, snapshot pushMetadataSnapshot) {
 	r.metadataPageID = strings.TrimSpace(pageID)
 	r.metadataSnapshot = &snapshot
@@ -718,6 +758,28 @@ func (r *pushRollbackTracker) clearMetadataSnapshot() {
 
 func (r *pushRollbackTracker) rollback(ctx context.Context, remote PushRemote) error {
 	var rollbackErr error
+
+	if r.contentRestoreReq && r.contentSnapshot != nil && strings.TrimSpace(r.contentPageID) != "" {
+		slog.Info("push_rollback_step", "path", r.relPath, "step", "page_content", "page_id", r.contentPageID)
+		if err := restorePageContentSnapshot(ctx, remote, r.contentPageID, *r.contentSnapshot); err != nil {
+			slog.Warn("push_rollback_step_failed", "path", r.relPath, "step", "page_content", "page_id", r.contentPageID, "error", err.Error())
+			appendPushDiagnostic(
+				r.diagnostics,
+				r.relPath,
+				"ROLLBACK_PAGE_CONTENT_FAILED",
+				fmt.Sprintf("failed to restore page content for %s: %v", r.contentPageID, err),
+			)
+			rollbackErr = errors.Join(rollbackErr, fmt.Errorf("restore page content for %s: %w", r.contentPageID, err))
+		} else {
+			slog.Info("push_rollback_step_succeeded", "path", r.relPath, "step", "page_content", "page_id", r.contentPageID)
+			appendPushDiagnostic(
+				r.diagnostics,
+				r.relPath,
+				"ROLLBACK_PAGE_CONTENT_RESTORED",
+				fmt.Sprintf("restored page content for %s", r.contentPageID),
+			)
+		}
+	}
 
 	if r.metadataRestoreReq && r.metadataSnapshot != nil && strings.TrimSpace(r.metadataPageID) != "" {
 		slog.Info("push_rollback_step", "path", r.relPath, "step", "metadata", "page_id", r.metadataPageID)
@@ -805,6 +867,70 @@ func (r *pushRollbackTracker) rollback(ctx context.Context, remote PushRemote) e
 	}
 
 	return rollbackErr
+}
+
+func snapshotPageContent(page confluence.Page) pushContentSnapshot {
+	clonedBody := append(json.RawMessage(nil), page.BodyADF...)
+	return pushContentSnapshot{
+		SpaceID:      strings.TrimSpace(page.SpaceID),
+		Title:        strings.TrimSpace(page.Title),
+		ParentPageID: strings.TrimSpace(page.ParentPageID),
+		Status:       normalizePageLifecycleState(page.Status),
+		BodyADF:      clonedBody,
+	}
+}
+
+func restorePageContentSnapshot(ctx context.Context, remote PushRemote, pageID string, snapshot pushContentSnapshot) error {
+	pageID = strings.TrimSpace(pageID)
+	if pageID == "" {
+		return errors.New("page ID is required")
+	}
+
+	headPage, err := remote.GetPage(ctx, pageID)
+	if err != nil {
+		return fmt.Errorf("fetch latest page %s: %w", pageID, err)
+	}
+
+	spaceID := strings.TrimSpace(snapshot.SpaceID)
+	if spaceID == "" {
+		spaceID = strings.TrimSpace(headPage.SpaceID)
+	}
+	if spaceID == "" {
+		return fmt.Errorf("resolve space id for page %s", pageID)
+	}
+
+	parentID := strings.TrimSpace(snapshot.ParentPageID)
+	title := strings.TrimSpace(snapshot.Title)
+	if title == "" {
+		title = strings.TrimSpace(headPage.Title)
+	}
+	if title == "" {
+		return fmt.Errorf("resolve title for page %s", pageID)
+	}
+
+	body := append(json.RawMessage(nil), snapshot.BodyADF...)
+	if len(body) == 0 {
+		body = []byte(`{"version":1,"type":"doc","content":[]}`)
+	}
+
+	nextVersion := headPage.Version + 1
+	if nextVersion <= 0 {
+		nextVersion = 1
+	}
+
+	_, err = remote.UpdatePage(ctx, pageID, confluence.PageUpsertInput{
+		SpaceID:      spaceID,
+		ParentPageID: parentID,
+		Title:        title,
+		Status:       normalizePageLifecycleState(snapshot.Status),
+		Version:      nextVersion,
+		BodyADF:      body,
+	})
+	if err != nil {
+		return fmt.Errorf("update page %s to restore snapshot: %w", pageID, err)
+	}
+
+	return nil
 }
 
 func capturePageMetadataSnapshot(ctx context.Context, remote PushRemote, pageID string) (pushMetadataSnapshot, error) {
