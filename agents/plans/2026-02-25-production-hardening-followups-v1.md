@@ -159,7 +159,10 @@ Each slice should be mergeable independently with tests and docs updates.
   - Strengthened schema validation for empty and whitespace-containing labels with clearer error messages.
   - Applied normalized labels in push metadata sync + rollback comparisons and added no-op equivalence tests.
   - Updated `README.md` and `docs/usage.md` with exact label rules.
-- [ ] Slice 4: AST-based relink engine.
+- [x] Slice 4: AST-based relink engine.
+  - Replaced regex relink matching with Goldmark AST traversal to plan true link destination rewrites.
+  - Added a destination-span markdown rewriter that updates only link destination tokens while preserving surrounding text.
+  - Added coverage for code spans/fences, anchors + titles, escaped/nested labels, and no-op documents.
 - [ ] Slice 5: Versioned UA and run-correlation logging.
 
 ## Verification Criteria
