@@ -182,13 +182,19 @@ Close production-readiness gaps in `conf` before broad rollout.
 ## P2 - Release Maturity Improvements
 
 ### P2-1: Add targeted coverage gates
+**Status (2026-02-25): ✅ Completed in PR-G (`phase/pr-g-p2-maturity`).**
+
 - Add package-specific minimums for risk-heavy modules (`cmd`, `internal/sync`, `internal/git`).
 - Add first test suite for `internal/git` helpers.
 
 ### P2-2: Reduce operational complexity in large command handlers
+**Status (2026-02-25): ✅ Completed in PR-G (`phase/pr-g-p2-maturity`).**
+
 - Continue decomposition of `cmd/push.go` and `cmd/pull.go` into clearer orchestration helpers.
 
 ### P2-3: Add release workflow
+**Status (2026-02-25): ✅ Completed in PR-G (`phase/pr-g-p2-maturity`).**
+
 - Add explicit build-and-artifact workflow for tagged releases.
 
 ## Execution Order

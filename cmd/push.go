@@ -155,15 +155,9 @@ func runPush(cmd *cobra.Command, target config.Target, onConflict string, dryRun
 		return err
 	}
 
-	preSnapshotChanges, err := collectSyncPushChanges(gitClient, baselineRef, spaceScopePath, spaceScopePath)
+	preSnapshotChanges, err := collectPushChangesForTarget(gitClient, baselineRef, target, spaceScopePath, changeScopePath)
 	if err != nil {
 		return err
-	}
-	if target.IsFile() {
-		preSnapshotChanges, err = collectSyncPushChanges(gitClient, baselineRef, changeScopePath, spaceScopePath)
-		if err != nil {
-			return err
-		}
 	}
 
 	if len(preSnapshotChanges) == 0 {
@@ -254,15 +248,9 @@ func runPushPreflight(
 	if err != nil {
 		return err
 	}
-	syncChanges, err := collectSyncPushChanges(gitClient, baselineRef, spaceScopePath, spaceScopePath)
+	syncChanges, err := collectPushChangesForTarget(gitClient, baselineRef, target, spaceScopePath, changeScopePath)
 	if err != nil {
 		return err
-	}
-	if target.IsFile() {
-		syncChanges, err = collectSyncPushChanges(gitClient, baselineRef, changeScopePath, spaceScopePath)
-		if err != nil {
-			return err
-		}
 	}
 
 	_, _ = fmt.Fprintf(out, "preflight for space %s\n", spaceKey)
@@ -309,16 +297,9 @@ func runPushDryRun(
 		return err
 	}
 
-	syncChanges, err := collectSyncPushChanges(gitClient, baselineRef, spaceScopePath, spaceScopePath)
+	syncChanges, err := collectPushChangesForTarget(gitClient, baselineRef, target, spaceScopePath, changeScopePath)
 	if err != nil {
 		return err
-	}
-
-	if target.IsFile() {
-		syncChanges, err = collectSyncPushChanges(gitClient, baselineRef, changeScopePath, spaceScopePath)
-		if err != nil {
-			return err
-		}
 	}
 
 	if len(syncChanges) == 0 {
@@ -448,16 +429,9 @@ func runPushInWorktree(
 	}
 
 	wtClient = &git.Client{RootDir: worktreeDir}
-	syncChanges, err := collectSyncPushChanges(wtClient, baselineRef, spaceScopePath, spaceScopePath)
+	syncChanges, err := collectPushChangesForTarget(wtClient, baselineRef, target, spaceScopePath, changeScopePath)
 	if err != nil {
 		return err
-	}
-
-	if target.IsFile() {
-		syncChanges, err = collectSyncPushChanges(wtClient, baselineRef, changeScopePath, spaceScopePath)
-		if err != nil {
-			return err
-		}
 	}
 
 	if len(syncChanges) == 0 {
@@ -717,6 +691,20 @@ func collectSyncPushChanges(client *git.Client, baselineRef, diffScopePath, spac
 		return nil, err
 	}
 	return toSyncPushChanges(changes, spaceScopePath)
+}
+
+func collectPushChangesForTarget(
+	client *git.Client,
+	baselineRef string,
+	target config.Target,
+	spaceScopePath string,
+	changeScopePath string,
+) ([]syncflow.PushFileChange, error) {
+	diffScopePath := spaceScopePath
+	if target.IsFile() {
+		diffScopePath = changeScopePath
+	}
+	return collectSyncPushChanges(client, baselineRef, diffScopePath, spaceScopePath)
 }
 
 func collectGitChangesWithUntracked(client *git.Client, baselineRef, scopePath string) ([]git.FileStatus, error) {
