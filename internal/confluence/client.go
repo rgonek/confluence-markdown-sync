@@ -21,13 +21,26 @@ import (
 const (
 	defaultHTTPTimeout     = 60 * time.Second
 	defaultDownloadTimeout = 30 * time.Minute
+	defaultArchiveTimeout  = 2 * time.Minute
+	defaultArchivePollWait = 2 * time.Second
 	defaultUserAgent       = "conf/dev"
 	maxErrorBodyBytes      = 1 << 20 // 1 MiB
+)
+
+const (
+	// DefaultArchiveTaskTimeout is the default max wait time for archive long-task completion.
+	DefaultArchiveTaskTimeout = defaultArchiveTimeout
+	// DefaultArchiveTaskPollInterval is the default archive long-task polling interval.
+	DefaultArchiveTaskPollInterval = defaultArchivePollWait
 )
 
 var (
 	// ErrNotFound indicates the requested resource does not exist.
 	ErrNotFound = errors.New("confluence resource not found")
+	// ErrArchiveTaskFailed indicates Confluence long-task failure.
+	ErrArchiveTaskFailed = errors.New("confluence archive task failed")
+	// ErrArchiveTaskTimeout indicates archive long-task polling timed out.
+	ErrArchiveTaskTimeout = errors.New("confluence archive task timeout")
 )
 
 // ClientConfig configures the Confluence HTTP client.
@@ -637,6 +650,93 @@ func (c *Client) ArchivePages(ctx context.Context, pageIDs []string) (ArchiveRes
 	return ArchiveResult{TaskID: payload.ID}, nil
 }
 
+// WaitForArchiveTask polls the Confluence long-task endpoint until completion.
+func (c *Client) WaitForArchiveTask(ctx context.Context, taskID string, opts ArchiveTaskWaitOptions) (ArchiveTaskStatus, error) {
+	taskID = strings.TrimSpace(taskID)
+	if taskID == "" {
+		return ArchiveTaskStatus{}, errors.New("archive task ID is required")
+	}
+
+	timeout := opts.Timeout
+	if timeout <= 0 {
+		timeout = DefaultArchiveTaskTimeout
+	}
+	pollInterval := opts.PollInterval
+	if pollInterval <= 0 {
+		pollInterval = DefaultArchiveTaskPollInterval
+	}
+
+	waitCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	last := ArchiveTaskStatus{TaskID: taskID, State: ArchiveTaskStateInProgress}
+	for {
+		status, err := c.getArchiveTaskStatus(waitCtx, taskID)
+		if err != nil {
+			if errors.Is(err, context.DeadlineExceeded) {
+				return last, fmt.Errorf("%w: task %s exceeded %s", ErrArchiveTaskTimeout, taskID, timeout)
+			}
+			if errors.Is(err, context.Canceled) {
+				return last, err
+			}
+			return last, fmt.Errorf("poll archive task %s: %w", taskID, err)
+		}
+		last = status
+
+		switch status.State {
+		case ArchiveTaskStateSucceeded:
+			return status, nil
+		case ArchiveTaskStateFailed:
+			message := strings.TrimSpace(status.Message)
+			if message == "" {
+				message = strings.TrimSpace(status.RawStatus)
+			}
+			if message == "" {
+				message = "task reported failure"
+			}
+			return status, fmt.Errorf("%w: task %s: %s", ErrArchiveTaskFailed, taskID, message)
+		}
+
+		if pollInterval <= 0 {
+			pollInterval = DefaultArchiveTaskPollInterval
+		}
+
+		if err := contextSleep(waitCtx, pollInterval); err != nil {
+			if errors.Is(err, context.DeadlineExceeded) {
+				return last, fmt.Errorf("%w: task %s exceeded %s", ErrArchiveTaskTimeout, taskID, timeout)
+			}
+			return last, err
+		}
+	}
+}
+
+func (c *Client) getArchiveTaskStatus(ctx context.Context, taskID string) (ArchiveTaskStatus, error) {
+	req, err := c.newRequest(
+		ctx,
+		http.MethodGet,
+		"/wiki/rest/api/longtask/"+url.PathEscape(taskID),
+		nil,
+		nil,
+	)
+	if err != nil {
+		return ArchiveTaskStatus{}, err
+	}
+
+	var payload longTaskResponse
+	if err := c.do(req, &payload); err != nil {
+		if isHTTPStatus(err, http.StatusNotFound) {
+			return ArchiveTaskStatus{}, ErrNotFound
+		}
+		return ArchiveTaskStatus{}, err
+	}
+
+	status := payload.toArchiveTaskStatus(taskID)
+	if status.TaskID == "" {
+		status.TaskID = taskID
+	}
+	return status, nil
+}
+
 // DeletePage deletes a page.
 func (c *Client) DeletePage(ctx context.Context, pageID string, hardDelete bool) error {
 	id := strings.TrimSpace(pageID)
@@ -1185,6 +1285,114 @@ type archivePageInput struct {
 
 type archiveResponse struct {
 	ID string `json:"id"`
+}
+
+type longTaskResponse struct {
+	ID                 string               `json:"id"`
+	Status             string               `json:"status"`
+	PercentageComplete int                  `json:"percentageComplete"`
+	Finished           *bool                `json:"finished"`
+	Successful         *bool                `json:"successful"`
+	Messages           []longTaskMessageDTO `json:"messages"`
+	ErrorMessage       string               `json:"errorMessage"`
+}
+
+type longTaskMessageDTO struct {
+	Translation string `json:"translation"`
+	Message     string `json:"message"`
+	Title       string `json:"title"`
+}
+
+func (l longTaskResponse) toArchiveTaskStatus(defaultTaskID string) ArchiveTaskStatus {
+	taskID := strings.TrimSpace(l.ID)
+	if taskID == "" {
+		taskID = strings.TrimSpace(defaultTaskID)
+	}
+
+	rawStatus := strings.TrimSpace(l.Status)
+	normalizedStatus := strings.ToLower(rawStatus)
+
+	finished := false
+	if l.Finished != nil {
+		finished = *l.Finished
+	}
+	successfulKnown := false
+	successful := false
+	if l.Successful != nil {
+		successfulKnown = true
+		successful = *l.Successful
+	}
+
+	if statusIndicatesTerminal(normalizedStatus) {
+		finished = true
+	}
+	if !successfulKnown && statusIndicatesSuccess(normalizedStatus) {
+		successfulKnown = true
+		successful = true
+	}
+
+	state := ArchiveTaskStateInProgress
+	if finished {
+		if successfulKnown {
+			if successful {
+				state = ArchiveTaskStateSucceeded
+			} else {
+				state = ArchiveTaskStateFailed
+			}
+		} else if statusIndicatesFailure(normalizedStatus) {
+			state = ArchiveTaskStateFailed
+		} else {
+			state = ArchiveTaskStateSucceeded
+		}
+	} else if statusIndicatesFailure(normalizedStatus) {
+		state = ArchiveTaskStateFailed
+	}
+
+	message := strings.TrimSpace(l.ErrorMessage)
+	if message == "" {
+		for _, candidate := range l.Messages {
+			message = firstNonEmpty(candidate.Message, candidate.Translation, candidate.Title)
+			if message != "" {
+				break
+			}
+		}
+	}
+
+	return ArchiveTaskStatus{
+		TaskID:      taskID,
+		State:       state,
+		RawStatus:   rawStatus,
+		Message:     message,
+		PercentDone: l.PercentageComplete,
+	}
+}
+
+func statusIndicatesSuccess(status string) bool {
+	if status == "" {
+		return false
+	}
+	for _, token := range []string{"success", "succeeded", "complete", "completed", "done"} {
+		if strings.Contains(status, token) {
+			return true
+		}
+	}
+	return false
+}
+
+func statusIndicatesFailure(status string) bool {
+	if status == "" {
+		return false
+	}
+	for _, token := range []string{"fail", "failed", "error", "cancelled", "canceled", "aborted"} {
+		if strings.Contains(status, token) {
+			return true
+		}
+	}
+	return false
+}
+
+func statusIndicatesTerminal(status string) bool {
+	return statusIndicatesSuccess(status) || statusIndicatesFailure(status)
 }
 
 type attachmentDTO struct {

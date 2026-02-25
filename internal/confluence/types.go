@@ -33,6 +33,7 @@ type Service interface {
 	UpdatePage(ctx context.Context, pageID string, input PageUpsertInput) (Page, error)
 	ListChanges(ctx context.Context, opts ChangeListOptions) (ChangeListResult, error)
 	ArchivePages(ctx context.Context, pageIDs []string) (ArchiveResult, error)
+	WaitForArchiveTask(ctx context.Context, taskID string, opts ArchiveTaskWaitOptions) (ArchiveTaskStatus, error)
 	DeletePage(ctx context.Context, pageID string, hardDelete bool) error
 	CreateFolder(ctx context.Context, input FolderCreateInput) (Folder, error)
 	MovePage(ctx context.Context, pageID string, targetID string) error
@@ -139,6 +140,30 @@ type ChangeListResult struct {
 // ArchiveResult captures archive task metadata returned by Confluence.
 type ArchiveResult struct {
 	TaskID string
+}
+
+// ArchiveTaskState is the normalized lifecycle state of a Confluence long task.
+type ArchiveTaskState string
+
+const (
+	ArchiveTaskStateInProgress ArchiveTaskState = "in_progress"
+	ArchiveTaskStateSucceeded  ArchiveTaskState = "succeeded"
+	ArchiveTaskStateFailed     ArchiveTaskState = "failed"
+)
+
+// ArchiveTaskStatus captures Confluence archive long-task progress and outcome.
+type ArchiveTaskStatus struct {
+	TaskID      string
+	State       ArchiveTaskState
+	RawStatus   string
+	Message     string
+	PercentDone int
+}
+
+// ArchiveTaskWaitOptions controls long-task polling behavior.
+type ArchiveTaskWaitOptions struct {
+	Timeout      time.Duration
+	PollInterval time.Duration
 }
 
 // Attachment represents a Confluence attachment.

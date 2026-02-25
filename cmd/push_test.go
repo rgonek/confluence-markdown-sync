@@ -1257,6 +1257,10 @@ func (f *cmdFakePushRemote) ArchivePages(_ context.Context, pageIDs []string) (c
 	return confluence.ArchiveResult{TaskID: "task-1"}, nil
 }
 
+func (f *cmdFakePushRemote) WaitForArchiveTask(_ context.Context, taskID string, _ confluence.ArchiveTaskWaitOptions) (confluence.ArchiveTaskStatus, error) {
+	return confluence.ArchiveTaskStatus{TaskID: taskID, State: confluence.ArchiveTaskStateSucceeded}, nil
+}
+
 func (f *cmdFakePushRemote) DeletePage(_ context.Context, pageID string, _ bool) error {
 	f.deletePageCalls = append(f.deletePageCalls, pageID)
 	return nil

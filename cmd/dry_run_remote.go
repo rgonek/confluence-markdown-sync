@@ -124,6 +124,18 @@ func (d *dryRunPushRemote) ArchivePages(ctx context.Context, pageIDs []string) (
 	return confluence.ArchiveResult{TaskID: "dry-run-task-id"}, nil
 }
 
+func (d *dryRunPushRemote) WaitForArchiveTask(ctx context.Context, taskID string, opts confluence.ArchiveTaskWaitOptions) (confluence.ArchiveTaskStatus, error) {
+	fmt.Fprintf(d.out, "[DRY-RUN] WAIT ARCHIVE TASK (GET %s/wiki/rest/api/longtask/%s)\n", d.domain, taskID)
+	if opts.Timeout > 0 {
+		fmt.Fprintf(d.out, "  Timeout: %s\n", opts.Timeout)
+	}
+	if opts.PollInterval > 0 {
+		fmt.Fprintf(d.out, "  PollInterval: %s\n", opts.PollInterval)
+	}
+	_, _ = fmt.Fprintln(d.out)
+	return confluence.ArchiveTaskStatus{TaskID: taskID, State: confluence.ArchiveTaskStateSucceeded, RawStatus: "DRY_RUN"}, nil
+}
+
 func (d *dryRunPushRemote) DeletePage(ctx context.Context, pageID string, hardDelete bool) error {
 	purge := ""
 	if hardDelete {

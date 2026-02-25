@@ -155,6 +155,10 @@ func (f *fakeFolderPushRemote) ArchivePages(_ context.Context, pageIDs []string)
 	return confluence.ArchiveResult{}, nil
 }
 
+func (f *fakeFolderPushRemote) WaitForArchiveTask(_ context.Context, _ string, _ confluence.ArchiveTaskWaitOptions) (confluence.ArchiveTaskStatus, error) {
+	return confluence.ArchiveTaskStatus{State: confluence.ArchiveTaskStateSucceeded}, nil
+}
+
 func (f *fakeFolderPushRemote) DeletePage(_ context.Context, pageID string, hardDelete bool) error {
 	return nil
 }
@@ -642,6 +646,65 @@ func TestPush_RollbackRestoresMetadataOnSyncFailure(t *testing.T) {
 	}
 }
 
+func TestPush_DeleteBlocksLocalStateWhenArchiveTaskDoesNotComplete(t *testing.T) {
+	remote := newRollbackPushRemote()
+	remote.pagesByID["1"] = confluence.Page{
+		ID:      "1",
+		SpaceID: "space-1",
+		Title:   "Old",
+		Version: 5,
+		WebURL:  "https://example.atlassian.net/wiki/pages/1",
+	}
+	remote.pages = append(remote.pages, remote.pagesByID["1"])
+	remote.archiveTaskStatus = confluence.ArchiveTaskStatus{TaskID: "task-1", State: confluence.ArchiveTaskStateInProgress, RawStatus: "RUNNING"}
+	remote.archiveTaskWaitErr = confluence.ErrArchiveTaskTimeout
+
+	result, err := Push(context.Background(), remote, PushOptions{
+		SpaceKey: "ENG",
+		SpaceDir: t.TempDir(),
+		State: fs.SpaceState{
+			SpaceKey: "ENG",
+			PagePathIndex: map[string]string{
+				"old.md": "1",
+			},
+			AttachmentIndex: map[string]string{
+				"assets/1/att-1-file.png": "att-1",
+			},
+		},
+		Changes: []PushFileChange{{Type: PushChangeDelete, Path: "old.md"}},
+	})
+	if err == nil {
+		t.Fatal("expected archive wait failure")
+	}
+	if !strings.Contains(err.Error(), "wait for archive task") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(result.Commits) != 0 {
+		t.Fatalf("commits = %d, want 0", len(result.Commits))
+	}
+	if got := strings.TrimSpace(result.State.PagePathIndex["old.md"]); got != "1" {
+		t.Fatalf("page index old.md = %q, want 1", got)
+	}
+	if got := strings.TrimSpace(result.State.AttachmentIndex["assets/1/att-1-file.png"]); got != "att-1" {
+		t.Fatalf("attachment index was mutated on archive failure: %q", got)
+	}
+	if len(remote.deleteAttachmentCalls) != 0 {
+		t.Fatalf("delete attachment calls = %d, want 0", len(remote.deleteAttachmentCalls))
+	}
+
+	hasTimeoutDiagnostic := false
+	for _, diag := range result.Diagnostics {
+		if diag.Code == "ARCHIVE_TASK_TIMEOUT" {
+			hasTimeoutDiagnostic = true
+			break
+		}
+	}
+	if !hasTimeoutDiagnostic {
+		t.Fatalf("expected ARCHIVE_TASK_TIMEOUT diagnostic, got %+v", result.Diagnostics)
+	}
+}
+
 type rollbackPushRemote struct {
 	space                    confluence.Space
 	pages                    []confluence.Page
@@ -653,12 +716,15 @@ type rollbackPushRemote struct {
 	createPageCalls          int
 	updatePageCalls          int
 	uploadAttachmentCalls    int
+	archiveTaskCalls         []string
 	deletePageCalls          []string
 	deleteAttachmentCalls    []string
 	setContentStatusCalls    []string
 	deleteContentStatusCalls []string
 	addLabelsCalls           []string
 	removeLabelCalls         []string
+	archiveTaskStatus        confluence.ArchiveTaskStatus
+	archiveTaskWaitErr       error
 	failUpdate               bool
 	failAddLabels            bool
 }
@@ -671,6 +737,9 @@ func newRollbackPushRemote() *rollbackPushRemote {
 		labelsByPage:     map[string][]string{},
 		nextPageID:       1,
 		nextAttachmentID: 1,
+		archiveTaskStatus: confluence.ArchiveTaskStatus{
+			State: confluence.ArchiveTaskStateSucceeded,
+		},
 	}
 }
 
@@ -776,6 +845,25 @@ func (f *rollbackPushRemote) UpdatePage(_ context.Context, pageID string, input 
 
 func (f *rollbackPushRemote) ArchivePages(_ context.Context, _ []string) (confluence.ArchiveResult, error) {
 	return confluence.ArchiveResult{TaskID: "task-1"}, nil
+}
+
+func (f *rollbackPushRemote) WaitForArchiveTask(_ context.Context, taskID string, _ confluence.ArchiveTaskWaitOptions) (confluence.ArchiveTaskStatus, error) {
+	f.archiveTaskCalls = append(f.archiveTaskCalls, taskID)
+	if f.archiveTaskWaitErr != nil {
+		status := f.archiveTaskStatus
+		if strings.TrimSpace(status.TaskID) == "" {
+			status.TaskID = taskID
+		}
+		return status, f.archiveTaskWaitErr
+	}
+	status := f.archiveTaskStatus
+	if strings.TrimSpace(status.TaskID) == "" {
+		status.TaskID = taskID
+	}
+	if status.State == "" {
+		status.State = confluence.ArchiveTaskStateSucceeded
+	}
+	return status, nil
 }
 
 func (f *rollbackPushRemote) DeletePage(_ context.Context, pageID string, _ bool) error {

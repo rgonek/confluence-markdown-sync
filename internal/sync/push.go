@@ -13,6 +13,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/rgonek/confluence-markdown-sync/internal/confluence"
 	"github.com/rgonek/confluence-markdown-sync/internal/converter"
@@ -37,6 +38,7 @@ type PushRemote interface {
 	CreatePage(ctx context.Context, input confluence.PageUpsertInput) (confluence.Page, error)
 	UpdatePage(ctx context.Context, pageID string, input confluence.PageUpsertInput) (confluence.Page, error)
 	ArchivePages(ctx context.Context, pageIDs []string) (confluence.ArchiveResult, error)
+	WaitForArchiveTask(ctx context.Context, taskID string, opts confluence.ArchiveTaskWaitOptions) (confluence.ArchiveTaskStatus, error)
 	DeletePage(ctx context.Context, pageID string, hardDelete bool) error
 	UploadAttachment(ctx context.Context, input confluence.AttachmentUploadInput) (confluence.Attachment, error)
 	DeleteAttachment(ctx context.Context, attachmentID string, pageID string) error
@@ -71,15 +73,17 @@ type PushFileChange struct {
 
 // PushOptions controls push orchestration.
 type PushOptions struct {
-	SpaceKey       string
-	SpaceDir       string
-	Domain         string
-	State          fs.SpaceState
-	Changes        []PushFileChange
-	ConflictPolicy PushConflictPolicy
-	HardDelete     bool
-	DryRun         bool
-	Progress       Progress
+	SpaceKey            string
+	SpaceDir            string
+	Domain              string
+	State               fs.SpaceState
+	Changes             []PushFileChange
+	ConflictPolicy      PushConflictPolicy
+	HardDelete          bool
+	DryRun              bool
+	ArchiveTimeout      time.Duration
+	ArchivePollInterval time.Duration
+	Progress            Progress
 }
 
 // PushCommitPlan describes local paths and metadata for one push commit.
@@ -225,7 +229,7 @@ func Push(ctx context.Context, remote PushRemote, opts PushOptions) (PushResult,
 
 		switch change.Type {
 		case PushChangeDelete:
-			commit, err := pushDeletePage(ctx, remote, opts, state, remotePageByID, relPath)
+			commit, err := pushDeletePage(ctx, remote, opts, state, remotePageByID, relPath, &diagnostics)
 			if err != nil {
 				return PushResult{State: state, Commits: commits, Diagnostics: diagnostics}, err
 			}
@@ -286,6 +290,7 @@ func pushDeletePage(
 	state fs.SpaceState,
 	remotePageByID map[string]confluence.Page,
 	relPath string,
+	diagnostics *[]PushDiagnostic,
 ) (PushCommitPlan, error) {
 	pageID := strings.TrimSpace(state.PagePathIndex[relPath])
 	if pageID == "" {
@@ -298,8 +303,34 @@ func pushDeletePage(
 			return PushCommitPlan{}, fmt.Errorf("hard-delete page %s: %w", pageID, err)
 		}
 	} else {
-		if _, err := remote.ArchivePages(ctx, []string{pageID}); err != nil && !errors.Is(err, confluence.ErrNotFound) {
+		archiveResult, err := remote.ArchivePages(ctx, []string{pageID})
+		if err != nil && !errors.Is(err, confluence.ErrNotFound) {
 			return PushCommitPlan{}, fmt.Errorf("archive page %s: %w", pageID, err)
+		}
+
+		taskID := strings.TrimSpace(archiveResult.TaskID)
+		if taskID == "" {
+			message := fmt.Sprintf("archive request for page %s did not return a long-task ID", pageID)
+			appendPushDiagnostic(diagnostics, relPath, "ARCHIVE_TASK_FAILED", message)
+			return PushCommitPlan{}, fmt.Errorf("archive page %s: missing long-task ID", pageID)
+		}
+
+		status, waitErr := remote.WaitForArchiveTask(ctx, taskID, confluence.ArchiveTaskWaitOptions{
+			Timeout:      opts.ArchiveTimeout,
+			PollInterval: opts.ArchivePollInterval,
+		})
+		if waitErr != nil {
+			code := "ARCHIVE_TASK_FAILED"
+			if errors.Is(waitErr, confluence.ErrArchiveTaskTimeout) {
+				code = "ARCHIVE_TASK_TIMEOUT"
+			}
+
+			message := fmt.Sprintf("archive task %s did not complete for page %s: %v", taskID, pageID, waitErr)
+			if strings.TrimSpace(status.RawStatus) != "" {
+				message = fmt.Sprintf("archive task %s did not complete for page %s (status=%s): %v", taskID, pageID, status.RawStatus, waitErr)
+			}
+			appendPushDiagnostic(diagnostics, relPath, code, message)
+			return PushCommitPlan{}, fmt.Errorf("wait for archive task %s for page %s: %w", taskID, pageID, waitErr)
 		}
 	}
 
