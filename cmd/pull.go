@@ -31,7 +31,6 @@ var (
 			BaseURL:  cfg.Domain,
 			Email:    cfg.Email,
 			APIToken: cfg.APIToken,
-			Verbose:  flagVerbose,
 		})
 	}
 

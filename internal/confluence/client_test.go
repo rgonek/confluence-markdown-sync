@@ -2,10 +2,12 @@
 package confluence
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -707,5 +709,49 @@ func TestMovePage_NotFound(t *testing.T) {
 	err := client.MovePage(context.Background(), "p1", "t1")
 	if !errors.Is(err, ErrNotFound) {
 		t.Fatalf("MovePage() error = %v, want ErrNotFound", err)
+	}
+}
+
+func TestClient_VerboseDoesNotLeakToken(t *testing.T) {
+	const apiToken = "super-secret-token-12345"
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if _, err := io.WriteString(w, `{"results":[]}`); err != nil {
+			t.Fatalf("write response: %v", err)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	// Install a capturing slog handler at Debug level for this test.
+	// slog.Debug is called by the client for every HTTP request.
+	var buf bytes.Buffer
+	handler := slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})
+	original := slog.Default()
+	slog.SetDefault(slog.New(handler))
+	t.Cleanup(func() { slog.SetDefault(original) })
+
+	client, err := NewClient(ClientConfig{
+		BaseURL:  server.URL,
+		Email:    "user@example.com",
+		APIToken: apiToken,
+	})
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+
+	_, _ = client.ListSpaces(context.Background(), SpaceListOptions{Limit: 1})
+
+	output := buf.String()
+
+	if strings.Contains(output, apiToken) {
+		t.Fatalf("verbose output leaks API token: %q", output)
+	}
+	if strings.Contains(output, "Authorization") {
+		t.Fatalf("verbose output leaks Authorization header: %q", output)
+	}
+	// Should log the method and URL
+	if !strings.Contains(output, "GET") {
+		t.Errorf("verbose output missing HTTP method: %q", output)
 	}
 }
