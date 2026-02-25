@@ -12,7 +12,7 @@ import (
 func TestResolveValidateTargetContext_ResolvesSanitizedSpaceDirectoryByKey(t *testing.T) {
 	repo := t.TempDir()
 	spaceDir := filepath.Join(repo, "Technical documentation (TD)")
-	if err := os.MkdirAll(spaceDir, 0o755); err != nil {
+	if err := os.MkdirAll(spaceDir, 0o750); err != nil {
 		t.Fatalf("mkdir space dir: %v", err)
 	}
 

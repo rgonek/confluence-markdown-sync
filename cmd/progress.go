@@ -65,5 +65,5 @@ func (p *consoleProgress) Add(n int) {
 
 func (p *consoleProgress) Done() {
 	_ = p.bar.Finish()
-	fmt.Fprint(p.out, "\r") // Return to start of line
+	_, _ = fmt.Fprint(p.out, "\r") // Return to start of line
 }

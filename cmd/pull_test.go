@@ -24,7 +24,7 @@ func TestRunPull_RestoresScopedStashAndCreatesTag(t *testing.T) {
 	setupGitRepo(t, repo)
 
 	spaceDir := filepath.Join(repo, "Engineering (ENG)")
-	if err := os.MkdirAll(spaceDir, 0o755); err != nil {
+	if err := os.MkdirAll(spaceDir, 0o750); err != nil {
 		t.Fatalf("mkdir space: %v", err)
 	}
 
@@ -38,7 +38,7 @@ func TestRunPull_RestoresScopedStashAndCreatesTag(t *testing.T) {
 		},
 		Body: "old body\n",
 	})
-	if err := os.WriteFile(filepath.Join(repo, ".gitignore"), []byte(".env\n.confluence-state.json\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(repo, ".gitignore"), []byte(".env\n.confluence-state.json\n"), 0o600); err != nil {
 		t.Fatalf("write .gitignore: %v", err)
 	}
 
@@ -46,7 +46,7 @@ func TestRunPull_RestoresScopedStashAndCreatesTag(t *testing.T) {
 	runGitForTest(t, repo, "commit", "-m", "initial")
 
 	localUntracked := filepath.Join(spaceDir, "local-notes.md")
-	if err := os.WriteFile(localUntracked, []byte("local notes\n"), 0o644); err != nil {
+	if err := os.WriteFile(localUntracked, []byte("local notes\n"), 0o600); err != nil {
 		t.Fatalf("write local untracked: %v", err)
 	}
 
@@ -96,7 +96,7 @@ func TestRunPull_RestoresScopedStashAndCreatesTag(t *testing.T) {
 	actualSpaceDir := filepath.Join(repo, "Engineering (ENG)")
 	localUntracked = filepath.Join(actualSpaceDir, "local-notes.md")
 
-	localRaw, err := os.ReadFile(localUntracked)
+	localRaw, err := os.ReadFile(localUntracked) //nolint:gosec // test path is created under t.TempDir
 	if err != nil {
 		t.Fatalf("local untracked file should be restored: %v", err)
 	}
@@ -120,7 +120,7 @@ func TestRunPull_NoopDoesNotCreateTag(t *testing.T) {
 	setupGitRepo(t, repo)
 
 	spaceDir := filepath.Join(repo, "Engineering (ENG)")
-	if err := os.MkdirAll(spaceDir, 0o755); err != nil {
+	if err := os.MkdirAll(spaceDir, 0o750); err != nil {
 		t.Fatalf("mkdir space: %v", err)
 	}
 
@@ -139,7 +139,7 @@ func TestRunPull_NoopDoesNotCreateTag(t *testing.T) {
 		Body: "same body\n",
 	}
 	writeMarkdown(t, filepath.Join(spaceDir, "root.md"), baselineDoc)
-	if err := os.WriteFile(filepath.Join(repo, ".gitignore"), []byte(".env\n.confluence-state.json\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(repo, ".gitignore"), []byte(".env\n.confluence-state.json\n"), 0o600); err != nil {
 		t.Fatalf("write .gitignore: %v", err)
 	}
 
@@ -213,10 +213,10 @@ func TestRunPull_NonInteractiveRequiresYesForHighImpact(t *testing.T) {
 	setupGitRepo(t, repo)
 
 	spaceDir := filepath.Join(repo, "Engineering (ENG)")
-	if err := os.MkdirAll(spaceDir, 0o755); err != nil {
+	if err := os.MkdirAll(spaceDir, 0o750); err != nil {
 		t.Fatalf("mkdir space: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(repo, ".gitignore"), []byte(".env\n.confluence-state.json\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(repo, ".gitignore"), []byte(".env\n.confluence-state.json\n"), 0o600); err != nil {
 		t.Fatalf("write .gitignore: %v", err)
 	}
 	runGitForTest(t, repo, "add", ".")
@@ -249,10 +249,10 @@ func TestRunPull_YesBypassesHighImpactConfirmation(t *testing.T) {
 	setupGitRepo(t, repo)
 
 	spaceDir := filepath.Join(repo, "Engineering (ENG)")
-	if err := os.MkdirAll(spaceDir, 0o755); err != nil {
+	if err := os.MkdirAll(spaceDir, 0o750); err != nil {
 		t.Fatalf("mkdir space: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(repo, ".gitignore"), []byte(".env\n.confluence-state.json\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(repo, ".gitignore"), []byte(".env\n.confluence-state.json\n"), 0o600); err != nil {
 		t.Fatalf("write .gitignore: %v", err)
 	}
 	runGitForTest(t, repo, "add", ".")
@@ -289,7 +289,7 @@ func TestRunPull_RecreatesMissingSpaceDirWithoutRestoringDeletionStash(t *testin
 	setupGitRepo(t, repo)
 
 	spaceDir := filepath.Join(repo, "Engineering (ENG)")
-	if err := os.MkdirAll(spaceDir, 0o755); err != nil {
+	if err := os.MkdirAll(spaceDir, 0o750); err != nil {
 		t.Fatalf("mkdir space: %v", err)
 	}
 	writeMarkdown(t, filepath.Join(spaceDir, "root.md"), fs.MarkdownDocument{
@@ -302,7 +302,7 @@ func TestRunPull_RecreatesMissingSpaceDirWithoutRestoringDeletionStash(t *testin
 		},
 		Body: "old body\n",
 	})
-	if err := os.WriteFile(filepath.Join(repo, ".gitignore"), []byte(".env\n.confluence-state.json\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(repo, ".gitignore"), []byte(".env\n.confluence-state.json\n"), 0o600); err != nil {
 		t.Fatalf("write .gitignore: %v", err)
 	}
 
@@ -359,7 +359,7 @@ func TestRunPull_ForcePullRefreshesEntireSpace(t *testing.T) {
 	setupGitRepo(t, repo)
 
 	spaceDir := filepath.Join(repo, "Engineering (ENG)")
-	if err := os.MkdirAll(spaceDir, 0o755); err != nil {
+	if err := os.MkdirAll(spaceDir, 0o750); err != nil {
 		t.Fatalf("mkdir space: %v", err)
 	}
 	writeMarkdown(t, filepath.Join(spaceDir, "root.md"), fs.MarkdownDocument{
@@ -381,7 +381,7 @@ func TestRunPull_ForcePullRefreshesEntireSpace(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("save state: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(repo, ".gitignore"), []byte(".env\n.confluence-state.json\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(repo, ".gitignore"), []byte(".env\n.confluence-state.json\n"), 0o600); err != nil {
 		t.Fatalf("write .gitignore: %v", err)
 	}
 
@@ -443,7 +443,7 @@ func TestRunPull_ForceFlagRejectedForFileTarget(t *testing.T) {
 	setupGitRepo(t, repo)
 
 	spaceDir := filepath.Join(repo, "Engineering (ENG)")
-	if err := os.MkdirAll(spaceDir, 0o755); err != nil {
+	if err := os.MkdirAll(spaceDir, 0o750); err != nil {
 		t.Fatalf("mkdir space: %v", err)
 	}
 	filePath := filepath.Join(spaceDir, "root.md")
@@ -585,7 +585,7 @@ func TestRunPull_DraftSpaceListing(t *testing.T) {
 	setupGitRepo(t, repo)
 
 	spaceDir := filepath.Join(repo, "Engineering (ENG)")
-	if err := os.MkdirAll(spaceDir, 0o755); err != nil {
+	if err := os.MkdirAll(spaceDir, 0o750); err != nil {
 		t.Fatalf("mkdir space: %v", err)
 	}
 

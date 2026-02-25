@@ -1,3 +1,4 @@
+//nolint:errcheck // dry-run output writes are best-effort diagnostics only
 package cmd
 
 import (
@@ -73,7 +74,7 @@ func (d *dryRunPushRemote) CreatePage(ctx context.Context, input confluence.Page
 	} else {
 		fmt.Fprintf(d.out, "  BodyADF: %s\n", string(input.BodyADF))
 	}
-	fmt.Fprintln(d.out)
+	_, _ = fmt.Fprintln(d.out)
 
 	return confluence.Page{
 		ID:           "dry-run-new-page-id",
@@ -101,7 +102,7 @@ func (d *dryRunPushRemote) UpdatePage(ctx context.Context, pageID string, input 
 	} else {
 		fmt.Fprintf(d.out, "  BodyADF: %s\n", string(input.BodyADF))
 	}
-	fmt.Fprintln(d.out)
+	_, _ = fmt.Fprintln(d.out)
 
 	return confluence.Page{
 		ID:           pageID,
@@ -119,7 +120,7 @@ func (d *dryRunPushRemote) ArchivePages(ctx context.Context, pageIDs []string) (
 	for _, id := range pageIDs {
 		fmt.Fprintf(d.out, "  PageID: %s\n", id)
 	}
-	fmt.Fprintln(d.out)
+	_, _ = fmt.Fprintln(d.out)
 	return confluence.ArchiveResult{TaskID: "dry-run-task-id"}, nil
 }
 
@@ -160,7 +161,7 @@ func (d *dryRunPushRemote) CreateFolder(ctx context.Context, input confluence.Fo
 		fmt.Fprintf(d.out, "  ParentID: %s\n", input.ParentID)
 		fmt.Fprintf(d.out, "  ParentType: %s\n", input.ParentType)
 	}
-	fmt.Fprintln(d.out)
+	_, _ = fmt.Fprintln(d.out)
 
 	return confluence.Folder{
 		ID:         "dry-run-folder-id",

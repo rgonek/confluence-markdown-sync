@@ -1,3 +1,4 @@
+//nolint:errcheck // test handlers intentionally ignore best-effort response write errors
 package confluence
 
 import (
@@ -44,7 +45,9 @@ func TestListSpaces_UsesExpectedEndpointAndAuth(t *testing.T) {
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		io.WriteString(w, `{"results":[{"id":"100","key":"ENG","name":"Engineering","type":"global"}],"meta":{"cursor":"next-cursor"}}`)
+		if _, err := io.WriteString(w, `{"results":[{"id":"100","key":"ENG","name":"Engineering","type":"global"}],"meta":{"cursor":"next-cursor"}}`); err != nil {
+			t.Fatalf("write response: %v", err)
+		}
 	}))
 	t.Cleanup(server.Close)
 
@@ -106,7 +109,9 @@ func TestGetFolder_ByID(t *testing.T) {
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		io.WriteString(w, `{"id":"4623368196","spaceId":"space-1","title":"Policies","parentId":"","parentType":"folder"}`)
+		if _, err := io.WriteString(w, `{"id":"4623368196","spaceId":"space-1","title":"Policies","parentId":"","parentType":"folder"}`); err != nil {
+			t.Fatalf("write response: %v", err)
+		}
 	}))
 	t.Cleanup(server.Close)
 
@@ -147,13 +152,15 @@ func TestListChanges_BuildsCQLFromSpaceAndSince(t *testing.T) {
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		io.WriteString(w, `{
+		if _, err := io.WriteString(w, `{
 			"results":[{"id":"77","title":"Roadmap","space":{"key":"ENG"},"version":{"number":8,"when":"2026-01-02T16:00:00Z"}}],
 			"start":0,
 			"limit":25,
 			"size":1,
 			"_links":{"next":"/wiki/rest/api/content/search?start=25"}
-		}`)
+		}`); err != nil {
+			t.Fatalf("write response: %v", err)
+		}
 	}))
 	t.Cleanup(server.Close)
 
@@ -205,7 +212,9 @@ func TestArchiveAndDeleteEndpoints(t *testing.T) {
 				t.Fatalf("archive pages payload = %#v, want 2 pages", body["pages"])
 			}
 			w.Header().Set("Content-Type", "application/json")
-			io.WriteString(w, `{"id":"task-9001"}`)
+			if _, err := io.WriteString(w, `{"id":"task-9001"}`); err != nil {
+				t.Fatalf("write response: %v", err)
+			}
 		case r.Method == http.MethodDelete && r.URL.Path == "/wiki/api/v2/pages/42":
 			deleteCalls++
 			if got := r.URL.Query().Get("purge"); got != "true" {
@@ -251,24 +260,33 @@ func TestCreateAndUpdatePage_Payloads(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		var body map[string]any
-		json.NewDecoder(r.Body).Decode(&body)
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
 
-		if r.Method == http.MethodPost {
+		switch r.Method {
+		case http.MethodPost:
 			if body["id"] != nil {
 				t.Errorf("CreatePage payload should not have id, got %v", body["id"])
 			}
 			if body["spaceId"] != "S1" {
 				t.Errorf("CreatePage spaceId = %v, want S1", body["spaceId"])
 			}
-			io.WriteString(w, `{"id":"101","title":"New","spaceId":"S1","version":{"number":1}}`)
-		} else if r.Method == http.MethodPut {
+			if _, err := io.WriteString(w, `{"id":"101","title":"New","spaceId":"S1","version":{"number":1}}`); err != nil {
+				t.Fatalf("write response: %v", err)
+			}
+		case http.MethodPut:
 			if body["id"] != "101" {
 				t.Errorf("UpdatePage payload should have id=101, got %v", body["id"])
 			}
 			if body["spaceId"] != "S1" {
 				t.Errorf("UpdatePage spaceId = %v, want S1", body["spaceId"])
 			}
-			io.WriteString(w, `{"id":"101","title":"Updated","spaceId":"S1","version":{"number":2}}`)
+			if _, err := io.WriteString(w, `{"id":"101","title":"Updated","spaceId":"S1","version":{"number":2}}`); err != nil {
+				t.Fatalf("write response: %v", err)
+			}
+		default:
+			t.Fatalf("unexpected method: %s", r.Method)
 		}
 	}))
 	t.Cleanup(server.Close)
@@ -304,13 +322,19 @@ func TestDownloadAttachment_ResolvesUUID(t *testing.T) {
 		switch r.URL.Path {
 		case "/wiki/api/v2/pages/123/attachments":
 			w.Header().Set("Content-Type", "application/json")
-			io.WriteString(w, `{"results":[{"id":"att-uuid-123", "fileId":"`+uuid+`"}]}`)
+			if _, err := io.WriteString(w, `{"results":[{"id":"att-uuid-123", "fileId":"`+uuid+`"}]}`); err != nil {
+				t.Fatalf("write response: %v", err)
+			}
 		case "/wiki/api/v2/attachments/att-uuid-123":
 			w.Header().Set("Content-Type", "application/json")
-			io.WriteString(w, `{"id":"att-uuid-123","downloadLink":"/download/uuid.png"}`)
+			if _, err := io.WriteString(w, `{"id":"att-uuid-123","downloadLink":"/download/uuid.png"}`); err != nil {
+				t.Fatalf("write response: %v", err)
+			}
 		case "/download/uuid.png":
 			w.WriteHeader(http.StatusOK)
-			io.WriteString(w, "uuid-data")
+			if _, err := io.WriteString(w, "uuid-data"); err != nil {
+				t.Fatalf("write response: %v", err)
+			}
 		default:
 			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
 		}
@@ -348,16 +372,20 @@ func TestResolveAttachmentIDByFileID_Pagination(t *testing.T) {
 				t.Fatalf("call 1 path = %s", r.URL.Path)
 			}
 			// First page, doesn't contain our UUID
-			io.WriteString(w, `{
+			if _, err := io.WriteString(w, `{
 				"results":[{"id":"att-other", "fileId":"other-uuid"}],
 				"_links":{"next":"/wiki/api/v2/pages/123/attachments?cursor=next-page-token"}
-			}`)
+			}`); err != nil {
+				t.Fatalf("write response: %v", err)
+			}
 		} else {
 			if !strings.Contains(r.URL.RawQuery, "cursor=next-page-token") {
 				t.Fatalf("call 2 query = %s, missing cursor", r.URL.RawQuery)
 			}
 			// Second page contains our UUID
-			io.WriteString(w, `{"results":[{"id":"att-uuid-123", "fileId":"`+uuid+`"}]}`)
+			if _, err := io.WriteString(w, `{"results":[{"id":"att-uuid-123", "fileId":"`+uuid+`"}]}`); err != nil {
+				t.Fatalf("write response: %v", err)
+			}
 		}
 	}))
 	t.Cleanup(server.Close)
@@ -388,13 +416,17 @@ func TestDownloadAttachment_ResolvesAndDownloadsBytes(t *testing.T) {
 				t.Fatalf("method = %s, want GET", r.Method)
 			}
 			w.Header().Set("Content-Type", "application/json")
-			io.WriteString(w, `{"id":"att-1","downloadLink":"/download/attachments/1/diagram.png"}`)
+			if _, err := io.WriteString(w, `{"id":"att-1","downloadLink":"/download/attachments/1/diagram.png"}`); err != nil {
+				t.Fatalf("write response: %v", err)
+			}
 		case "/download/attachments/1/diagram.png":
 			if r.Method != http.MethodGet {
 				t.Fatalf("download method = %s, want GET", r.Method)
 			}
 			w.WriteHeader(http.StatusOK)
-			io.WriteString(w, "binary-data")
+			if _, err := io.WriteString(w, "binary-data"); err != nil {
+				t.Fatalf("write response: %v", err)
+			}
 		default:
 			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
 		}
@@ -458,7 +490,9 @@ func TestUploadAndDeleteAttachmentEndpoints(t *testing.T) {
 			}
 
 			w.Header().Set("Content-Type", "application/json")
-			io.WriteString(w, `{"results":[{"id":"att-9","title":"diagram.png","_links":{"webui":"/wiki/pages/viewpage.action?pageId=42"}}]}`)
+			if _, err := io.WriteString(w, `{"results":[{"id":"att-9","title":"diagram.png","_links":{"webui":"/wiki/pages/viewpage.action?pageId=42"}}]}`); err != nil {
+				t.Fatalf("write response: %v", err)
+			}
 		case r.Method == http.MethodDelete && r.URL.Path == "/wiki/api/v2/attachments/att-9":
 			deleteCalls++
 			w.WriteHeader(http.StatusNoContent)
@@ -509,7 +543,9 @@ func TestDeleteAttachment_InvalidLegacyIDReturnsNotFound(t *testing.T) {
 		if r.Method == http.MethodGet {
 			// Resolve UUID first
 			w.Header().Set("Content-Type", "application/json")
-			io.WriteString(w, `{"results":[]}`) // Doesn't matter for this test as we want it to fall through or fail
+			if _, err := io.WriteString(w, `{"results":[]}`); err != nil { // Doesn't matter for this test as we want it to fall through or fail
+				t.Fatalf("write response: %v", err)
+			}
 			return
 		}
 
@@ -521,7 +557,9 @@ func TestDeleteAttachment_InvalidLegacyIDReturnsNotFound(t *testing.T) {
 		}
 
 		w.WriteHeader(http.StatusBadRequest)
-		io.WriteString(w, `{"errors":[{"status":400,"code":"INVALID_REQUEST_PARAMETER","title":"Provided value {ffd70a27-0a48-48db-9662-24252c884152} for 'id' is not the correct type. Expected type is ContentId","detail":""}]}`)
+		if _, err := io.WriteString(w, `{"errors":[{"status":400,"code":"INVALID_REQUEST_PARAMETER","title":"Provided value {ffd70a27-0a48-48db-9662-24252c884152} for 'id' is not the correct type. Expected type is ContentId","detail":""}]}`); err != nil {
+			t.Fatalf("write response: %v", err)
+		}
 	}))
 	t.Cleanup(server.Close)
 
@@ -553,7 +591,9 @@ func TestCreateFolder_PostsCorrectPayload(t *testing.T) {
 			t.Fatalf("decode request body: %v", err)
 		}
 		w.Header().Set("Content-Type", "application/json")
-		io.WriteString(w, `{"id":"f-1","spaceId":"SP1","title":"Policies","parentId":"","parentType":"space"}`)
+		if _, err := io.WriteString(w, `{"id":"f-1","spaceId":"SP1","title":"Policies","parentId":"","parentType":"space"}`); err != nil {
+			t.Fatalf("write response: %v", err)
+		}
 	}))
 	t.Cleanup(server.Close)
 
@@ -587,9 +627,13 @@ func TestCreateFolder_PostsCorrectPayload(t *testing.T) {
 func TestCreateFolder_WithParentID(t *testing.T) {
 	var receivedBody map[string]any
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		json.NewDecoder(r.Body).Decode(&receivedBody)
+		if err := json.NewDecoder(r.Body).Decode(&receivedBody); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
 		w.Header().Set("Content-Type", "application/json")
-		io.WriteString(w, `{"id":"f-2","spaceId":"SP1","title":"Sub","parentId":"f-1","parentType":"folder"}`)
+		if _, err := io.WriteString(w, `{"id":"f-2","spaceId":"SP1","title":"Sub","parentId":"f-1","parentType":"folder"}`); err != nil {
+			t.Fatalf("write response: %v", err)
+		}
 	}))
 	t.Cleanup(server.Close)
 
@@ -626,7 +670,9 @@ func TestMovePage_PutsToCorrectEndpoint(t *testing.T) {
 		}
 		calledPath = r.URL.Path
 		w.WriteHeader(http.StatusOK)
-		io.WriteString(w, `{}`)
+		if _, err := io.WriteString(w, `{}`); err != nil {
+			t.Fatalf("write response: %v", err)
+		}
 	}))
 	t.Cleanup(server.Close)
 

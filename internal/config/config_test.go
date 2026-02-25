@@ -94,16 +94,10 @@ func TestLoad_LegacyVarsPrecedence(t *testing.T) {
 
 func TestLoad_DotEnvFile(t *testing.T) {
 	// Fully unset vars so godotenv.Load can populate them from the .env file.
-	for _, k := range []string{
+	unsetEnvForTest(t,
 		"ATLASSIAN_DOMAIN", "ATLASSIAN_EMAIL", "ATLASSIAN_API_TOKEN",
 		"CONFLUENCE_URL", "CONFLUENCE_EMAIL", "CONFLUENCE_API_TOKEN",
-	} {
-		prev, had := os.LookupEnv(k)
-		os.Unsetenv(k)
-		if had {
-			t.Cleanup(func() { os.Setenv(k, prev) })
-		}
-	}
+	)
 
 	dir := t.TempDir()
 	envFile := filepath.Join(dir, ".env")
@@ -130,16 +124,10 @@ func TestLoad_DotEnvFile(t *testing.T) {
 }
 
 func TestLoad_MissingConfig(t *testing.T) {
-	for _, k := range []string{
+	unsetEnvForTest(t,
 		"ATLASSIAN_DOMAIN", "ATLASSIAN_EMAIL", "ATLASSIAN_API_TOKEN",
 		"CONFLUENCE_URL", "CONFLUENCE_EMAIL", "CONFLUENCE_API_TOKEN",
-	} {
-		prev, had := os.LookupEnv(k)
-		os.Unsetenv(k)
-		if had {
-			t.Cleanup(func() { os.Setenv(k, prev) })
-		}
-	}
+	)
 
 	_, err := config.Load("")
 	if err == nil {
@@ -158,5 +146,27 @@ func TestLoad_TrailingSlashStripped(t *testing.T) {
 	}
 	if cfg.Domain != "https://example.atlassian.net" {
 		t.Errorf("Domain trailing slash not stripped: %q", cfg.Domain)
+	}
+}
+
+func unsetEnvForTest(t *testing.T, keys ...string) {
+	t.Helper()
+
+	for _, key := range keys {
+		prev, had := os.LookupEnv(key)
+		if err := os.Unsetenv(key); err != nil {
+			t.Fatalf("unset env %s: %v", key, err)
+		}
+		if !had {
+			continue
+		}
+
+		key := key
+		prevVal := prev
+		t.Cleanup(func() {
+			if err := os.Setenv(key, prevVal); err != nil {
+				t.Fatalf("restore env %s: %v", key, err)
+			}
+		})
 	}
 }

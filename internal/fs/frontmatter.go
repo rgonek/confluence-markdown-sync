@@ -201,7 +201,7 @@ func (r ValidationResult) IsValid() bool {
 
 // ReadMarkdownDocument reads and parses a markdown file.
 func ReadMarkdownDocument(path string) (MarkdownDocument, error) {
-	raw, err := os.ReadFile(path)
+	raw, err := os.ReadFile(path) //nolint:gosec // caller controls workspace-scoped markdown path
 	if err != nil {
 		return MarkdownDocument{}, err
 	}
@@ -214,10 +214,10 @@ func WriteMarkdownDocument(path string, doc MarkdownDocument) error {
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil { //nolint:gosec // workspace docs intentionally use standard directory permissions
 		return err
 	}
-	return os.WriteFile(path, raw, 0o644)
+	return os.WriteFile(path, raw, 0o644) //nolint:gosec // markdown files are intentionally group-readable
 }
 
 // ParseMarkdownDocument parses a markdown document with YAML frontmatter.
@@ -268,11 +268,13 @@ func FormatMarkdownDocument(doc MarkdownDocument) ([]byte, error) {
 // ReadFrontmatter reads only the frontmatter of a markdown file.
 // It reads only the beginning of the file to avoid loading large bodies.
 func ReadFrontmatter(path string) (Frontmatter, error) {
-	file, err := os.Open(path)
+	file, err := os.Open(path) //nolint:gosec // caller provides workspace-scoped markdown path
 	if err != nil {
 		return Frontmatter{}, err
 	}
-	defer file.Close()
+	defer func() {
+		_ = file.Close()
+	}()
 
 	// Read first 8KB (should be enough for frontmatter)
 	buf := make([]byte, 8192)

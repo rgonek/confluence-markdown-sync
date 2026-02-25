@@ -20,7 +20,9 @@ func TestDo_RetriesOn429(t *testing.T) {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		io.WriteString(w, `{"results":[],"meta":{"cursor":""}}`)
+		if _, err := io.WriteString(w, `{"results":[],"meta":{"cursor":""}}`); err != nil {
+			t.Fatalf("write response: %v", err)
+		}
 	}))
 	t.Cleanup(server.Close)
 
@@ -48,7 +50,9 @@ func TestDo_RetriesOn500(t *testing.T) {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		io.WriteString(w, `{"results":[],"meta":{"cursor":""}}`)
+		if _, err := io.WriteString(w, `{"results":[],"meta":{"cursor":""}}`); err != nil {
+			t.Fatalf("write response: %v", err)
+		}
 	}))
 	t.Cleanup(server.Close)
 
@@ -156,7 +160,9 @@ func TestDo_RetriesPreserveRequestBody(t *testing.T) {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		io.WriteString(w, `{"id":"101","title":"New","spaceId":"S1","version":{"number":1}}`)
+		if _, err := io.WriteString(w, `{"id":"101","title":"New","spaceId":"S1","version":{"number":1}}`); err != nil {
+			t.Fatalf("write response: %v", err)
+		}
 	}))
 	t.Cleanup(server.Close)
 

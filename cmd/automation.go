@@ -35,7 +35,9 @@ func requireSafetyConfirmation(in io.Reader, out io.Writer, action string, chang
 	if hasDeletes {
 		deleteNote = " and includes delete operations"
 	}
-	fmt.Fprintf(out, "%s will affect %d markdown file(s)%s. Continue? [y/N]: ", action, changedCount, deleteNote)
+	if _, err := fmt.Fprintf(out, "%s will affect %d markdown file(s)%s. Continue? [y/N]: ", action, changedCount, deleteNote); err != nil {
+		return fmt.Errorf("write prompt: %w", err)
+	}
 	choice, err := readPromptLine(in)
 	if err != nil {
 		return err
@@ -63,7 +65,9 @@ func resolvePushConflictPolicy(in io.Reader, out io.Writer, onConflict string, i
 		return "", fmt.Errorf("--non-interactive requires --on-conflict=pull-merge|force|cancel")
 	}
 
-	fmt.Fprint(out, "Conflict policy for remote-ahead pages [pull-merge/force/cancel] (default cancel): ")
+	if _, err := fmt.Fprint(out, "Conflict policy for remote-ahead pages [pull-merge/force/cancel] (default cancel): "); err != nil {
+		return "", fmt.Errorf("write prompt: %w", err)
+	}
 	choice, err := readPromptLine(in)
 	if err != nil {
 		return "", err
@@ -89,8 +93,12 @@ func askToContinueOnDownloadError(in io.Reader, out io.Writer, attachmentID stri
 		return true
 	}
 
-	fmt.Fprintf(out, "\nError downloading attachment %s (page %s): %v\n", attachmentID, pageID, err)
-	fmt.Fprint(out, "Continue anyway? [y/N]: ")
+	if _, writeErr := fmt.Fprintf(out, "\nError downloading attachment %s (page %s): %v\n", attachmentID, pageID, err); writeErr != nil {
+		return false
+	}
+	if _, writeErr := fmt.Fprint(out, "Continue anyway? [y/N]: "); writeErr != nil {
+		return false
+	}
 
 	choice, rerr := readPromptLine(in)
 	if rerr != nil {

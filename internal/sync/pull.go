@@ -232,7 +232,7 @@ func Pull(ctx context.Context, remote PullRemote, opts PullOptions) (PullResult,
 		if !ok {
 			return fs.Frontmatter{}, false
 		}
-		raw, err := os.ReadFile(absPath)
+		raw, err := os.ReadFile(absPath) //nolint:gosec // path comes from planned in-scope page path map
 		if err != nil {
 			return fs.Frontmatter{}, false
 		}
@@ -407,7 +407,7 @@ func Pull(ctx context.Context, remote PullRemote, opts PullOptions) (PullResult,
 			opts.Progress.SetCurrentItem(filepath.Base(assetPath))
 		}
 
-		if err := os.MkdirAll(filepath.Dir(assetPath), 0o755); err != nil {
+		if err := os.MkdirAll(filepath.Dir(assetPath), 0o750); err != nil {
 			return PullResult{}, fmt.Errorf("prepare attachment directory %s: %w", assetPath, err)
 		}
 
@@ -426,20 +426,24 @@ func Pull(ctx context.Context, remote PullRemote, opts PullOptions) (PullResult,
 				}
 				tempName := tempFile.Name()
 
-				err = remote.DownloadAttachment(ctx, attachmentID, pageID, tempFile)
-				tempFile.Close()
+				downloadErr := remote.DownloadAttachment(ctx, attachmentID, pageID, tempFile)
+				closeErr := tempFile.Close()
 
-				if err == nil {
+				if downloadErr == nil && closeErr == nil {
 					if err := os.Rename(tempName, assetPath); err != nil {
-						os.Remove(tempName)
+						_ = os.Remove(tempName)
 						return fmt.Errorf("rename attachment file %s: %w", assetPath, err)
 					}
 					return nil
 				}
-				os.Remove(tempName)
+				_ = os.Remove(tempName)
 
-				lastErr = err
-				if errors.Is(err, confluence.ErrNotFound) {
+				if downloadErr == nil && closeErr != nil {
+					return fmt.Errorf("close temp attachment file %s: %w", assetPath, closeErr)
+				}
+
+				lastErr = downloadErr
+				if errors.Is(downloadErr, confluence.ErrNotFound) {
 					break // No point in retrying 404
 				}
 			}

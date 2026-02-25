@@ -97,7 +97,9 @@ func (h *PlantUMLHandler) decodeData(data string) (string, error) {
 	// Try Zlib first (usually what pako.deflate does)
 	zReader, err := zlib.NewReader(bytes.NewReader(b))
 	if err == nil {
-		defer zReader.Close()
+		defer func() {
+			_ = zReader.Close()
+		}()
 		decompressed, err := io.ReadAll(zReader)
 		if err == nil {
 			return string(decompressed), nil
@@ -106,7 +108,9 @@ func (h *PlantUMLHandler) decodeData(data string) (string, error) {
 
 	// Fallback to raw Deflate (pako.deflateRaw)
 	fReader := flate.NewReader(bytes.NewReader(b))
-	defer fReader.Close()
+	defer func() {
+		_ = fReader.Close()
+	}()
 	decompressed, err := io.ReadAll(fReader)
 	if err != nil {
 		return "", err
@@ -149,9 +153,7 @@ func (h *PlantUMLHandler) FromMarkdown(ctx context.Context, in adfconv.Extension
 	} else if strings.HasPrefix(body, "```") {
 		body = strings.TrimPrefix(body, "```")
 	}
-	if strings.HasSuffix(body, "```") {
-		body = strings.TrimSuffix(body, "```")
-	}
+	body = strings.TrimSuffix(body, "```")
 	pumlSrc := strings.TrimSpace(body)
 
 	encoded, err := h.encodeData(pumlSrc)

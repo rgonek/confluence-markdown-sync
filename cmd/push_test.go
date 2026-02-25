@@ -421,10 +421,10 @@ func TestRunPush_IncludesUntrackedAssetsFromWorkspaceSnapshot(t *testing.T) {
 	})
 
 	assetPath := filepath.Join(spaceDir, "assets", "new.png")
-	if err := os.MkdirAll(filepath.Dir(assetPath), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(assetPath), 0o750); err != nil {
 		t.Fatalf("mkdir assets dir: %v", err)
 	}
-	if err := os.WriteFile(assetPath, []byte("png"), 0o644); err != nil {
+	if err := os.WriteFile(assetPath, []byte("png"), 0o600); err != nil {
 		t.Fatalf("write asset: %v", err)
 	}
 
@@ -751,13 +751,13 @@ func TestRunPush_PreservesOutOfScopeChanges(t *testing.T) {
 	spaceDir := preparePushRepoWithBaseline(t, repo)
 
 	outOfScope := filepath.Join(repo, "README.md")
-	if err := os.WriteFile(outOfScope, []byte("Original README"), 0o644); err != nil {
+	if err := os.WriteFile(outOfScope, []byte("Original README"), 0o600); err != nil {
 		t.Fatalf("write readme: %v", err)
 	}
 	runGitForTest(t, repo, "add", "README.md")
 	runGitForTest(t, repo, "commit", "-m", "add readme")
 
-	if err := os.WriteFile(outOfScope, []byte("Modified README"), 0o644); err != nil {
+	if err := os.WriteFile(outOfScope, []byte("Modified README"), 0o600); err != nil {
 		t.Fatalf("modify readme: %v", err)
 	}
 
@@ -794,7 +794,7 @@ func TestRunPush_PreservesOutOfScopeChanges(t *testing.T) {
 		t.Fatalf("runPush() failed: %v", err)
 	}
 
-	content, err := os.ReadFile(outOfScope)
+	content, err := os.ReadFile(outOfScope) //nolint:gosec // test path is created in t.TempDir
 	if err != nil {
 		t.Fatalf("read out-of-scope file: %v", err)
 	}
@@ -827,7 +827,7 @@ func preparePushRepoWithBaseline(t *testing.T, repo string) string {
 
 	// Directory name is now "Engineering (ENG)" based on fake remote
 	spaceDir := filepath.Join(repo, "Engineering (ENG)")
-	if err := os.MkdirAll(spaceDir, 0o755); err != nil {
+	if err := os.MkdirAll(spaceDir, 0o750); err != nil {
 		t.Fatalf("mkdir space: %v", err)
 	}
 

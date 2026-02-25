@@ -34,6 +34,10 @@ test-output/
 # Git worktrees
 .worktrees/
 
+# Ensure local/global ignores do not hide workflow files
+!.github/
+!.github/**
+
 # Editor/IDE
 
 # .idea/

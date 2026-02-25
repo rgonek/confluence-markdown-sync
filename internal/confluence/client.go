@@ -18,10 +18,10 @@ import (
 )
 
 const (
-	defaultHTTPTimeout         = 60 * time.Second
-	defaultDownloadTimeout     = 30 * time.Minute
-	defaultUserAgent           = "conf/dev"
-	maxErrorBodyBytes          = 1 << 20 // 1 MiB
+	defaultHTTPTimeout     = 60 * time.Second
+	defaultDownloadTimeout = 30 * time.Minute
+	defaultUserAgent       = "conf/dev"
+	maxErrorBodyBytes      = 1 << 20 // 1 MiB
 )
 
 var (
@@ -356,7 +356,9 @@ func (c *Client) DownloadAttachment(ctx context.Context, attachmentID string, pa
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() {
+		_ = resp.Body.Close()
+	}()
 
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
 		bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrorBodyBytes))
@@ -772,7 +774,7 @@ func (c *Client) do(req *http.Request, out any) error {
 
 		if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
 			bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrorBodyBytes))
-			resp.Body.Close()
+			_ = resp.Body.Close()
 
 			if isRetryableStatus(resp.StatusCode) && attempt < maxRetryAttempts {
 				delay := retryDelay(attempt+1, resp)
@@ -798,7 +800,9 @@ func (c *Client) do(req *http.Request, out any) error {
 			}
 		}
 
-		defer resp.Body.Close()
+		defer func() {
+			_ = resp.Body.Close()
+		}()
 
 		if out == nil {
 			_, _ = io.Copy(io.Discard, resp.Body)
@@ -953,12 +957,7 @@ type spaceDTO struct {
 }
 
 func (s spaceDTO) toModel() Space {
-	return Space{
-		ID:   s.ID,
-		Key:  s.Key,
-		Name: s.Name,
-		Type: s.Type,
-	}
+	return Space(s)
 }
 
 type folderDTO struct {
@@ -970,13 +969,7 @@ type folderDTO struct {
 }
 
 func (f folderDTO) toModel() Folder {
-	return Folder{
-		ID:         f.ID,
-		SpaceID:    f.SpaceID,
-		Title:      f.Title,
-		ParentID:   f.ParentID,
-		ParentType: f.ParentType,
-	}
+	return Folder(f)
 }
 
 type pageDTO struct {
@@ -1234,7 +1227,7 @@ func isUUID(s string) bool {
 				return false
 			}
 		default:
-			if !((r >= '0' && r <= '9') || (r >= 'a' && r <= 'f') || (r >= 'A' && r <= 'F')) {
+			if (r < '0' || r > '9') && (r < 'a' || r > 'f') && (r < 'A' || r > 'F') {
 				return false
 			}
 		}
@@ -1274,9 +1267,5 @@ func (c *Client) GetUser(ctx context.Context, accountID string) (User, error) {
 		return User{}, err
 	}
 
-	return User{
-		AccountID:   payload.AccountID,
-		DisplayName: payload.DisplayName,
-		Email:       payload.Email,
-	}, nil
+	return User(payload), nil
 }

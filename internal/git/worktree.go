@@ -25,7 +25,9 @@ func (c *Client) RemoveWorktree(path string) error {
 	if err != nil {
 		// Fallback: if the directory is gone, maybe prune?
 		if _, statErr := os.Stat(path); os.IsNotExist(statErr) {
-			c.Run("worktree", "prune")
+			if _, pruneErr := c.Run("worktree", "prune"); pruneErr != nil {
+				return fmt.Errorf("worktree prune: %w", pruneErr)
+			}
 			return nil
 		}
 		return fmt.Errorf("worktree remove %s: %w", path, err)

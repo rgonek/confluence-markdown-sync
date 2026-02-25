@@ -22,7 +22,7 @@ type RelinkResult struct {
 // ResolveLinksInFile replaces absolute Confluence URLs in a file with local relative paths.
 // If dryRun is true, it only returns whether changes would be made and how many.
 func ResolveLinksInFile(path string, index GlobalPageIndex, dryRun bool) (bool, int, error) {
-	content, err := os.ReadFile(path)
+	content, err := os.ReadFile(path) //nolint:gosec // path comes from workspace markdown traversal
 	if err != nil {
 		return false, 0, err
 	}
@@ -69,7 +69,7 @@ func ResolveLinksInFile(path string, index GlobalPageIndex, dryRun bool) (bool, 
 	})
 
 	if changed && !dryRun {
-		err = os.WriteFile(path, []byte(newContent), 0644)
+		err = os.WriteFile(path, []byte(newContent), 0644) //nolint:gosec // markdown files are intentionally group-readable
 		if err != nil {
 			return false, 0, err
 		}

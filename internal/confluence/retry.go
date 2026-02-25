@@ -9,9 +9,9 @@ import (
 )
 
 const (
-	maxRetryAttempts    = 3
-	retryBaseDelay      = 500 * time.Millisecond
-	retryMaxDelay       = 30 * time.Second
+	maxRetryAttempts = 3
+	retryBaseDelay   = 500 * time.Millisecond
+	retryMaxDelay    = 30 * time.Second
 )
 
 // isRetryableStatus returns true for status codes that warrant a retry.
@@ -47,7 +47,18 @@ func retryDelay(attempt int, resp *http.Response) time.Duration {
 	}
 
 	// Exponential backoff with full jitter: rand(0, base * 2^attempt)
-	exp := retryBaseDelay * (1 << uint(attempt-1))
+	if attempt < 1 {
+		attempt = 1
+	}
+
+	exp := retryBaseDelay
+	for i := 1; i < attempt; i++ {
+		if exp >= retryMaxDelay/2 {
+			exp = retryMaxDelay
+			break
+		}
+		exp *= 2
+	}
 	if exp > retryMaxDelay {
 		exp = retryMaxDelay
 	}
