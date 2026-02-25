@@ -175,8 +175,27 @@ func TestReverseMediaHook(t *testing.T) {
 	if out.ID != "att-123" {
 		t.Errorf("Expected ID att-123, got %q", out.ID)
 	}
+	if out.MediaType != "image" {
+		t.Errorf("Expected MediaType image, got %q", out.MediaType)
+	}
 
-	// Test 2: New asset (not in index)
+	// Test 2: Non-image assets should map to file media type.
+	pdfAssetPath := filepath.Join(spaceDir, "assets", "manual.PDF")
+	err = os.WriteFile(pdfAssetPath, []byte("fake pdf"), 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	attachmentIndex[filepath.ToSlash("assets/manual.PDF")] = "att-124"
+	in.Destination = "assets/manual.PDF"
+	out, err = hook(ctx, in)
+	if err != nil {
+		t.Errorf("Unexpected error: %v", err)
+	}
+	if out.MediaType != "file" {
+		t.Errorf("Expected MediaType file, got %q", out.MediaType)
+	}
+
+	// Test 3: New asset (not in index)
 	newAssetPath := filepath.Join(spaceDir, "assets", "new.png")
 	err = os.WriteFile(newAssetPath, []byte("new image"), 0o600)
 	if err != nil {
@@ -189,7 +208,7 @@ func TestReverseMediaHook(t *testing.T) {
 		t.Errorf("Expected ErrUnresolved for missing attachment mapping, got %v", err)
 	}
 
-	// Test 3: Non-assets path should fail even if mapped
+	// Test 4: Non-assets path should fail even if mapped
 	nonAssetPath := filepath.Join(spaceDir, "image-outside.png")
 	err = os.WriteFile(nonAssetPath, []byte("outside"), 0o600)
 	if err != nil {
@@ -203,7 +222,7 @@ func TestReverseMediaHook(t *testing.T) {
 		t.Errorf("Expected ErrUnresolved for non-assets reference, got %v", err)
 	}
 
-	// Test 4: Missing asset (should fail)
+	// Test 5: Missing asset (should fail)
 	in.Destination = "assets/missing.png"
 	_, err = hook(ctx, in)
 	if err != mdconv.ErrUnresolved {
