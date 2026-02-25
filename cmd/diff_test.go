@@ -2,6 +2,8 @@ package cmd
 
 import (
 	"bytes"
+	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -266,6 +268,20 @@ func TestRunDiff_FolderListFailureFallsBackToPageHierarchy(t *testing.T) {
 	}
 	if !strings.Contains(got, "+new body") {
 		t.Fatalf("diff output missing added remote line:\n%s", got)
+	}
+}
+
+func TestRunDiff_RespectsCanceledContext(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	cmd := &cobra.Command{}
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetContext(ctx)
+
+	err := runDiff(cmd, config.Target{Mode: config.TargetModeSpace, Value: "ENG"})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected context canceled error, got: %v", err)
 	}
 }
 

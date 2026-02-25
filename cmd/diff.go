@@ -55,7 +55,10 @@ If omitted, the space is inferred from the current directory name.`,
 }
 
 func runDiff(cmd *cobra.Command, target config.Target) error {
-	ctx := context.Background()
+	ctx := getCommandContext(cmd)
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	out := cmd.OutOrStdout()
 
 	initialCtx, err := resolveInitialPullContext(target)

@@ -3,6 +3,7 @@ package sync
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -183,6 +184,9 @@ func TestPull_IncrementalRewriteDeleteAndWatermark(t *testing.T) {
 
 	if result.State.LastPullHighWatermark != "2026-02-01T11:00:00Z" {
 		t.Fatalf("watermark = %q, want 2026-02-01T11:00:00Z", result.State.LastPullHighWatermark)
+	}
+	if result.State.SpaceKey != "ENG" {
+		t.Fatalf("state space key = %q, want ENG", result.State.SpaceKey)
 	}
 	if got := result.State.PagePathIndex["root.md"]; got != "1" {
 		t.Fatalf("state page_path_index[root.md] = %q, want 1", got)
@@ -439,12 +443,63 @@ func TestPull_ForceFullPullsAllPagesWithoutIncrementalChanges(t *testing.T) {
 	}
 }
 
+func TestListAllChanges_UsesContinuationOffsets(t *testing.T) {
+	starts := make([]int, 0)
+
+	remote := &fakePullRemote{
+		listChangesFunc: func(opts confluence.ChangeListOptions) (confluence.ChangeListResult, error) {
+			starts = append(starts, opts.Start)
+			switch opts.Start {
+			case 0:
+				return confluence.ChangeListResult{
+					Changes:   []confluence.Change{{PageID: "1"}},
+					NextStart: 50,
+					HasMore:   true,
+				}, nil
+			case 50:
+				return confluence.ChangeListResult{
+					Changes:   []confluence.Change{{PageID: "2"}},
+					NextStart: 100,
+					HasMore:   true,
+				}, nil
+			case 100:
+				return confluence.ChangeListResult{
+					Changes: []confluence.Change{{PageID: "3"}},
+					HasMore: false,
+				}, nil
+			default:
+				return confluence.ChangeListResult{}, fmt.Errorf("unexpected start: %d", opts.Start)
+			}
+		},
+	}
+
+	changes, err := listAllChanges(context.Background(), remote, confluence.ChangeListOptions{
+		SpaceKey: "ENG",
+		Limit:    25,
+	}, nil)
+	if err != nil {
+		t.Fatalf("listAllChanges() error: %v", err)
+	}
+
+	if len(changes) != 3 {
+		t.Fatalf("changes count = %d, want 3", len(changes))
+	}
+
+	if len(starts) != 3 {
+		t.Fatalf("starts count = %d, want 3", len(starts))
+	}
+	if starts[0] != 0 || starts[1] != 50 || starts[2] != 100 {
+		t.Fatalf("starts = %v, want [0 50 100]", starts)
+	}
+}
+
 type fakePullRemote struct {
 	space           confluence.Space
 	pages           []confluence.Page
 	folderByID      map[string]confluence.Folder
 	folderErr       error
 	changes         []confluence.Change
+	listChangesFunc func(opts confluence.ChangeListOptions) (confluence.ChangeListResult, error)
 	pagesByID       map[string]confluence.Page
 	attachments     map[string][]byte
 	labels          map[string][]string
@@ -485,6 +540,9 @@ func (f *fakePullRemote) GetFolder(_ context.Context, folderID string) (confluen
 }
 
 func (f *fakePullRemote) ListChanges(_ context.Context, opts confluence.ChangeListOptions) (confluence.ChangeListResult, error) {
+	if f.listChangesFunc != nil {
+		return f.listChangesFunc(opts)
+	}
 	f.lastChangeSince = opts.Since
 	return confluence.ChangeListResult{Changes: f.changes}, nil
 }

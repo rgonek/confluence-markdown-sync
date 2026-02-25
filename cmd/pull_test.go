@@ -122,6 +122,87 @@ func TestRunPull_RestoresScopedStashAndCreatesTag(t *testing.T) {
 	}
 }
 
+func TestResolveInitialPullContext_TrackedDirWithoutSpaceKeyUsesDirSuffix(t *testing.T) {
+	spaceDir := filepath.Join(t.TempDir(), "Technical documentation (TD)")
+	if err := os.MkdirAll(spaceDir, 0o750); err != nil {
+		t.Fatalf("mkdir space dir: %v", err)
+	}
+
+	if err := fs.SaveState(spaceDir, fs.SpaceState{
+		PagePathIndex: map[string]string{
+			"missing.md": "1",
+		},
+	}); err != nil {
+		t.Fatalf("save state: %v", err)
+	}
+
+	chdirRepo(t, spaceDir)
+
+	ctx, err := resolveInitialPullContext(config.Target{Mode: config.TargetModeSpace, Value: ""})
+	if err != nil {
+		t.Fatalf("resolveInitialPullContext() error: %v", err)
+	}
+
+	if ctx.spaceDir != spaceDir {
+		t.Fatalf("spaceDir = %q, want %q", ctx.spaceDir, spaceDir)
+	}
+	if ctx.spaceKey != "TD" {
+		t.Fatalf("spaceKey = %q, want TD", ctx.spaceKey)
+	}
+	if !ctx.fixedDir {
+		t.Fatal("expected fixedDir=true for tracked directory")
+	}
+}
+
+func TestListAllPullChangesForEstimate_UsesContinuationOffsets(t *testing.T) {
+	starts := make([]int, 0)
+
+	remote := &cmdFakePullRemote{
+		listChanges: func(opts confluence.ChangeListOptions) (confluence.ChangeListResult, error) {
+			starts = append(starts, opts.Start)
+			switch opts.Start {
+			case 0:
+				return confluence.ChangeListResult{
+					Changes:   []confluence.Change{{PageID: "1"}},
+					HasMore:   true,
+					NextStart: 40,
+				}, nil
+			case 40:
+				return confluence.ChangeListResult{
+					Changes:   []confluence.Change{{PageID: "2"}},
+					HasMore:   true,
+					NextStart: 90,
+				}, nil
+			case 90:
+				return confluence.ChangeListResult{
+					Changes: []confluence.Change{{PageID: "3"}},
+					HasMore: false,
+				}, nil
+			default:
+				return confluence.ChangeListResult{}, fmt.Errorf("unexpected start: %d", opts.Start)
+			}
+		},
+	}
+
+	changes, err := listAllPullChangesForEstimate(context.Background(), remote, confluence.ChangeListOptions{
+		SpaceKey: "ENG",
+		Limit:    25,
+	}, nil)
+	if err != nil {
+		t.Fatalf("listAllPullChangesForEstimate() error: %v", err)
+	}
+
+	if len(changes) != 3 {
+		t.Fatalf("changes count = %d, want 3", len(changes))
+	}
+	if len(starts) != 3 {
+		t.Fatalf("start count = %d, want 3", len(starts))
+	}
+	if starts[0] != 0 || starts[1] != 40 || starts[2] != 90 {
+		t.Fatalf("starts = %v, want [0 40 90]", starts)
+	}
+}
+
 func TestRunPull_FailureCleanupPreservesStateFile(t *testing.T) {
 	runParallelCommandTest(t)
 
@@ -641,6 +722,7 @@ type cmdFakePullRemote struct {
 	folderErr   error
 	getPageErr  error
 	changes     []confluence.Change
+	listChanges func(opts confluence.ChangeListOptions) (confluence.ChangeListResult, error)
 	pagesByID   map[string]confluence.Page
 	attachments map[string][]byte
 }
@@ -668,7 +750,10 @@ func (f *cmdFakePullRemote) GetFolder(_ context.Context, folderID string) (confl
 	return folder, nil
 }
 
-func (f *cmdFakePullRemote) ListChanges(_ context.Context, _ confluence.ChangeListOptions) (confluence.ChangeListResult, error) {
+func (f *cmdFakePullRemote) ListChanges(_ context.Context, opts confluence.ChangeListOptions) (confluence.ChangeListResult, error) {
+	if f.listChanges != nil {
+		return f.listChanges(opts)
+	}
 	return confluence.ChangeListResult{Changes: f.changes}, nil
 }
 

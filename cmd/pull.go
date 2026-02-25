@@ -315,7 +315,6 @@ func resolveInitialPullContext(target config.Target) (initialPullContext, error)
 		if _, err := os.Stat(filepath.Join(cwd, fs.StateFileName)); err == nil {
 			state, err := fs.LoadState(cwd)
 			if err == nil {
-				// Check state.SpaceKey first before falling back to file iteration
 				if strings.TrimSpace(state.SpaceKey) != "" {
 					return initialPullContext{
 						spaceKey: state.SpaceKey,
@@ -323,20 +322,13 @@ func resolveInitialPullContext(target config.Target) (initialPullContext, error)
 						fixedDir: true,
 					}, nil
 				}
-				// Fall back to finding space key from file frontmatter
-				if len(state.PagePathIndex) > 0 {
-					for relPath := range state.PagePathIndex {
-						doc, err := fs.ReadMarkdownDocument(filepath.Join(cwd, filepath.FromSlash(relPath)))
-						if err == nil && doc.Frontmatter.Space != "" {
-							return initialPullContext{
-								spaceKey: doc.Frontmatter.Space,
-								spaceDir: cwd,
-								fixedDir: true,
-							}, nil
-						}
-					}
-				}
 			}
+
+			return initialPullContext{
+				spaceKey: inferSpaceKeyFromDirName(cwd),
+				spaceDir: cwd,
+				fixedDir: true,
+			}, nil
 		}
 
 		spaceDir, err := filepath.Abs(cwd)
@@ -360,7 +352,6 @@ func resolveInitialPullContext(target config.Target) (initialPullContext, error)
 		if _, err := os.Stat(filepath.Join(spaceDir, fs.StateFileName)); err == nil {
 			state, err := fs.LoadState(spaceDir)
 			if err == nil {
-				// Check state.SpaceKey first before falling back to file iteration
 				if strings.TrimSpace(state.SpaceKey) != "" {
 					return initialPullContext{
 						spaceKey: state.SpaceKey,
@@ -368,18 +359,13 @@ func resolveInitialPullContext(target config.Target) (initialPullContext, error)
 						fixedDir: true,
 					}, nil
 				}
-				// Fall back to finding space key from file frontmatter
-				for relPath := range state.PagePathIndex {
-					doc, err := fs.ReadMarkdownDocument(filepath.Join(spaceDir, filepath.FromSlash(relPath)))
-					if err == nil && doc.Frontmatter.Space != "" {
-						return initialPullContext{
-							spaceKey: doc.Frontmatter.Space,
-							spaceDir: spaceDir,
-							fixedDir: true,
-						}, nil
-					}
-				}
 			}
+
+			return initialPullContext{
+				spaceKey: inferSpaceKeyFromDirName(spaceDir),
+				spaceDir: spaceDir,
+				fixedDir: true,
+			}, nil
 		}
 
 		return initialPullContext{
@@ -440,6 +426,23 @@ func findSpaceDirFromFile(filePath, spaceKey string) string {
 		dir = parent
 	}
 	return filepath.Dir(filePath)
+}
+
+func inferSpaceKeyFromDirName(spaceDir string) string {
+	base := strings.TrimSpace(filepath.Base(spaceDir))
+	if base == "" {
+		return base
+	}
+	if strings.HasSuffix(base, ")") {
+		openIdx := strings.LastIndex(base, "(")
+		if openIdx >= 0 && openIdx < len(base)-1 {
+			candidate := strings.TrimSpace(base[openIdx+1 : len(base)-1])
+			if candidate != "" {
+				return candidate
+			}
+		}
+	}
+	return base
 }
 
 func findEnvPath(startDir string) string {
@@ -799,8 +802,12 @@ func listAllPullChangesForEstimate(
 		if !changeResult.HasMore {
 			break
 		}
+
 		next := changeResult.NextStart
 		if next <= start {
+			next = start + len(changeResult.Changes)
+		}
+		if next <= start && opts.Limit > 0 {
 			next = start + opts.Limit
 		}
 		if next <= start {

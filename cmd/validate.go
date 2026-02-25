@@ -57,46 +57,57 @@ If omitted, the space is inferred from the current directory name.`,
 				raw = args[0]
 			}
 			target := config.ParseTarget(raw)
-			return runValidateTarget(cmd.OutOrStdout(), target)
+			return runValidateTargetWithContext(getCommandContext(cmd), cmd.OutOrStdout(), target)
 		},
 	}
 }
 
 func runValidateTarget(out io.Writer, target config.Target) error {
-	ctx, err := resolveValidateTargetContext(target)
+	return runValidateTargetWithContext(context.Background(), out, target)
+}
+
+func runValidateTargetWithContext(ctx context.Context, out io.Writer, target config.Target) error {
+	targetCtx, err := resolveValidateTargetContext(target)
 	if err != nil {
 		return err
 	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 
-	envPath := findEnvPath(ctx.spaceDir)
+	envPath := findEnvPath(targetCtx.spaceDir)
 	cfg, err := config.Load(envPath)
 	if err != nil {
 		return fmt.Errorf("failed to load config: %w", err)
 	}
 
-	_, _ = fmt.Fprintf(out, "Building index for space: %s\n", ctx.spaceDir)
-	index, err := syncflow.BuildPageIndex(ctx.spaceDir)
+	_, _ = fmt.Fprintf(out, "Building index for space: %s\n", targetCtx.spaceDir)
+	index, err := syncflow.BuildPageIndex(targetCtx.spaceDir)
 	if err != nil {
 		return fmt.Errorf("failed to build page index: %w", err)
 	}
 
-	state, err := fs.LoadState(ctx.spaceDir)
+	state, err := fs.LoadState(targetCtx.spaceDir)
 	if err != nil {
 		return fmt.Errorf("failed to load state: %w", err)
 	}
-	if strings.TrimSpace(ctx.spaceKey) == "" {
-		ctx.spaceKey = strings.TrimSpace(state.SpaceKey)
+	if strings.TrimSpace(targetCtx.spaceKey) == "" {
+		targetCtx.spaceKey = strings.TrimSpace(state.SpaceKey)
 	}
 
-	immutableResolver := newValidateImmutableFrontmatterResolver(ctx.spaceDir, ctx.spaceKey, state)
+	immutableResolver := newValidateImmutableFrontmatterResolver(targetCtx.spaceDir, targetCtx.spaceKey, state)
 
-	linkHook := syncflow.NewReverseLinkHook(ctx.spaceDir, index, cfg.Domain)
+	linkHook := syncflow.NewReverseLinkHook(targetCtx.spaceDir, index, cfg.Domain)
 
 	hasErrors := false
-	for _, file := range ctx.files {
-		rel, _ := filepath.Rel(ctx.spaceDir, file)
+	for _, file := range targetCtx.files {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 
-		issues := validateFile(file, ctx.spaceDir, linkHook, state.AttachmentIndex)
+		rel, _ := filepath.Rel(targetCtx.spaceDir, file)
+
+		issues := validateFile(ctx, file, targetCtx.spaceDir, linkHook, state.AttachmentIndex)
 		issues = append(issues, immutableResolver.validate(file)...)
 		if len(issues) == 0 {
 			continue
@@ -296,7 +307,7 @@ func (r *validateImmutableFrontmatterResolver) readBaselineFrontmatter(absPath s
 	return doc.Frontmatter, true
 }
 
-func validateFile(path, spaceDir string, linkHook mdconverter.LinkParseHook, attachmentIndex map[string]string) []fs.ValidationIssue {
+func validateFile(ctx context.Context, path, spaceDir string, linkHook mdconverter.LinkParseHook, attachmentIndex map[string]string) []fs.ValidationIssue {
 	var issues []fs.ValidationIssue
 
 	// Read full document
@@ -323,7 +334,7 @@ func validateFile(path, spaceDir string, linkHook mdconverter.LinkParseHook, att
 	mediaHook := syncflow.NewReverseMediaHook(spaceDir, strictAttachmentIndex)
 
 	// 2. Strict Conversion
-	_, err = converter.Reverse(context.Background(), []byte(doc.Body), converter.ReverseConfig{
+	_, err = converter.Reverse(ctx, []byte(doc.Body), converter.ReverseConfig{
 		LinkHook:  linkHook,
 		MediaHook: mediaHook,
 		Strict:    true,

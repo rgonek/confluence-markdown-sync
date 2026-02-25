@@ -140,7 +140,7 @@ func runPush(cmd *cobra.Command, target config.Target, onConflict string, dryRun
 	}
 
 	if preflight {
-		return runPushPreflight(out, target, spaceKey, spaceDir, gitClient, spaceScopePath, changeScopePath)
+		return runPushPreflight(ctx, out, target, spaceKey, spaceDir, gitClient, spaceScopePath, changeScopePath)
 	}
 
 	ts := nowUTC()
@@ -238,6 +238,7 @@ func runPush(cmd *cobra.Command, target config.Target, onConflict string, dryRun
 }
 
 func runPushPreflight(
+	ctx context.Context,
 	out io.Writer,
 	target config.Target,
 	spaceKey, spaceDir string,
@@ -266,7 +267,7 @@ func runPushPreflight(
 	} else {
 		currentTarget = config.Target{Mode: config.TargetModeSpace, Value: spaceDir}
 	}
-	if err := runValidateTarget(out, currentTarget); err != nil {
+	if err := runValidateTargetWithContext(ctx, out, currentTarget); err != nil {
 		return fmt.Errorf("preflight validate failed: %w", err)
 	}
 
@@ -314,7 +315,7 @@ func runPushDryRun(
 	} else {
 		currentTarget = config.Target{Mode: config.TargetModeSpace, Value: spaceDir}
 	}
-	if err := runValidateTarget(out, currentTarget); err != nil {
+	if err := runValidateTargetWithContext(ctx, out, currentTarget); err != nil {
 		return fmt.Errorf("pre-push validate failed: %w", err)
 	}
 
@@ -418,7 +419,7 @@ func runPushInWorktree(
 		wtTarget = config.Target{Mode: config.TargetModeSpace, Value: wtSpaceDir}
 	}
 
-	if err := runValidateTarget(out, wtTarget); err != nil {
+	if err := runValidateTargetWithContext(ctx, out, wtTarget); err != nil {
 		return fmt.Errorf("pre-push validate failed: %w", err)
 	}
 
