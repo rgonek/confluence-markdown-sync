@@ -15,7 +15,13 @@ concurrency:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - windows-latest
+    runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -32,9 +38,11 @@ jobs:
         run: go test -race ./...
 
       - name: Coverage gates
+        if: matrix.os == 'ubuntu-latest'
         run: go run ./tools/coveragecheck
 
       - name: Check formatting
+        if: matrix.os == 'ubuntu-latest'
         run: |
           go_files="$(git ls-files '*.go')"
           unformatted="$(gofmt -l $go_files)"
@@ -45,6 +53,7 @@ jobs:
           fi
 
       - name: Lint
+        if: matrix.os == 'ubuntu-latest'
         uses: golangci/golangci-lint-action@v7
         with:
           version: v2.8.0
