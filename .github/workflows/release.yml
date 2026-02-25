@@ -6,7 +6,8 @@ on:
       - "v*"
 
 permissions:
-  contents: read
+  contents: write
+  id-token: write
 
 jobs:
   verify:
@@ -78,3 +79,80 @@ jobs:
         with:
           name: conf-${{ matrix.goos }}-${{ matrix.goarch }}
           path: dist/conf-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.ext }}
+
+  package-release:
+    needs: build-artifacts
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: conf-*
+          path: dist
+          merge-multiple: true
+
+      - name: Generate checksums
+        run: |
+          cd dist
+          sha256sum conf-* > checksums.txt
+
+      - name: Install Syft
+        uses: anchore/actions/setup-syft@v0
+
+      - name: Generate SBOM files
+        run: |
+          for binary in dist/conf-*; do
+            syft "${binary}" -o spdx-json="${binary}.sbom.spdx.json"
+          done
+
+      - name: Vulnerability scan artifacts
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          scan-type: fs
+          scan-ref: dist
+          format: table
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: '1'
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@v3.8.1
+
+      - name: Sign checksums (keyless)
+        run: |
+          cosign sign-blob --yes \
+            --output-signature dist/checksums.txt.sig \
+            --output-certificate dist/checksums.txt.pem \
+            dist/checksums.txt
+
+      - name: Upload release bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: conf-release-bundle
+          path: |
+            dist/conf-*
+            dist/checksums.txt
+            dist/checksums.txt.sig
+            dist/checksums.txt.pem
+
+  publish:
+    needs: package-release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download release bundle
+        uses: actions/download-artifact@v4
+        with:
+          name: conf-release-bundle
+          path: dist
+
+      - name: Publish GitHub release assets
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/conf-*
+            dist/checksums.txt
+            dist/checksums.txt.sig
+            dist/checksums.txt.pem

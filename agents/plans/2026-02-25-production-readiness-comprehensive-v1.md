@@ -26,8 +26,8 @@ Deliver a production-grade reliability and operations baseline for conf by closi
 - [x] Add explicit client close lifecycle for limiter resources so long-running automation does not leak background goroutines (internal/confluence/ratelimit.go:60, internal/confluence/client.go:120).
 - [x] Raise quality gates and add tests for uncovered high-risk paths in push, relink, progress, and root command wiring (internal/sync/push.go:260, internal/sync/push.go:1034, cmd/relink.go:139, cmd/progress.go:17, cmd/root.go:40, tools/coveragecheck/main.go:22, .golangci.yml:7).
 - [x] Rework e2e suites to require sandbox configuration and remove hardcoded live identifiers so tests align with safety policy (cmd/e2e_test.go:25, cmd/e2e_test.go:171, cmd/e2e_test.go:258, AGENTS.md:55).
-- [ ] Expand release workflow with checksums, signing, SBOM generation, vulnerability scanning, and publish steps for verifiable artifacts (.github/workflows/release.yml:34).
-- [ ] Replace shell-specific clean behavior and validate developer targets on Windows and Linux to improve portability (Makefile:44, .github/workflows/ci.yml:21).
+- [x] Expand release workflow with checksums, signing, SBOM generation, vulnerability scanning, and publish steps for verifiable artifacts (.github/workflows/release.yml:34, .github/workflows/release.yml:83, .github/workflows/release.yml:132).
+- [x] Replace shell-specific clean behavior and validate developer targets on Windows and Linux to improve portability (Makefile:6, Makefile:35, .github/workflows/ci.yml:37, tools/gofmtcheck/main.go:1).
 - [ ] Add licensing and support-governance documents so distribution posture matches installation and release expectations (README.md:13).
 - [ ] Expand operator runbooks for conflict handling, rollback expectations, and dry-run behavior with test-backed guidance (docs/automation.md:41, cmd/push.go:350, cmd/pull.go:574).
 - [x] Add structured pull and push telemetry for timing, retries, conflict choices, and rollback events to improve incident diagnosis (cmd/pull.go:71, cmd/push.go:79, cmd/automation.go:52, internal/confluence/client.go:787, internal/sync/push.go:399, cmd/progress.go:36).
