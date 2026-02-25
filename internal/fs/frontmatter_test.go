@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -11,6 +12,10 @@ import (
 func TestParseAndFormatMarkdownDocument_RoundTrip(t *testing.T) {
 	input := `---
 title: Page Title
+created_by: jane@example.com
+created_at: 2026-02-10T10:00:00Z
+updated_by: john@example.com
+updated_at: 2026-02-11T11:00:00Z
 confluence_page_id: "12345"
 confluence_space_key: DOCS
 confluence_version: 7
@@ -33,6 +38,15 @@ Body text.
 	if doc.Frontmatter.Extra["custom_field"] != "custom" {
 		t.Fatalf("custom_field = %#v, want custom", doc.Frontmatter.Extra["custom_field"])
 	}
+	if doc.Frontmatter.CreatedBy != "jane@example.com" {
+		t.Fatalf("CreatedBy = %q, want jane@example.com", doc.Frontmatter.CreatedBy)
+	}
+	if doc.Frontmatter.UpdatedBy != "john@example.com" {
+		t.Fatalf("UpdatedBy = %q, want john@example.com", doc.Frontmatter.UpdatedBy)
+	}
+	if doc.Frontmatter.UpdatedAt != "2026-02-11T11:00:00Z" {
+		t.Fatalf("UpdatedAt = %q, want 2026-02-11T11:00:00Z", doc.Frontmatter.UpdatedAt)
+	}
 	if doc.Body == "" {
 		t.Fatal("body should not be empty")
 	}
@@ -44,8 +58,14 @@ Body text.
 	if strings.Contains(string(out), "confluence_page_id:") || strings.Contains(string(out), "confluence_space_key:") || strings.Contains(string(out), "confluence_version:") {
 		t.Fatalf("formatted output should use canonical keys, got:\n%s", string(out))
 	}
+	if strings.Contains(string(out), "author:") || strings.Contains(string(out), "last_modified_by:") || strings.Contains(string(out), "last_modified_at:") {
+		t.Fatalf("formatted output should use created_/updated_ keys, got:\n%s", string(out))
+	}
 	if !strings.Contains(string(out), "\nid:") || !strings.Contains(string(out), "\nspace:") || !strings.Contains(string(out), "\nversion:") {
 		t.Fatalf("formatted output missing canonical keys, got:\n%s", string(out))
+	}
+	if !strings.Contains(string(out), "\ncreated_by:") || !strings.Contains(string(out), "\nupdated_by:") || !strings.Contains(string(out), "\nupdated_at:") {
+		t.Fatalf("formatted output missing metadata keys, got:\n%s", string(out))
 	}
 
 	parsedAgain, err := ParseMarkdownDocument(out)
@@ -123,6 +143,46 @@ func TestValidateFrontmatterSchema(t *testing.T) {
 	})
 	if result.IsValid() {
 		t.Fatal("ValidateFrontmatterSchema(invalid) should fail")
+	}
+}
+
+func TestNormalizeLabels_DedupesAndSorts(t *testing.T) {
+	labels := []string{" team ", "OPS", "team", "ops", "", "  "}
+	got := NormalizeLabels(labels)
+	want := []string{"ops", "team"}
+
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("NormalizeLabels() = %v, want %v", got, want)
+	}
+}
+
+func TestValidateFrontmatterSchema_InvalidLabels(t *testing.T) {
+	result := ValidateFrontmatterSchema(Frontmatter{
+		Space:  "ENG",
+		Labels: []string{"", "  ", "ready to review", "tab\tlabel"},
+	})
+	if result.IsValid() {
+		t.Fatal("ValidateFrontmatterSchema() should fail for invalid labels")
+	}
+
+	if len(result.Issues) != 4 {
+		t.Fatalf("issues = %d, want 4", len(result.Issues))
+	}
+
+	messages := make([]string, 0, len(result.Issues))
+	for _, issue := range result.Issues {
+		messages = append(messages, issue.Message)
+	}
+
+	joined := strings.Join(messages, "\n")
+	if !strings.Contains(joined, "empty after trimming") {
+		t.Fatalf("expected empty label issue, got:\n%s", joined)
+	}
+	if !strings.Contains(joined, `"ready to review"`) {
+		t.Fatalf("expected whitespace label issue to identify label value, got:\n%s", joined)
+	}
+	if !strings.Contains(joined, `"tab\tlabel"`) {
+		t.Fatalf("expected tab whitespace label issue to identify label value, got:\n%s", joined)
 	}
 }
 

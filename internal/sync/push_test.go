@@ -155,6 +155,10 @@ func (f *fakeFolderPushRemote) ArchivePages(_ context.Context, pageIDs []string)
 	return confluence.ArchiveResult{}, nil
 }
 
+func (f *fakeFolderPushRemote) WaitForArchiveTask(_ context.Context, _ string, _ confluence.ArchiveTaskWaitOptions) (confluence.ArchiveTaskStatus, error) {
+	return confluence.ArchiveTaskStatus{State: confluence.ArchiveTaskStateSucceeded}, nil
+}
+
 func (f *fakeFolderPushRemote) DeletePage(_ context.Context, pageID string, hardDelete bool) error {
 	return nil
 }
@@ -642,6 +646,229 @@ func TestPush_RollbackRestoresMetadataOnSyncFailure(t *testing.T) {
 	}
 }
 
+func TestPush_RollbackRestoresPageContentOnPostUpdateFailure(t *testing.T) {
+	spaceDir := t.TempDir()
+	mdPath := filepath.Join(spaceDir, "root.md")
+
+	if err := fs.WriteMarkdownDocument(mdPath, fs.MarkdownDocument{
+		Frontmatter: fs.Frontmatter{
+			Title:   "Updated Title",
+			ID:      "1",
+			Space:   "ENG",
+			Version: 1,
+			Labels:  []string{"team"},
+		},
+		Body: "new local content\n",
+	}); err != nil {
+		t.Fatalf("write markdown: %v", err)
+	}
+
+	originalBody := []byte(`{"version":1,"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"remote baseline"}]}]}`)
+	remote := newRollbackPushRemote()
+	remote.pagesByID["1"] = confluence.Page{
+		ID:           "1",
+		SpaceID:      "space-1",
+		Title:        "Original Title",
+		ParentPageID: "parent-1",
+		Status:       "draft",
+		Version:      1,
+		BodyADF:      append([]byte(nil), originalBody...),
+	}
+	remote.pages = append(remote.pages, remote.pagesByID["1"])
+	remote.contentStatuses["1"] = ""
+	remote.labelsByPage["1"] = []string{}
+	remote.failAddLabels = true
+
+	result, err := Push(context.Background(), remote, PushOptions{
+		SpaceKey:       "ENG",
+		SpaceDir:       spaceDir,
+		Domain:         "https://example.atlassian.net",
+		State:          fs.SpaceState{SpaceKey: "ENG", PagePathIndex: map[string]string{"root.md": "1"}},
+		ConflictPolicy: PushConflictPolicyCancel,
+		Changes: []PushFileChange{{
+			Type: PushChangeModify,
+			Path: "root.md",
+		}},
+	})
+	if err == nil {
+		t.Fatal("expected metadata sync failure")
+	}
+	if !strings.Contains(err.Error(), "sync metadata") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if remote.updatePageCalls < 2 {
+		t.Fatalf("update page calls = %d, want at least 2 (apply + rollback)", remote.updatePageCalls)
+	}
+
+	restored := remote.pagesByID["1"]
+	if restored.Title != "Original Title" {
+		t.Fatalf("restored title = %q, want Original Title", restored.Title)
+	}
+	if restored.Status != "draft" {
+		t.Fatalf("restored status = %q, want draft", restored.Status)
+	}
+	if string(restored.BodyADF) != string(originalBody) {
+		t.Fatalf("restored body = %s, want %s", string(restored.BodyADF), string(originalBody))
+	}
+
+	hasContentRollback := false
+	for _, diag := range result.Diagnostics {
+		if diag.Code == "ROLLBACK_PAGE_CONTENT_RESTORED" {
+			hasContentRollback = true
+			break
+		}
+	}
+	if !hasContentRollback {
+		t.Fatalf("expected ROLLBACK_PAGE_CONTENT_RESTORED diagnostic, got %+v", result.Diagnostics)
+	}
+}
+
+func TestPush_DryRunSkipsRollbackAttempts(t *testing.T) {
+	spaceDir := t.TempDir()
+	mdPath := filepath.Join(spaceDir, "new.md")
+	assetPath := filepath.Join(spaceDir, "assets", "new.png")
+
+	if err := os.MkdirAll(filepath.Dir(assetPath), 0o750); err != nil {
+		t.Fatalf("mkdir assets: %v", err)
+	}
+	if err := os.WriteFile(assetPath, []byte("png"), 0o600); err != nil {
+		t.Fatalf("write asset: %v", err)
+	}
+
+	if err := fs.WriteMarkdownDocument(mdPath, fs.MarkdownDocument{
+		Frontmatter: fs.Frontmatter{
+			Title: "New",
+			Space: "ENG",
+		},
+		Body: "![asset](assets/new.png)\n",
+	}); err != nil {
+		t.Fatalf("write markdown: %v", err)
+	}
+
+	remote := newRollbackPushRemote()
+	remote.failUpdate = true
+
+	result, err := Push(context.Background(), remote, PushOptions{
+		SpaceKey:       "ENG",
+		SpaceDir:       spaceDir,
+		Domain:         "https://example.atlassian.net",
+		State:          fs.SpaceState{SpaceKey: "ENG"},
+		ConflictPolicy: PushConflictPolicyCancel,
+		DryRun:         true,
+		Changes: []PushFileChange{{
+			Type: PushChangeAdd,
+			Path: "new.md",
+		}},
+	})
+	if err == nil {
+		t.Fatal("expected update failure")
+	}
+	if !strings.Contains(err.Error(), "update page") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if remote.createPageCalls != 1 {
+		t.Fatalf("create page calls = %d, want 1", remote.createPageCalls)
+	}
+	if remote.uploadAttachmentCalls != 1 {
+		t.Fatalf("upload attachment calls = %d, want 1", remote.uploadAttachmentCalls)
+	}
+	if len(remote.deleteAttachmentCalls) != 0 {
+		t.Fatalf("delete attachment calls = %d, want 0 in dry-run", len(remote.deleteAttachmentCalls))
+	}
+	if len(remote.deletePageCalls) != 0 {
+		t.Fatalf("delete page calls = %d, want 0 in dry-run", len(remote.deletePageCalls))
+	}
+
+	for _, diag := range result.Diagnostics {
+		if strings.HasPrefix(diag.Code, "ROLLBACK_") {
+			t.Fatalf("unexpected rollback diagnostic in dry-run: %+v", diag)
+		}
+	}
+}
+
+func TestSyncPageMetadata_EquivalentLabelSetsDoNotChurn(t *testing.T) {
+	remote := newRollbackPushRemote()
+	remote.labelsByPage["1"] = []string{"ops", "team"}
+
+	doc := fs.MarkdownDocument{
+		Frontmatter: fs.Frontmatter{
+			Labels: []string{" team ", "OPS", "team"},
+		},
+	}
+
+	if err := syncPageMetadata(context.Background(), remote, "1", doc); err != nil {
+		t.Fatalf("syncPageMetadata() error: %v", err)
+	}
+
+	if len(remote.addLabelsCalls) != 0 {
+		t.Fatalf("add labels calls = %d, want 0", len(remote.addLabelsCalls))
+	}
+	if len(remote.removeLabelCalls) != 0 {
+		t.Fatalf("remove label calls = %d, want 0", len(remote.removeLabelCalls))
+	}
+}
+
+func TestPush_DeleteBlocksLocalStateWhenArchiveTaskDoesNotComplete(t *testing.T) {
+	remote := newRollbackPushRemote()
+	remote.pagesByID["1"] = confluence.Page{
+		ID:      "1",
+		SpaceID: "space-1",
+		Title:   "Old",
+		Version: 5,
+		WebURL:  "https://example.atlassian.net/wiki/pages/1",
+	}
+	remote.pages = append(remote.pages, remote.pagesByID["1"])
+	remote.archiveTaskStatus = confluence.ArchiveTaskStatus{TaskID: "task-1", State: confluence.ArchiveTaskStateInProgress, RawStatus: "RUNNING"}
+	remote.archiveTaskWaitErr = confluence.ErrArchiveTaskTimeout
+
+	result, err := Push(context.Background(), remote, PushOptions{
+		SpaceKey: "ENG",
+		SpaceDir: t.TempDir(),
+		State: fs.SpaceState{
+			SpaceKey: "ENG",
+			PagePathIndex: map[string]string{
+				"old.md": "1",
+			},
+			AttachmentIndex: map[string]string{
+				"assets/1/att-1-file.png": "att-1",
+			},
+		},
+		Changes: []PushFileChange{{Type: PushChangeDelete, Path: "old.md"}},
+	})
+	if err == nil {
+		t.Fatal("expected archive wait failure")
+	}
+	if !strings.Contains(err.Error(), "wait for archive task") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(result.Commits) != 0 {
+		t.Fatalf("commits = %d, want 0", len(result.Commits))
+	}
+	if got := strings.TrimSpace(result.State.PagePathIndex["old.md"]); got != "1" {
+		t.Fatalf("page index old.md = %q, want 1", got)
+	}
+	if got := strings.TrimSpace(result.State.AttachmentIndex["assets/1/att-1-file.png"]); got != "att-1" {
+		t.Fatalf("attachment index was mutated on archive failure: %q", got)
+	}
+	if len(remote.deleteAttachmentCalls) != 0 {
+		t.Fatalf("delete attachment calls = %d, want 0", len(remote.deleteAttachmentCalls))
+	}
+
+	hasTimeoutDiagnostic := false
+	for _, diag := range result.Diagnostics {
+		if diag.Code == "ARCHIVE_TASK_TIMEOUT" {
+			hasTimeoutDiagnostic = true
+			break
+		}
+	}
+	if !hasTimeoutDiagnostic {
+		t.Fatalf("expected ARCHIVE_TASK_TIMEOUT diagnostic, got %+v", result.Diagnostics)
+	}
+}
+
 type rollbackPushRemote struct {
 	space                    confluence.Space
 	pages                    []confluence.Page
@@ -653,12 +880,15 @@ type rollbackPushRemote struct {
 	createPageCalls          int
 	updatePageCalls          int
 	uploadAttachmentCalls    int
+	archiveTaskCalls         []string
 	deletePageCalls          []string
 	deleteAttachmentCalls    []string
 	setContentStatusCalls    []string
 	deleteContentStatusCalls []string
 	addLabelsCalls           []string
 	removeLabelCalls         []string
+	archiveTaskStatus        confluence.ArchiveTaskStatus
+	archiveTaskWaitErr       error
 	failUpdate               bool
 	failAddLabels            bool
 }
@@ -671,6 +901,9 @@ func newRollbackPushRemote() *rollbackPushRemote {
 		labelsByPage:     map[string][]string{},
 		nextPageID:       1,
 		nextAttachmentID: 1,
+		archiveTaskStatus: confluence.ArchiveTaskStatus{
+			State: confluence.ArchiveTaskStateSucceeded,
+		},
 	}
 }
 
@@ -761,6 +994,7 @@ func (f *rollbackPushRemote) UpdatePage(_ context.Context, pageID string, input 
 		SpaceID:      input.SpaceID,
 		ParentPageID: input.ParentPageID,
 		Title:        input.Title,
+		Status:       input.Status,
 		Version:      input.Version,
 		WebURL:       "https://example.atlassian.net/wiki/pages/" + pageID,
 		BodyADF:      input.BodyADF,
@@ -776,6 +1010,25 @@ func (f *rollbackPushRemote) UpdatePage(_ context.Context, pageID string, input 
 
 func (f *rollbackPushRemote) ArchivePages(_ context.Context, _ []string) (confluence.ArchiveResult, error) {
 	return confluence.ArchiveResult{TaskID: "task-1"}, nil
+}
+
+func (f *rollbackPushRemote) WaitForArchiveTask(_ context.Context, taskID string, _ confluence.ArchiveTaskWaitOptions) (confluence.ArchiveTaskStatus, error) {
+	f.archiveTaskCalls = append(f.archiveTaskCalls, taskID)
+	if f.archiveTaskWaitErr != nil {
+		status := f.archiveTaskStatus
+		if strings.TrimSpace(status.TaskID) == "" {
+			status.TaskID = taskID
+		}
+		return status, f.archiveTaskWaitErr
+	}
+	status := f.archiveTaskStatus
+	if strings.TrimSpace(status.TaskID) == "" {
+		status.TaskID = taskID
+	}
+	if status.State == "" {
+		status.State = confluence.ArchiveTaskStateSucceeded
+	}
+	return status, nil
 }
 
 func (f *rollbackPushRemote) DeletePage(_ context.Context, pageID string, _ bool) error {

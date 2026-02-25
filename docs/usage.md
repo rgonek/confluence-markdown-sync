@@ -153,6 +153,7 @@ Highlights:
 - isolated sync branch and worktree execution,
 - per-page commit metadata with Confluence trailers,
 - recovery refs retained on failures,
+- archive deletes require long-task completion (`--archive-task-timeout`, `--archive-task-poll-interval`),
 - `--preflight` for a concise local push plan (change summary + validation) without remote writes.
 
 ## Metadata and State
@@ -164,10 +165,14 @@ Markdown frontmatter keys:
   - `space`
 - sync-managed keys:
   - `version`
+  - `created_by`
+  - `created_at`
+  - `updated_by`
+  - `updated_at`
 - user-editable keys:
   - `state` (lifecycle: `draft` | `current`)
   - `status` (visual lozenge: e.g., "Ready to review")
-  - `labels` (list of strings)
+  - `labels` (list of strings): each label must be non-empty after trim and must not contain whitespace; labels are normalized to lowercase and de-duplicated/sorted before sync operations
 
 Local state file:
 

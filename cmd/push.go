@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/rgonek/confluence-markdown-sync/internal/config"
+	"github.com/rgonek/confluence-markdown-sync/internal/confluence"
 	"github.com/rgonek/confluence-markdown-sync/internal/fs"
 	"github.com/rgonek/confluence-markdown-sync/internal/git"
 	syncflow "github.com/rgonek/confluence-markdown-sync/internal/sync"
@@ -30,6 +31,8 @@ var newPushRemote = func(cfg *config.Config) (syncflow.PushRemote, error) {
 }
 
 var flagPushPreflight bool
+var flagArchiveTaskTimeout = confluence.DefaultArchiveTaskTimeout
+var flagArchiveTaskPollInterval = confluence.DefaultArchiveTaskPollInterval
 
 func newPushCmd() *cobra.Command {
 	var onConflict string
@@ -59,6 +62,8 @@ It uses an isolated worktree and a temporary branch to ensure safety.`,
 	}
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Simulate the push without modifying Confluence or local Git state")
 	cmd.Flags().BoolVar(&flagPushPreflight, "preflight", false, "Show a concise push plan (changes and validation) without remote writes")
+	cmd.Flags().DurationVar(&flagArchiveTaskTimeout, "archive-task-timeout", confluence.DefaultArchiveTaskTimeout, "Max time to wait for Confluence archive long-task completion")
+	cmd.Flags().DurationVar(&flagArchiveTaskPollInterval, "archive-task-poll-interval", confluence.DefaultArchiveTaskPollInterval, "Polling interval while waiting for archive long-task completion")
 	cmd.Flags().BoolVarP(&flagYes, "yes", "y", false, "Auto-approve safety confirmations")
 	cmd.Flags().BoolVar(&flagNonInteractive, "non-interactive", false, "Disable prompts; fail fast when a decision is required")
 	cmd.Flags().StringVar(&onConflict, "on-conflict", "", "Non-interactive conflict policy: pull-merge|force|cancel")
@@ -80,6 +85,9 @@ func validateOnConflict(v string) error {
 func runPush(cmd *cobra.Command, target config.Target, onConflict string, dryRun bool) (runErr error) {
 	ctx := getCommandContext(cmd)
 	out := ensureSynchronizedCmdOutput(cmd)
+	_, restoreLogger := beginCommandRun("push")
+	defer restoreLogger()
+
 	preflight := flagPushPreflight
 	startedAt := time.Now()
 	telemetrySpaceKey := "unknown"
@@ -375,14 +383,16 @@ func runPushDryRun(
 	}
 
 	result, err := syncflow.Push(ctx, remote, syncflow.PushOptions{
-		SpaceKey:       spaceKey,
-		SpaceDir:       dryRunSpaceDir,
-		Domain:         cfg.Domain,
-		State:          state,
-		Changes:        syncChanges,
-		ConflictPolicy: toSyncConflictPolicy(onConflict),
-		DryRun:         true,
-		Progress:       progress,
+		SpaceKey:            spaceKey,
+		SpaceDir:            dryRunSpaceDir,
+		Domain:              cfg.Domain,
+		State:               state,
+		Changes:             syncChanges,
+		ConflictPolicy:      toSyncConflictPolicy(onConflict),
+		DryRun:              true,
+		ArchiveTimeout:      normalizedArchiveTaskTimeout(),
+		ArchivePollInterval: normalizedArchiveTaskPollInterval(),
+		Progress:            progress,
 	})
 	if err != nil {
 		var conflictErr *syncflow.PushConflictError
@@ -490,13 +500,15 @@ func runPushInWorktree(
 	}
 
 	result, err := syncflow.Push(ctx, remote, syncflow.PushOptions{
-		SpaceKey:       spaceKey,
-		SpaceDir:       wtSpaceDir,
-		Domain:         cfg.Domain,
-		State:          state,
-		Changes:        syncChanges,
-		ConflictPolicy: toSyncConflictPolicy(onConflict),
-		Progress:       progress,
+		SpaceKey:            spaceKey,
+		SpaceDir:            wtSpaceDir,
+		Domain:              cfg.Domain,
+		State:               state,
+		Changes:             syncChanges,
+		ConflictPolicy:      toSyncConflictPolicy(onConflict),
+		ArchiveTimeout:      normalizedArchiveTaskTimeout(),
+		ArchivePollInterval: normalizedArchiveTaskPollInterval(),
+		Progress:            progress,
 	})
 	if err != nil {
 		var conflictErr *syncflow.PushConflictError
@@ -942,4 +954,24 @@ func formatPushConflictError(conflictErr *syncflow.PushConflictError) error {
 			conflictErr.LocalVersion,
 		)
 	}
+}
+
+func normalizedArchiveTaskTimeout() time.Duration {
+	timeout := flagArchiveTaskTimeout
+	if timeout <= 0 {
+		return confluence.DefaultArchiveTaskTimeout
+	}
+	return timeout
+}
+
+func normalizedArchiveTaskPollInterval() time.Duration {
+	interval := flagArchiveTaskPollInterval
+	if interval <= 0 {
+		interval = confluence.DefaultArchiveTaskPollInterval
+	}
+	timeout := normalizedArchiveTaskTimeout()
+	if interval > timeout {
+		return timeout
+	}
+	return interval
 }

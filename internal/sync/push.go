@@ -13,6 +13,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/rgonek/confluence-markdown-sync/internal/confluence"
 	"github.com/rgonek/confluence-markdown-sync/internal/converter"
@@ -37,6 +38,7 @@ type PushRemote interface {
 	CreatePage(ctx context.Context, input confluence.PageUpsertInput) (confluence.Page, error)
 	UpdatePage(ctx context.Context, pageID string, input confluence.PageUpsertInput) (confluence.Page, error)
 	ArchivePages(ctx context.Context, pageIDs []string) (confluence.ArchiveResult, error)
+	WaitForArchiveTask(ctx context.Context, taskID string, opts confluence.ArchiveTaskWaitOptions) (confluence.ArchiveTaskStatus, error)
 	DeletePage(ctx context.Context, pageID string, hardDelete bool) error
 	UploadAttachment(ctx context.Context, input confluence.AttachmentUploadInput) (confluence.Attachment, error)
 	DeleteAttachment(ctx context.Context, attachmentID string, pageID string) error
@@ -71,15 +73,17 @@ type PushFileChange struct {
 
 // PushOptions controls push orchestration.
 type PushOptions struct {
-	SpaceKey       string
-	SpaceDir       string
-	Domain         string
-	State          fs.SpaceState
-	Changes        []PushFileChange
-	ConflictPolicy PushConflictPolicy
-	HardDelete     bool
-	DryRun         bool
-	Progress       Progress
+	SpaceKey            string
+	SpaceDir            string
+	Domain              string
+	State               fs.SpaceState
+	Changes             []PushFileChange
+	ConflictPolicy      PushConflictPolicy
+	HardDelete          bool
+	DryRun              bool
+	ArchiveTimeout      time.Duration
+	ArchivePollInterval time.Duration
+	Progress            Progress
 }
 
 // PushCommitPlan describes local paths and metadata for one push commit.
@@ -113,6 +117,14 @@ type pushMetadataSnapshot struct {
 	Labels        []string
 }
 
+type pushContentSnapshot struct {
+	SpaceID      string
+	Title        string
+	ParentPageID string
+	Status       string
+	BodyADF      json.RawMessage
+}
+
 type rollbackAttachment struct {
 	PageID       string
 	AttachmentID string
@@ -123,6 +135,9 @@ type pushRollbackTracker struct {
 	relPath            string
 	createdPageID      string
 	uploadedAssets     []rollbackAttachment
+	contentPageID      string
+	contentSnapshot    *pushContentSnapshot
+	contentRestoreReq  bool
 	metadataPageID     string
 	metadataSnapshot   *pushMetadataSnapshot
 	metadataRestoreReq bool
@@ -225,7 +240,7 @@ func Push(ctx context.Context, remote PushRemote, opts PushOptions) (PushResult,
 
 		switch change.Type {
 		case PushChangeDelete:
-			commit, err := pushDeletePage(ctx, remote, opts, state, remotePageByID, relPath)
+			commit, err := pushDeletePage(ctx, remote, opts, state, remotePageByID, relPath, &diagnostics)
 			if err != nil {
 				return PushResult{State: state, Commits: commits, Diagnostics: diagnostics}, err
 			}
@@ -286,6 +301,7 @@ func pushDeletePage(
 	state fs.SpaceState,
 	remotePageByID map[string]confluence.Page,
 	relPath string,
+	diagnostics *[]PushDiagnostic,
 ) (PushCommitPlan, error) {
 	pageID := strings.TrimSpace(state.PagePathIndex[relPath])
 	if pageID == "" {
@@ -298,8 +314,34 @@ func pushDeletePage(
 			return PushCommitPlan{}, fmt.Errorf("hard-delete page %s: %w", pageID, err)
 		}
 	} else {
-		if _, err := remote.ArchivePages(ctx, []string{pageID}); err != nil && !errors.Is(err, confluence.ErrNotFound) {
+		archiveResult, err := remote.ArchivePages(ctx, []string{pageID})
+		if err != nil && !errors.Is(err, confluence.ErrNotFound) {
 			return PushCommitPlan{}, fmt.Errorf("archive page %s: %w", pageID, err)
+		}
+
+		taskID := strings.TrimSpace(archiveResult.TaskID)
+		if taskID == "" {
+			message := fmt.Sprintf("archive request for page %s did not return a long-task ID", pageID)
+			appendPushDiagnostic(diagnostics, relPath, "ARCHIVE_TASK_FAILED", message)
+			return PushCommitPlan{}, fmt.Errorf("archive page %s: missing long-task ID", pageID)
+		}
+
+		status, waitErr := remote.WaitForArchiveTask(ctx, taskID, confluence.ArchiveTaskWaitOptions{
+			Timeout:      opts.ArchiveTimeout,
+			PollInterval: opts.ArchivePollInterval,
+		})
+		if waitErr != nil {
+			code := "ARCHIVE_TASK_FAILED"
+			if errors.Is(waitErr, confluence.ErrArchiveTaskTimeout) {
+				code = "ARCHIVE_TASK_TIMEOUT"
+			}
+
+			message := fmt.Sprintf("archive task %s did not complete for page %s: %v", taskID, pageID, waitErr)
+			if strings.TrimSpace(status.RawStatus) != "" {
+				message = fmt.Sprintf("archive task %s did not complete for page %s (status=%s): %v", taskID, pageID, status.RawStatus, waitErr)
+			}
+			appendPushDiagnostic(diagnostics, relPath, code, message)
+			return PushCommitPlan{}, fmt.Errorf("wait for archive task %s for page %s: %w", taskID, pageID, waitErr)
 		}
 	}
 
@@ -403,8 +445,13 @@ func pushUpsertPage(
 			"error", opErr.Error(),
 			"rollback_created_page", strings.TrimSpace(rollback.createdPageID) != "",
 			"rollback_uploaded_assets", len(rollback.uploadedAssets),
+			"rollback_content_snapshot", rollback.contentRestoreReq,
 			"rollback_metadata_snapshot", rollback.metadataRestoreReq,
 		)
+		if opts.DryRun {
+			slog.Info("push_rollback_skipped", "path", relPath, "reason", "dry_run")
+			return PushCommitPlan{}, opErr
+		}
 		if rollbackErr := rollback.rollback(ctx, remote); rollbackErr != nil {
 			return PushCommitPlan{}, errors.Join(opErr, fmt.Errorf("rollback for %s: %w", relPath, rollbackErr))
 		}
@@ -423,6 +470,7 @@ func pushUpsertPage(
 		}
 		remotePage = fetched
 		remotePageByID[pageID] = fetched
+		rollback.trackContentSnapshot(pageID, snapshotPageContent(fetched))
 
 		fallbackParentID = strings.TrimSpace(remotePage.ParentPageID)
 		if normalizePageLifecycleState(remotePage.Status) == "current" && targetState == "draft" {
@@ -599,6 +647,7 @@ func pushUpsertPage(
 	if err != nil {
 		return failWithRollback(fmt.Errorf("update page %s: %w", pageID, err))
 	}
+	rollback.markContentRestoreRequired()
 
 	if isExistingPage {
 		snapshot, snapshotErr := capturePageMetadataSnapshot(ctx, remote, pageID)
@@ -622,6 +671,7 @@ func pushUpsertPage(
 	}
 
 	state.PagePathIndex[relPath] = pageID
+	rollback.clearContentSnapshot()
 	stagedPaths := append([]string{relPath}, touchedAssets...)
 	stagedPaths = dedupeSortedPaths(stagedPaths)
 
@@ -675,6 +725,27 @@ func (r *pushRollbackTracker) trackUploadedAttachment(pageID, attachmentID, path
 	})
 }
 
+func (r *pushRollbackTracker) trackContentSnapshot(pageID string, snapshot pushContentSnapshot) {
+	pageID = strings.TrimSpace(pageID)
+	if pageID == "" {
+		return
+	}
+	r.contentPageID = pageID
+	r.contentSnapshot = &snapshot
+	r.contentRestoreReq = false
+}
+
+func (r *pushRollbackTracker) markContentRestoreRequired() {
+	if r.contentSnapshot == nil || strings.TrimSpace(r.contentPageID) == "" {
+		return
+	}
+	r.contentRestoreReq = true
+}
+
+func (r *pushRollbackTracker) clearContentSnapshot() {
+	r.contentRestoreReq = false
+}
+
 func (r *pushRollbackTracker) trackMetadataSnapshot(pageID string, snapshot pushMetadataSnapshot) {
 	r.metadataPageID = strings.TrimSpace(pageID)
 	r.metadataSnapshot = &snapshot
@@ -687,6 +758,28 @@ func (r *pushRollbackTracker) clearMetadataSnapshot() {
 
 func (r *pushRollbackTracker) rollback(ctx context.Context, remote PushRemote) error {
 	var rollbackErr error
+
+	if r.contentRestoreReq && r.contentSnapshot != nil && strings.TrimSpace(r.contentPageID) != "" {
+		slog.Info("push_rollback_step", "path", r.relPath, "step", "page_content", "page_id", r.contentPageID)
+		if err := restorePageContentSnapshot(ctx, remote, r.contentPageID, *r.contentSnapshot); err != nil {
+			slog.Warn("push_rollback_step_failed", "path", r.relPath, "step", "page_content", "page_id", r.contentPageID, "error", err.Error())
+			appendPushDiagnostic(
+				r.diagnostics,
+				r.relPath,
+				"ROLLBACK_PAGE_CONTENT_FAILED",
+				fmt.Sprintf("failed to restore page content for %s: %v", r.contentPageID, err),
+			)
+			rollbackErr = errors.Join(rollbackErr, fmt.Errorf("restore page content for %s: %w", r.contentPageID, err))
+		} else {
+			slog.Info("push_rollback_step_succeeded", "path", r.relPath, "step", "page_content", "page_id", r.contentPageID)
+			appendPushDiagnostic(
+				r.diagnostics,
+				r.relPath,
+				"ROLLBACK_PAGE_CONTENT_RESTORED",
+				fmt.Sprintf("restored page content for %s", r.contentPageID),
+			)
+		}
+	}
 
 	if r.metadataRestoreReq && r.metadataSnapshot != nil && strings.TrimSpace(r.metadataPageID) != "" {
 		slog.Info("push_rollback_step", "path", r.relPath, "step", "metadata", "page_id", r.metadataPageID)
@@ -776,6 +869,70 @@ func (r *pushRollbackTracker) rollback(ctx context.Context, remote PushRemote) e
 	return rollbackErr
 }
 
+func snapshotPageContent(page confluence.Page) pushContentSnapshot {
+	clonedBody := append(json.RawMessage(nil), page.BodyADF...)
+	return pushContentSnapshot{
+		SpaceID:      strings.TrimSpace(page.SpaceID),
+		Title:        strings.TrimSpace(page.Title),
+		ParentPageID: strings.TrimSpace(page.ParentPageID),
+		Status:       normalizePageLifecycleState(page.Status),
+		BodyADF:      clonedBody,
+	}
+}
+
+func restorePageContentSnapshot(ctx context.Context, remote PushRemote, pageID string, snapshot pushContentSnapshot) error {
+	pageID = strings.TrimSpace(pageID)
+	if pageID == "" {
+		return errors.New("page ID is required")
+	}
+
+	headPage, err := remote.GetPage(ctx, pageID)
+	if err != nil {
+		return fmt.Errorf("fetch latest page %s: %w", pageID, err)
+	}
+
+	spaceID := strings.TrimSpace(snapshot.SpaceID)
+	if spaceID == "" {
+		spaceID = strings.TrimSpace(headPage.SpaceID)
+	}
+	if spaceID == "" {
+		return fmt.Errorf("resolve space id for page %s", pageID)
+	}
+
+	parentID := strings.TrimSpace(snapshot.ParentPageID)
+	title := strings.TrimSpace(snapshot.Title)
+	if title == "" {
+		title = strings.TrimSpace(headPage.Title)
+	}
+	if title == "" {
+		return fmt.Errorf("resolve title for page %s", pageID)
+	}
+
+	body := append(json.RawMessage(nil), snapshot.BodyADF...)
+	if len(body) == 0 {
+		body = []byte(`{"version":1,"type":"doc","content":[]}`)
+	}
+
+	nextVersion := headPage.Version + 1
+	if nextVersion <= 0 {
+		nextVersion = 1
+	}
+
+	_, err = remote.UpdatePage(ctx, pageID, confluence.PageUpsertInput{
+		SpaceID:      spaceID,
+		ParentPageID: parentID,
+		Title:        title,
+		Status:       normalizePageLifecycleState(snapshot.Status),
+		Version:      nextVersion,
+		BodyADF:      body,
+	})
+	if err != nil {
+		return fmt.Errorf("update page %s to restore snapshot: %w", pageID, err)
+	}
+
+	return nil
+}
+
 func capturePageMetadataSnapshot(ctx context.Context, remote PushRemote, pageID string) (pushMetadataSnapshot, error) {
 	status, err := remote.GetContentStatus(ctx, pageID)
 	if err != nil {
@@ -789,7 +946,7 @@ func capturePageMetadataSnapshot(ctx context.Context, remote PushRemote, pageID 
 
 	return pushMetadataSnapshot{
 		ContentStatus: strings.TrimSpace(status),
-		Labels:        normalizeLabelList(labels),
+		Labels:        fs.NormalizeLabels(labels),
 	}, nil
 }
 
@@ -819,12 +976,12 @@ func restorePageMetadataSnapshot(ctx context.Context, remote PushRemote, pageID 
 	}
 
 	targetLabelSet := map[string]struct{}{}
-	for _, label := range normalizeLabelList(snapshot.Labels) {
+	for _, label := range fs.NormalizeLabels(snapshot.Labels) {
 		targetLabelSet[label] = struct{}{}
 	}
 
 	currentLabelSet := map[string]struct{}{}
-	for _, label := range normalizeLabelList(remoteLabels) {
+	for _, label := range fs.NormalizeLabels(remoteLabels) {
 		currentLabelSet[label] = struct{}{}
 	}
 
@@ -853,28 +1010,6 @@ func restorePageMetadataSnapshot(ctx context.Context, remote PushRemote, pageID 
 	}
 
 	return nil
-}
-
-func normalizeLabelList(labels []string) []string {
-	if len(labels) == 0 {
-		return nil
-	}
-
-	set := map[string]struct{}{}
-	for _, label := range labels {
-		label = strings.TrimSpace(label)
-		if label == "" {
-			continue
-		}
-		set[label] = struct{}{}
-	}
-
-	out := make([]string, 0, len(set))
-	for label := range set {
-		out = append(out, label)
-	}
-	sort.Strings(out)
-	return out
 }
 
 func resolveParentIDFromHierarchy(relPath, pageID, fallbackParentID string, pageIDByPath PageIndex, folderIDByPath map[string]string) string {
@@ -1343,13 +1478,13 @@ func syncPageMetadata(ctx context.Context, remote PushRemote, pageID string, doc
 	}
 
 	remoteLabelSet := map[string]struct{}{}
-	for _, l := range remoteLabels {
+	for _, l := range fs.NormalizeLabels(remoteLabels) {
 		remoteLabelSet[l] = struct{}{}
 	}
 
 	localLabelSet := map[string]struct{}{}
-	for _, l := range doc.Frontmatter.Labels {
-		localLabelSet[strings.TrimSpace(l)] = struct{}{}
+	for _, l := range fs.NormalizeLabels(doc.Frontmatter.Labels) {
+		localLabelSet[l] = struct{}{}
 	}
 
 	var toAdd []string
@@ -1366,6 +1501,8 @@ func syncPageMetadata(ctx context.Context, remote PushRemote, pageID string, doc
 			}
 		}
 	}
+
+	sort.Strings(toAdd)
 
 	if len(toAdd) > 0 {
 		if err := remote.AddLabels(ctx, pageID, toAdd); err != nil {

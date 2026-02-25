@@ -115,6 +115,33 @@ func TestListSpaces_UsesExpectedEndpointAndAuth(t *testing.T) {
 	}
 }
 
+func TestListSpaces_UsesConfiguredUserAgent(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("User-Agent"); got != "conf/1.2.3" {
+			t.Fatalf("User-Agent = %q, want conf/1.2.3", got)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		if _, err := io.WriteString(w, `{"results":[]}`); err != nil {
+			t.Fatalf("write response: %v", err)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	client, err := NewClient(ClientConfig{
+		BaseURL:   server.URL,
+		Email:     "user@example.com",
+		APIToken:  "token-123",
+		UserAgent: "conf/1.2.3",
+	})
+	if err != nil {
+		t.Fatalf("NewClient() unexpected error: %v", err)
+	}
+
+	if _, err := client.ListSpaces(context.Background(), SpaceListOptions{Limit: 1}); err != nil {
+		t.Fatalf("ListSpaces() unexpected error: %v", err)
+	}
+}
+
 func TestGetPage_NotFound(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"message":"missing"}`, http.StatusNotFound)
@@ -290,6 +317,116 @@ func TestArchiveAndDeleteEndpoints(t *testing.T) {
 	}
 	if deleteCalls != 1 {
 		t.Fatalf("delete calls = %d, want 1", deleteCalls)
+	}
+}
+
+func TestWaitForArchiveTask_CompletesAfterPolling(t *testing.T) {
+	callCount := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/wiki/rest/api/longtask/task-42" {
+			t.Fatalf("path = %s, want /wiki/rest/api/longtask/task-42", r.URL.Path)
+		}
+		callCount++
+		w.Header().Set("Content-Type", "application/json")
+		if callCount == 1 {
+			if _, err := io.WriteString(w, `{"id":"task-42","status":"RUNNING","finished":false,"percentageComplete":40}`); err != nil {
+				t.Fatalf("write response: %v", err)
+			}
+			return
+		}
+		if _, err := io.WriteString(w, `{"id":"task-42","status":"SUCCESS","finished":true,"successful":true,"percentageComplete":100}`); err != nil {
+			t.Fatalf("write response: %v", err)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	client, err := NewClient(ClientConfig{
+		BaseURL:  server.URL,
+		Email:    "user@example.com",
+		APIToken: "token-123",
+	})
+	if err != nil {
+		t.Fatalf("NewClient() unexpected error: %v", err)
+	}
+
+	status, err := client.WaitForArchiveTask(context.Background(), "task-42", ArchiveTaskWaitOptions{
+		Timeout:      2 * time.Second,
+		PollInterval: 10 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatalf("WaitForArchiveTask() unexpected error: %v", err)
+	}
+	if status.State != ArchiveTaskStateSucceeded {
+		t.Fatalf("status state = %s, want %s", status.State, ArchiveTaskStateSucceeded)
+	}
+	if callCount < 2 {
+		t.Fatalf("long-task calls = %d, want at least 2", callCount)
+	}
+}
+
+func TestWaitForArchiveTask_FailedTask(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/wiki/rest/api/longtask/task-7" {
+			t.Fatalf("path = %s, want /wiki/rest/api/longtask/task-7", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		if _, err := io.WriteString(w, `{"id":"task-7","status":"FAILED","finished":true,"successful":false,"errorMessage":"archive blocked"}`); err != nil {
+			t.Fatalf("write response: %v", err)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	client, err := NewClient(ClientConfig{
+		BaseURL:  server.URL,
+		Email:    "user@example.com",
+		APIToken: "token-123",
+	})
+	if err != nil {
+		t.Fatalf("NewClient() unexpected error: %v", err)
+	}
+
+	status, err := client.WaitForArchiveTask(context.Background(), "task-7", ArchiveTaskWaitOptions{
+		Timeout:      time.Second,
+		PollInterval: 10 * time.Millisecond,
+	})
+	if !errors.Is(err, ErrArchiveTaskFailed) {
+		t.Fatalf("WaitForArchiveTask() error = %v, want ErrArchiveTaskFailed", err)
+	}
+	if status.State != ArchiveTaskStateFailed {
+		t.Fatalf("status state = %s, want %s", status.State, ArchiveTaskStateFailed)
+	}
+}
+
+func TestWaitForArchiveTask_TimesOut(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/wiki/rest/api/longtask/task-99" {
+			t.Fatalf("path = %s, want /wiki/rest/api/longtask/task-99", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		if _, err := io.WriteString(w, `{"id":"task-99","status":"RUNNING","finished":false,"percentageComplete":10}`); err != nil {
+			t.Fatalf("write response: %v", err)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	client, err := NewClient(ClientConfig{
+		BaseURL:  server.URL,
+		Email:    "user@example.com",
+		APIToken: "token-123",
+	})
+	if err != nil {
+		t.Fatalf("NewClient() unexpected error: %v", err)
+	}
+
+	status, err := client.WaitForArchiveTask(context.Background(), "task-99", ArchiveTaskWaitOptions{
+		Timeout:      30 * time.Millisecond,
+		PollInterval: 10 * time.Millisecond,
+	})
+	if !errors.Is(err, ErrArchiveTaskTimeout) {
+		t.Fatalf("WaitForArchiveTask() error = %v, want ErrArchiveTaskTimeout", err)
+	}
+	if status.TaskID != "task-99" {
+		t.Fatalf("status task ID = %q, want task-99", status.TaskID)
 	}
 }
 

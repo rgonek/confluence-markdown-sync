@@ -75,8 +75,14 @@ For automation (`--non-interactive`), conflicts fail fast and require manual fol
 Rollback outcomes are surfaced as diagnostics in command output:
 
 - `ROLLBACK_METADATA_RESTORED` / `ROLLBACK_METADATA_FAILED`
+- `ROLLBACK_PAGE_CONTENT_RESTORED` / `ROLLBACK_PAGE_CONTENT_FAILED`
 - `ROLLBACK_ATTACHMENT_DELETED` / `ROLLBACK_ATTACHMENT_FAILED`
 - `ROLLBACK_PAGE_DELETED` / `ROLLBACK_PAGE_DELETE_FAILED`
+
+Archive/delete safety diagnostics:
+
+- `ARCHIVE_TASK_TIMEOUT`
+- `ARCHIVE_TASK_FAILED`
 
 If any `*_FAILED` code appears, treat the run as partial and inspect the referenced page before retrying.
 

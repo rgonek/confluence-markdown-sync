@@ -77,6 +77,130 @@ Not a [confluence link](https://google.com).`
 	}
 }
 
+func TestResolveLinksInFile_SkipsCodeSpansAndFencedCode(t *testing.T) {
+	tmpDir := t.TempDir()
+	sourcePath := filepath.Join(tmpDir, "source.md")
+	targetPath := filepath.Join(tmpDir, "target.md")
+
+	content := "Inline code `see [code](https://example.atlassian.net/wiki/pages/viewpage.action?pageId=456)`\n\n```md\n[fenced](https://example.atlassian.net/wiki/pages/viewpage.action?pageId=456)\n```\n\nReal [link](https://example.atlassian.net/wiki/pages/viewpage.action?pageId=456)\n"
+	if err := os.WriteFile(sourcePath, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(targetPath, []byte("target"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	changed, count, err := ResolveLinksInFile(sourcePath, GlobalPageIndex{"456": targetPath}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !changed {
+		t.Fatal("expected file to change")
+	}
+	if count != 1 {
+		t.Fatalf("converted links = %d, want 1", count)
+	}
+
+	raw, err := os.ReadFile(sourcePath) //nolint:gosec // test file path is controlled in temp dir
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(raw)
+	want := "Inline code `see [code](https://example.atlassian.net/wiki/pages/viewpage.action?pageId=456)`\n\n```md\n[fenced](https://example.atlassian.net/wiki/pages/viewpage.action?pageId=456)\n```\n\nReal [link](target.md)\n"
+	if got != want {
+		t.Fatalf("unexpected content:\nGOT:\n%s\nWANT:\n%s", got, want)
+	}
+}
+
+func TestResolveLinksInFile_PreservesAnchorAndTitle(t *testing.T) {
+	tmpDir := t.TempDir()
+	sourcePath := filepath.Join(tmpDir, "source.md")
+	targetPath := filepath.Join(tmpDir, "target.md")
+
+	content := `[spec](https://example.atlassian.net/wiki/pages/viewpage.action?pageId=456#Section "Read this")`
+	if err := os.WriteFile(sourcePath, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(targetPath, []byte("target"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	changed, count, err := ResolveLinksInFile(sourcePath, GlobalPageIndex{"456": targetPath}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !changed || count != 1 {
+		t.Fatalf("changed=%v count=%d, want changed=true count=1", changed, count)
+	}
+
+	raw, err := os.ReadFile(sourcePath) //nolint:gosec // test file path is controlled in temp dir
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := string(raw), `[spec](target.md#Section "Read this")`; got != want {
+		t.Fatalf("unexpected content: got %q want %q", got, want)
+	}
+}
+
+func TestResolveLinksInFile_HandlesEscapedAndNestedBracketLabels(t *testing.T) {
+	tmpDir := t.TempDir()
+	sourcePath := filepath.Join(tmpDir, "source.md")
+	targetPath := filepath.Join(tmpDir, "target.md")
+
+	content := "[outer \\[inner\\]](https://example.atlassian.net/wiki/pages/viewpage.action?pageId=456)\n[nested [label]](https://example.atlassian.net/wiki/pages/viewpage.action?pageId=456#A)\n"
+	if err := os.WriteFile(sourcePath, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(targetPath, []byte("target"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	changed, count, err := ResolveLinksInFile(sourcePath, GlobalPageIndex{"456": targetPath}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !changed || count != 2 {
+		t.Fatalf("changed=%v count=%d, want changed=true count=2", changed, count)
+	}
+
+	raw, err := os.ReadFile(sourcePath) //nolint:gosec // test file path is controlled in temp dir
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := string(raw), "[outer \\[inner\\]](target.md)\n[nested [label]](target.md#A)\n"; got != want {
+		t.Fatalf("unexpected content:\nGOT:\n%s\nWANT:\n%s", got, want)
+	}
+}
+
+func TestResolveLinksInFile_NoRewritableLinks(t *testing.T) {
+	tmpDir := t.TempDir()
+	sourcePath := filepath.Join(tmpDir, "source.md")
+
+	content := "[external](https://example.com/docs)\n[unknown](https://example.atlassian.net/wiki/pages/viewpage.action?pageId=999)\n"
+	if err := os.WriteFile(sourcePath, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	changed, count, err := ResolveLinksInFile(sourcePath, GlobalPageIndex{"456": filepath.Join(tmpDir, "target.md")}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if changed {
+		t.Fatal("expected file to remain unchanged")
+	}
+	if count != 0 {
+		t.Fatalf("converted links = %d, want 0", count)
+	}
+
+	raw, err := os.ReadFile(sourcePath) //nolint:gosec // test file path is controlled in temp dir
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(raw) != content {
+		t.Fatalf("file content changed unexpectedly: %q", string(raw))
+	}
+}
+
 func TestBuildGlobalPageIndex(t *testing.T) {
 	tmpDir, err := os.MkdirTemp("", "global-index-test")
 	if err != nil {

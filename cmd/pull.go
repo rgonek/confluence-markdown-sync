@@ -72,6 +72,9 @@ If omitted, the space is inferred from the current directory name.`,
 func runPull(cmd *cobra.Command, target config.Target) (runErr error) {
 	ctx := getCommandContext(cmd)
 	out := ensureSynchronizedCmdOutput(cmd)
+	_, restoreLogger := beginCommandRun("pull")
+	defer restoreLogger()
+
 	startedAt := time.Now()
 	telemetrySpaceKey := ""
 	telemetryUpdated := 0
