@@ -172,11 +172,7 @@ func runPull(cmd *cobra.Command, target config.Target) (runErr error) {
 					// Otherwise git stash apply --include-untracked will fail if it
 					// tries to restore files that Pull newly created.
 					_, _ = fmt.Fprintf(out, "Cleaning up failed pull before restoring local changes...\n")
-					// Use --force to remove untracked files and directories
-					_, _ = runGit(repoRoot, "clean", "-fd", "--", scopePath)
-					_, _ = runGit(repoRoot, "checkout", "HEAD", "--", scopePath)
-					// Also remove .confluence-state.json if it was just created/modified
-					_ = os.Remove(filepath.Join(pullCtx.spaceDir, fs.StateFileName))
+					cleanupFailedPullScope(repoRoot, scopePath)
 				}
 
 				restoreErr := applyAndDropStash(repoRoot, stashRef, scopePath, cmd.InOrStdin(), out)
@@ -421,6 +417,11 @@ func resolveInitialPullContext(target config.Target) (initialPullContext, error)
 		spaceDir: spaceDir,
 		fixedDir: false,
 	}, nil
+}
+
+func cleanupFailedPullScope(repoRoot, scopePath string) {
+	_, _ = runGit(repoRoot, "clean", "-fd", "--", scopePath)
+	_, _ = runGit(repoRoot, "checkout", "HEAD", "--", scopePath)
 }
 
 func findSpaceDirFromFile(filePath, spaceKey string) string {

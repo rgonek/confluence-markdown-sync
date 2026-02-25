@@ -232,6 +232,68 @@ func TestRunPush_WritesStructuredCommitTrailers(t *testing.T) {
 	}
 }
 
+func TestRunPush_KeepsStateFileUntracked(t *testing.T) {
+	repo := t.TempDir()
+	spaceDir := preparePushRepoWithBaseline(t, repo)
+
+	trackedBefore := strings.TrimSpace(runGitForTest(t, repo, "ls-files", "**/.confluence-state.json"))
+	if trackedBefore != "" {
+		t.Fatalf("expected no tracked state file before push, got %q", trackedBefore)
+	}
+
+	writeMarkdown(t, filepath.Join(spaceDir, "root.md"), fs.MarkdownDocument{
+		Frontmatter: fs.Frontmatter{
+			Title:                  "Root",
+			ID:                     "1",
+			Space:                  "ENG",
+			Version:                1,
+			ConfluenceLastModified: "2026-02-01T10:00:00Z",
+		},
+		Body: "![asset](assets/new.png)\n",
+	})
+
+	assetPath := filepath.Join(spaceDir, "assets", "new.png")
+	if err := os.MkdirAll(filepath.Dir(assetPath), 0o750); err != nil {
+		t.Fatalf("mkdir assets dir: %v", err)
+	}
+	if err := os.WriteFile(assetPath, []byte("png"), 0o600); err != nil {
+		t.Fatalf("write asset: %v", err)
+	}
+
+	fake := newCmdFakePushRemote(1)
+	oldPushFactory := newPushRemote
+	oldPullFactory := newPullRemote
+	newPushRemote = func(_ *config.Config) (syncflow.PushRemote, error) { return fake, nil }
+	newPullRemote = func(_ *config.Config) (syncflow.PullRemote, error) { return fake, nil }
+	t.Cleanup(func() {
+		newPushRemote = oldPushFactory
+		newPullRemote = oldPullFactory
+	})
+
+	setupEnv(t)
+	chdirRepo(t, spaceDir)
+
+	cmd := &cobra.Command{}
+	cmd.SetOut(&bytes.Buffer{})
+
+	if err := runPush(cmd, config.Target{Mode: config.TargetModeSpace, Value: ""}, OnConflictCancel, false); err != nil {
+		t.Fatalf("runPush() unexpected error: %v", err)
+	}
+
+	state, err := fs.LoadState(spaceDir)
+	if err != nil {
+		t.Fatalf("load state: %v", err)
+	}
+	if got := strings.TrimSpace(state.AttachmentIndex["assets/new.png"]); got == "" {
+		t.Fatalf("expected attachment index to be updated for assets/new.png")
+	}
+
+	trackedAfter := strings.TrimSpace(runGitForTest(t, repo, "ls-files", "**/.confluence-state.json"))
+	if trackedAfter != "" {
+		t.Fatalf("expected no tracked state file after push, got %q", trackedAfter)
+	}
+}
+
 func TestRunPush_FileModeStillRequiresOnConflict(t *testing.T) {
 	repo := t.TempDir()
 	spaceDir := preparePushRepoWithBaseline(t, repo)
@@ -523,6 +585,177 @@ func TestRunPush_PreflightRejectsDryRunCombination(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "--preflight and --dry-run cannot be used together") {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestRunPush_NoopSkipsSnapshotBranchAndTag(t *testing.T) {
+	repo := t.TempDir()
+	spaceDir := preparePushRepoWithBaseline(t, repo)
+
+	factoryCalls := 0
+	oldPushFactory := newPushRemote
+	oldPullFactory := newPullRemote
+	newPushRemote = func(_ *config.Config) (syncflow.PushRemote, error) {
+		factoryCalls++
+		return newCmdFakePushRemote(1), nil
+	}
+	newPullRemote = func(_ *config.Config) (syncflow.PullRemote, error) {
+		return newCmdFakePushRemote(1), nil
+	}
+	t.Cleanup(func() {
+		newPushRemote = oldPushFactory
+		newPullRemote = oldPullFactory
+	})
+
+	setupEnv(t)
+	chdirRepo(t, spaceDir)
+
+	headBefore := strings.TrimSpace(runGitForTest(t, repo, "rev-parse", "HEAD"))
+
+	cmd := &cobra.Command{}
+	cmd.SetOut(&bytes.Buffer{})
+	if err := runPush(cmd, config.Target{Mode: config.TargetModeSpace, Value: ""}, OnConflictCancel, false); err != nil {
+		t.Fatalf("runPush() unexpected error: %v", err)
+	}
+
+	headAfter := strings.TrimSpace(runGitForTest(t, repo, "rev-parse", "HEAD"))
+	if headBefore != headAfter {
+		t.Fatalf("expected no-op push to keep HEAD unchanged: before=%s after=%s", headBefore, headAfter)
+	}
+
+	if refs := strings.TrimSpace(runGitForTest(t, repo, "for-each-ref", "refs/confluence-sync/snapshots/ENG/")); refs != "" {
+		t.Fatalf("expected no snapshot refs for no-op push, got:\n%s", refs)
+	}
+	if branches := strings.TrimSpace(runGitForTest(t, repo, "branch", "--list", "sync/ENG/*")); branches != "" {
+		t.Fatalf("expected no sync branch for no-op push, got:\n%s", branches)
+	}
+	if tags := strings.TrimSpace(runGitForTest(t, repo, "tag", "--list", "confluence-sync/push/ENG/*")); tags != "" {
+		t.Fatalf("expected no push sync tag for no-op push, got: %s", tags)
+	}
+	if factoryCalls != 0 {
+		t.Fatalf("expected no remote factory calls for early no-op push, got %d", factoryCalls)
+	}
+}
+
+func TestRunPush_UsesStagedTrackedSnapshotContent(t *testing.T) {
+	repo := t.TempDir()
+	spaceDir := preparePushRepoWithBaseline(t, repo)
+	rootPath := filepath.Join(spaceDir, "root.md")
+
+	writeMarkdown(t, rootPath, fs.MarkdownDocument{
+		Frontmatter: fs.Frontmatter{
+			Title:                  "Root",
+			ID:                     "1",
+			Space:                  "ENG",
+			Version:                1,
+			ConfluenceLastModified: "2026-02-01T10:00:00Z",
+		},
+		Body: "staged snapshot content\n",
+	})
+	runGitForTest(t, repo, "add", filepath.Join("Engineering (ENG)", "root.md"))
+
+	fake := newCmdFakePushRemote(1)
+	oldPushFactory := newPushRemote
+	oldPullFactory := newPullRemote
+	newPushRemote = func(_ *config.Config) (syncflow.PushRemote, error) { return fake, nil }
+	newPullRemote = func(_ *config.Config) (syncflow.PullRemote, error) { return fake, nil }
+	t.Cleanup(func() {
+		newPushRemote = oldPushFactory
+		newPullRemote = oldPullFactory
+	})
+
+	setupEnv(t)
+	chdirRepo(t, spaceDir)
+
+	cmd := &cobra.Command{}
+	cmd.SetOut(&bytes.Buffer{})
+	if err := runPush(cmd, config.Target{Mode: config.TargetModeSpace, Value: ""}, OnConflictCancel, false); err != nil {
+		t.Fatalf("runPush() unexpected error: %v", err)
+	}
+
+	if len(fake.updateCalls) != 1 {
+		t.Fatalf("expected one update call, got %d", len(fake.updateCalls))
+	}
+	if body := string(fake.updateCalls[0].Input.BodyADF); !strings.Contains(body, "staged snapshot content") {
+		t.Fatalf("expected staged content in pushed ADF body, got: %s", body)
+	}
+}
+
+func TestRunPush_UsesUnstagedTrackedSnapshotContent(t *testing.T) {
+	repo := t.TempDir()
+	spaceDir := preparePushRepoWithBaseline(t, repo)
+	rootPath := filepath.Join(spaceDir, "root.md")
+
+	writeMarkdown(t, rootPath, fs.MarkdownDocument{
+		Frontmatter: fs.Frontmatter{
+			Title:                  "Root",
+			ID:                     "1",
+			Space:                  "ENG",
+			Version:                1,
+			ConfluenceLastModified: "2026-02-01T10:00:00Z",
+		},
+		Body: "unstaged snapshot content\n",
+	})
+
+	fake := newCmdFakePushRemote(1)
+	oldPushFactory := newPushRemote
+	oldPullFactory := newPullRemote
+	newPushRemote = func(_ *config.Config) (syncflow.PushRemote, error) { return fake, nil }
+	newPullRemote = func(_ *config.Config) (syncflow.PullRemote, error) { return fake, nil }
+	t.Cleanup(func() {
+		newPushRemote = oldPushFactory
+		newPullRemote = oldPullFactory
+	})
+
+	setupEnv(t)
+	chdirRepo(t, spaceDir)
+
+	cmd := &cobra.Command{}
+	cmd.SetOut(&bytes.Buffer{})
+	if err := runPush(cmd, config.Target{Mode: config.TargetModeSpace, Value: ""}, OnConflictCancel, false); err != nil {
+		t.Fatalf("runPush() unexpected error: %v", err)
+	}
+
+	if len(fake.updateCalls) != 1 {
+		t.Fatalf("expected one update call, got %d", len(fake.updateCalls))
+	}
+	if body := string(fake.updateCalls[0].Input.BodyADF); !strings.Contains(body, "unstaged snapshot content") {
+		t.Fatalf("expected unstaged content in pushed ADF body, got: %s", body)
+	}
+}
+
+func TestRunPush_UsesStagedDeletionFromWorkspaceSnapshot(t *testing.T) {
+	repo := t.TempDir()
+	spaceDir := preparePushRepoWithBaseline(t, repo)
+	rootPath := filepath.Join(spaceDir, "root.md")
+
+	if err := os.Remove(rootPath); err != nil {
+		t.Fatalf("remove root.md: %v", err)
+	}
+	runGitForTest(t, repo, "add", filepath.Join("Engineering (ENG)", "root.md"))
+
+	fake := newCmdFakePushRemote(1)
+	oldPushFactory := newPushRemote
+	oldPullFactory := newPullRemote
+	newPushRemote = func(_ *config.Config) (syncflow.PushRemote, error) { return fake, nil }
+	newPullRemote = func(_ *config.Config) (syncflow.PullRemote, error) { return fake, nil }
+	t.Cleanup(func() {
+		newPushRemote = oldPushFactory
+		newPullRemote = oldPullFactory
+	})
+
+	setupEnv(t)
+	chdirRepo(t, spaceDir)
+	setAutomationFlags(t, true, true)
+
+	cmd := &cobra.Command{}
+	cmd.SetOut(&bytes.Buffer{})
+	if err := runPush(cmd, config.Target{Mode: config.TargetModeSpace, Value: ""}, OnConflictCancel, false); err != nil {
+		t.Fatalf("runPush() unexpected error: %v", err)
+	}
+
+	if len(fake.archiveCalls) != 1 {
+		t.Fatalf("expected one archive call for staged deletion, got %d", len(fake.archiveCalls))
 	}
 }
 
@@ -849,6 +1082,10 @@ func preparePushRepoWithBaseline(t *testing.T, repo string) string {
 		AttachmentIndex: map[string]string{},
 	}); err != nil {
 		t.Fatalf("save state: %v", err)
+	}
+
+	if err := os.WriteFile(filepath.Join(repo, ".gitignore"), []byte(".env\n.confluence-state.json\n"), 0o600); err != nil {
+		t.Fatalf("write .gitignore: %v", err)
 	}
 
 	runGitForTest(t, repo, "add", ".")

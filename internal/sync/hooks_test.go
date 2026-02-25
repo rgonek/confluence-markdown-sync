@@ -184,15 +184,26 @@ func TestReverseMediaHook(t *testing.T) {
 	}
 	in.Destination = "assets/new.png"
 
-	out, err = hook(ctx, in)
-	if err != nil {
-		t.Errorf("Unexpected error: %v", err)
-	}
-	if out.ID != "new-attachment-placeholder" {
-		t.Errorf("Expected placeholder ID, got %q", out.ID)
+	_, err = hook(ctx, in)
+	if err != mdconv.ErrUnresolved {
+		t.Errorf("Expected ErrUnresolved for missing attachment mapping, got %v", err)
 	}
 
-	// Test 3: Missing asset (should fail)
+	// Test 3: Non-assets path should fail even if mapped
+	nonAssetPath := filepath.Join(spaceDir, "image-outside.png")
+	err = os.WriteFile(nonAssetPath, []byte("outside"), 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	attachmentIndex[filepath.ToSlash("image-outside.png")] = "att-999"
+	in.Destination = "image-outside.png"
+
+	_, err = hook(ctx, in)
+	if err != mdconv.ErrUnresolved {
+		t.Errorf("Expected ErrUnresolved for non-assets reference, got %v", err)
+	}
+
+	// Test 4: Missing asset (should fail)
 	in.Destination = "assets/missing.png"
 	_, err = hook(ctx, in)
 	if err != mdconv.ErrUnresolved {

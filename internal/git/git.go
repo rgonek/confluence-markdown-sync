@@ -1,6 +1,7 @@
 package git
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"os/exec"
@@ -90,13 +91,21 @@ func RunGit(workdir string, args ...string) (string, error) {
 	// Set generic env vars if needed, e.g. LANG=C
 	cmd.Env = append(os.Environ(), "LANG=C", "LC_ALL=C")
 
-	out, err := cmd.CombinedOutput()
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	err := cmd.Run()
 	if err != nil {
-		msg := strings.TrimSpace(string(out))
+		msg := strings.TrimSpace(stderr.String())
+		if msg == "" {
+			msg = strings.TrimSpace(stdout.String())
+		}
 		if msg == "" {
 			return "", fmt.Errorf("git %s failed: %w", strings.Join(args, " "), err)
 		}
 		return "", fmt.Errorf("git %s failed: %s", strings.Join(args, " "), msg)
 	}
-	return string(out), nil
+	return stdout.String(), nil
 }

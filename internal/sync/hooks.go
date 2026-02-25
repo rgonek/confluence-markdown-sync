@@ -202,11 +202,26 @@ func NewReverseLinkHook(spaceDir string, index PageIndex, domain string) mdconv.
 // It resolves local asset paths to Confluence attachment IDs/URLs.
 func NewReverseMediaHook(spaceDir string, attachmentIndex map[string]string) mdconv.MediaParseHook {
 	return func(ctx context.Context, in mdconv.MediaParseInput) (mdconv.MediaParseOutput, error) {
-		// Resolve absolute path of asset
-		dir := filepath.Dir(in.SourcePath)
-		assetPath := filepath.Join(dir, in.Destination)
+		destination := normalizeMarkdownDestination(in.Destination)
+		if destination == "" || isExternalDestination(destination) {
+			return mdconv.MediaParseOutput{}, mdconv.ErrUnresolved
+		}
+		if idx := strings.Index(destination, "#"); idx >= 0 {
+			destination = destination[:idx]
+		}
+		if idx := strings.Index(destination, "?"); idx >= 0 {
+			destination = destination[:idx]
+		}
+		if destination == "" {
+			return mdconv.MediaParseOutput{}, mdconv.ErrUnresolved
+		}
 
-		// Check if file exists
+		dir := filepath.Dir(in.SourcePath)
+		assetPath := filepath.Clean(filepath.Join(dir, filepath.FromSlash(destination)))
+		if !isSubpathOrSame(spaceDir, assetPath) {
+			return mdconv.MediaParseOutput{}, mdconv.ErrUnresolved
+		}
+
 		if _, err := os.Stat(assetPath); os.IsNotExist(err) {
 			return mdconv.MediaParseOutput{}, mdconv.ErrUnresolved
 		}
@@ -215,14 +230,17 @@ func NewReverseMediaHook(spaceDir string, attachmentIndex map[string]string) mdc
 		if err != nil {
 			return mdconv.MediaParseOutput{}, mdconv.ErrUnresolved
 		}
-		relPath = filepath.ToSlash(relPath)
+		relPath = normalizeRelPath(relPath)
+		if relPath == "" || relPath == "." || strings.HasPrefix(relPath, "../") {
+			return mdconv.MediaParseOutput{}, mdconv.ErrUnresolved
+		}
+		if !strings.HasPrefix(relPath, "assets/") {
+			return mdconv.MediaParseOutput{}, mdconv.ErrUnresolved
+		}
 
-		// Look up ID
 		id, ok := attachmentIndex[relPath]
-		if !ok {
-			// Not in index.
-			// We return a placeholder ID so conversion succeeds during validation.
-			id = "new-attachment-placeholder"
+		if !ok || strings.TrimSpace(id) == "" {
+			return mdconv.MediaParseOutput{}, mdconv.ErrUnresolved
 		}
 
 		return mdconv.MediaParseOutput{

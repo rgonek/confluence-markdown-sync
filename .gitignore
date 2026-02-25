@@ -31,6 +31,9 @@ go.work.sum
 workspace/
 test-output/
 
+# Local Confluence sync state
+.confluence-state.json
+
 # Git worktrees
 .worktrees/
 

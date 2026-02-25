@@ -335,11 +335,31 @@ func pushUpsertPage(
 	}
 
 	pageID := strings.TrimSpace(doc.Frontmatter.ID)
-	if pageID == "" {
-		if existingID := strings.TrimSpace(state.PagePathIndex[relPath]); existingID != "" {
+	targetState := normalizePageLifecycleState(doc.Frontmatter.State)
+
+	trackedPageID := strings.TrimSpace(state.PagePathIndex[relPath])
+	if trackedPageID != "" {
+		if pageID == "" {
 			return PushCommitPlan{}, fmt.Errorf(
 				"page %q has no id in frontmatter but was previously synced (id=%s). Restore the id field or use a different filename",
-				relPath, existingID,
+				relPath, trackedPageID,
+			)
+		}
+		if pageID != trackedPageID {
+			return PushCommitPlan{}, fmt.Errorf(
+				"page %q changed immutable id from %s to %s",
+				relPath, trackedPageID, pageID,
+			)
+		}
+
+		expectedSpace := strings.TrimSpace(state.SpaceKey)
+		if expectedSpace == "" {
+			expectedSpace = strings.TrimSpace(opts.SpaceKey)
+		}
+		if expectedSpace != "" && !strings.EqualFold(strings.TrimSpace(doc.Frontmatter.Space), expectedSpace) {
+			return PushCommitPlan{}, fmt.Errorf(
+				"page %q changed immutable space from %s to %s",
+				relPath, expectedSpace, strings.TrimSpace(doc.Frontmatter.Space),
 			)
 		}
 	}
@@ -364,6 +384,12 @@ func pushUpsertPage(
 		remotePageByID[pageID] = fetched
 
 		fallbackParentID = strings.TrimSpace(remotePage.ParentPageID)
+		if normalizePageLifecycleState(remotePage.Status) == "current" && targetState == "draft" {
+			return PushCommitPlan{}, fmt.Errorf(
+				"page %q cannot be transitioned from current to draft",
+				relPath,
+			)
+		}
 
 		if remotePage.Version > localVersion {
 			switch policy {
@@ -401,11 +427,6 @@ func pushUpsertPage(
 		title := resolveLocalTitle(doc, relPath)
 		resolvedParentID := resolveParentIDFromHierarchy(relPath, "", fallbackParentID, pageIDByPath, folderIDByPath)
 
-		targetState := doc.Frontmatter.State
-		if strings.TrimSpace(targetState) == "" {
-			targetState = "current"
-		}
-
 		created, err := remote.CreatePage(ctx, confluence.PageUpsertInput{
 			SpaceID:      space.ID,
 			ParentPageID: resolvedParentID,
@@ -438,7 +459,11 @@ func pushUpsertPage(
 	}
 
 	linkHook := NewReverseLinkHook(opts.SpaceDir, pageIDByPath, opts.Domain)
-	mediaHook := NewReverseMediaHook(opts.SpaceDir, attachmentIDByPath)
+	strictAttachmentIndex, referencedAssetPaths, err := BuildStrictAttachmentIndex(opts.SpaceDir, absPath, doc.Body, attachmentIDByPath)
+	if err != nil {
+		return PushCommitPlan{}, fmt.Errorf("resolve assets for %s: %w", relPath, err)
+	}
+	mediaHook := NewReverseMediaHook(opts.SpaceDir, strictAttachmentIndex)
 
 	if _, err := converter.Reverse(ctx, []byte(doc.Body), converter.ReverseConfig{
 		LinkHook:  linkHook,
@@ -446,11 +471,6 @@ func pushUpsertPage(
 		Strict:    true,
 	}, absPath); err != nil {
 		return PushCommitPlan{}, fmt.Errorf("strict conversion failed for %s: %w", relPath, err)
-	}
-
-	referencedAssetPaths, err := collectReferencedAssetPaths(opts.SpaceDir, absPath, doc.Body)
-	if err != nil {
-		return PushCommitPlan{}, fmt.Errorf("resolve assets for %s: %w", relPath, err)
 	}
 
 	touchedAssets := make([]string, 0)
@@ -529,11 +549,6 @@ func pushUpsertPage(
 	finalADF, err := ensureADFMediaCollection(reverse.ADF, pageID)
 	if err != nil {
 		return PushCommitPlan{}, fmt.Errorf("post-process ADF for %s: %w", relPath, err)
-	}
-
-	targetState := doc.Frontmatter.State
-	if strings.TrimSpace(targetState) == "" {
-		targetState = "current"
 	}
 
 	updatedPage, err := remote.UpdatePage(ctx, pageID, confluence.PageUpsertInput{
@@ -743,7 +758,37 @@ func isIndexFile(path string) bool {
 	return name == dir
 }
 
-func collectReferencedAssetPaths(spaceDir, sourcePath, body string) ([]string, error) {
+func BuildStrictAttachmentIndex(spaceDir, sourcePath, body string, attachmentIndex map[string]string) (map[string]string, []string, error) {
+	referencedAssetPaths, err := CollectReferencedAssetPaths(spaceDir, sourcePath, body)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	strictAttachmentIndex := cloneStringMap(attachmentIndex)
+	seedPendingAttachmentIDs(strictAttachmentIndex, referencedAssetPaths)
+	return strictAttachmentIndex, referencedAssetPaths, nil
+}
+
+func seedPendingAttachmentIDs(attachmentIndex map[string]string, assetPaths []string) {
+	for _, assetPath := range assetPaths {
+		if strings.TrimSpace(attachmentIndex[assetPath]) != "" {
+			continue
+		}
+		attachmentIndex[assetPath] = pendingAttachmentID(assetPath)
+	}
+}
+
+func pendingAttachmentID(assetPath string) string {
+	normalized := strings.TrimSpace(strings.ToLower(filepath.ToSlash(assetPath)))
+	normalized = strings.ReplaceAll(normalized, "/", "-")
+	normalized = strings.ReplaceAll(normalized, " ", "-")
+	if normalized == "" {
+		normalized = "asset"
+	}
+	return "pending-attachment-" + normalized
+}
+
+func CollectReferencedAssetPaths(spaceDir, sourcePath, body string) ([]string, error) {
 	matches := markdownImageRefPattern.FindAllStringSubmatch(body, -1)
 	if len(matches) == 0 {
 		return nil, nil
@@ -783,7 +828,7 @@ func collectReferencedAssetPaths(spaceDir, sourcePath, body string) ([]string, e
 		}
 		relPath = normalizeRelPath(relPath)
 		if !strings.HasPrefix(relPath, "assets/") {
-			continue
+			return nil, fmt.Errorf("asset reference must remain under assets/: %s", destination)
 		}
 		paths[relPath] = struct{}{}
 	}
@@ -894,6 +939,14 @@ func detectAssetContentType(filename string, raw []byte) string {
 		sniffLen = 512
 	}
 	return http.DetectContentType(raw[:sniffLen])
+}
+
+func normalizePageLifecycleState(state string) string {
+	normalized := strings.TrimSpace(strings.ToLower(state))
+	if normalized == "" {
+		return "current"
+	}
+	return normalized
 }
 
 func listAllPushPages(ctx context.Context, remote PushRemote, opts confluence.PageListOptions) ([]confluence.Page, error) {

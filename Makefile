@@ -3,7 +3,7 @@ MAIN       := ./cmd/conf
 GO         := go
 GOFLAGS    :=
 
-.PHONY: build install test fmt lint clean
+.PHONY: build install test coverage-check fmt lint clean
 
 ## build: compile the conf binary
 build:
@@ -16,6 +16,10 @@ install:
 ## test: run all unit tests
 test:
 	$(GO) test ./...
+
+## coverage-check: enforce package coverage minimums
+coverage-check:
+	$(GO) run ./tools/coveragecheck
 
 ## test-e2e: run all end-to-end tests (requires credentials)
 test-e2e: build

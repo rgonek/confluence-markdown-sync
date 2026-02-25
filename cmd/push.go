@@ -124,7 +124,7 @@ func runPush(cmd *cobra.Command, target config.Target, onConflict string, dryRun
 		return err
 	}
 
-	spaceScopePath, err := gitClient.ScopePath(spaceDir)
+	spaceScopePath, err := gitScopePathFromPath(spaceDir)
 	if err != nil {
 		return err
 	}
@@ -150,6 +150,26 @@ func runPush(cmd *cobra.Command, target config.Target, onConflict string, dryRun
 		return runPushDryRun(ctx, cmd, out, target, spaceKey, spaceDir, onConflict, gitClient, spaceScopePath, changeScopePath)
 	}
 
+	baselineRef, err := gitPushBaselineRef(gitClient, spaceKey)
+	if err != nil {
+		return err
+	}
+
+	preSnapshotChanges, err := collectPushChangesForTarget(gitClient, baselineRef, target, spaceScopePath, changeScopePath)
+	if err != nil {
+		return err
+	}
+
+	if len(preSnapshotChanges) == 0 {
+		_, _ = fmt.Fprintln(out, "push completed with no in-scope markdown changes (no-op)")
+		return nil
+	}
+
+	headCommit, err := gitClient.ResolveRef("HEAD")
+	if err != nil {
+		return fmt.Errorf("resolve HEAD: %w", err)
+	}
+
 	// 1. Capture Snapshot
 	stashRef, err := gitClient.StashScopeIfDirty(spaceScopePath, spaceKey, ts)
 	if err != nil {
@@ -163,7 +183,7 @@ func runPush(cmd *cobra.Command, target config.Target, onConflict string, dryRun
 
 	snapshotRef := stashRef
 	if snapshotRef == "" {
-		snapshotRef = "HEAD"
+		snapshotRef = headCommit
 	}
 
 	snapshotCommit, err := gitClient.ResolveRef(snapshotRef)
@@ -191,7 +211,7 @@ func runPush(cmd *cobra.Command, target config.Target, onConflict string, dryRun
 
 	// 2. Create Sync Branch
 	syncBranchName := fmt.Sprintf("sync/%s/%s", refKey, tsStr)
-	if err := gitClient.CreateBranch(syncBranchName, snapshotCommit); err != nil {
+	if err := gitClient.CreateBranch(syncBranchName, headCommit); err != nil {
 		return fmt.Errorf("create sync branch: %w", err)
 	}
 
@@ -214,7 +234,7 @@ func runPush(cmd *cobra.Command, target config.Target, onConflict string, dryRun
 	}()
 
 	return runPushInWorktree(ctx, cmd, out, target, spaceKey, spaceDir, onConflict, tsStr,
-		gitClient, spaceScopePath, changeScopePath, worktreeDir, syncBranchName, &stashRef)
+		gitClient, spaceScopePath, changeScopePath, worktreeDir, syncBranchName, snapshotName, &stashRef)
 }
 
 func runPushPreflight(
@@ -228,15 +248,9 @@ func runPushPreflight(
 	if err != nil {
 		return err
 	}
-	syncChanges, err := collectSyncPushChanges(gitClient, baselineRef, spaceScopePath, gitClient.RootDir, spaceDir)
+	syncChanges, err := collectPushChangesForTarget(gitClient, baselineRef, target, spaceScopePath, changeScopePath)
 	if err != nil {
 		return err
-	}
-	if target.IsFile() {
-		syncChanges, err = collectSyncPushChanges(gitClient, baselineRef, changeScopePath, gitClient.RootDir, spaceDir)
-		if err != nil {
-			return err
-		}
 	}
 
 	_, _ = fmt.Fprintf(out, "preflight for space %s\n", spaceKey)
@@ -283,16 +297,9 @@ func runPushDryRun(
 		return err
 	}
 
-	syncChanges, err := collectSyncPushChanges(gitClient, baselineRef, spaceScopePath, gitClient.RootDir, spaceDir)
+	syncChanges, err := collectPushChangesForTarget(gitClient, baselineRef, target, spaceScopePath, changeScopePath)
 	if err != nil {
 		return err
-	}
-
-	if target.IsFile() {
-		syncChanges, err = collectSyncPushChanges(gitClient, baselineRef, changeScopePath, gitClient.RootDir, spaceDir)
-		if err != nil {
-			return err
-		}
 	}
 
 	if len(syncChanges) == 0 {
@@ -379,23 +386,26 @@ func runPushInWorktree(
 	spaceKey, spaceDir, onConflict, tsStr string,
 	gitClient *git.Client,
 	spaceScopePath, changeScopePath string,
-	worktreeDir, syncBranchName string,
+	worktreeDir, syncBranchName, snapshotRefName string,
 	stashRef *string,
 ) error {
 	// 4. Validate (in worktree)
 	wtSpaceDir := filepath.Join(worktreeDir, spaceScopePath)
 	wtClient := &git.Client{RootDir: worktreeDir}
+	if err := os.MkdirAll(wtSpaceDir, 0o750); err != nil {
+		return fmt.Errorf("prepare worktree space directory: %w", err)
+	}
 
-	// Reset SyncBranch to HEAD (mixed) to ensure commits are granular and based on HEAD
-	currentHead, err := gitClient.ResolveRef("HEAD")
-	if err != nil {
-		return fmt.Errorf("resolve HEAD: %w", err)
+	if strings.TrimSpace(*stashRef) != "" {
+		if err := wtClient.StashApply(snapshotRefName); err != nil {
+			return fmt.Errorf("materialize snapshot in worktree: %w", err)
+		}
+		if err := restoreUntrackedFromStashParent(wtClient, snapshotRefName, spaceScopePath); err != nil {
+			return err
+		}
 	}
-	if _, err := wtClient.Run("reset", "--mixed", currentHead); err != nil {
-		return fmt.Errorf("reset worktree: %w", err)
-	}
-	if err := restoreUntrackedFromStashParent(wtClient, *stashRef, spaceScopePath); err != nil {
-		return err
+	if err := os.MkdirAll(wtSpaceDir, 0o750); err != nil {
+		return fmt.Errorf("prepare worktree scope directory: %w", err)
 	}
 
 	var wtTarget config.Target
@@ -419,16 +429,9 @@ func runPushInWorktree(
 	}
 
 	wtClient = &git.Client{RootDir: worktreeDir}
-	syncChanges, err := collectSyncPushChanges(wtClient, baselineRef, spaceScopePath, gitClient.RootDir, spaceDir)
+	syncChanges, err := collectPushChangesForTarget(wtClient, baselineRef, target, spaceScopePath, changeScopePath)
 	if err != nil {
 		return err
-	}
-
-	if target.IsFile() {
-		syncChanges, err = collectSyncPushChanges(wtClient, baselineRef, changeScopePath, gitClient.RootDir, spaceDir)
-		if err != nil {
-			return err
-		}
 	}
 
 	if len(syncChanges) == 0 {
@@ -452,7 +455,7 @@ func runPushInWorktree(
 		return fmt.Errorf("create confluence client: %w", err)
 	}
 
-	state, err := fs.LoadState(wtSpaceDir)
+	state, err := fs.LoadState(spaceDir)
 	if err != nil {
 		return fmt.Errorf("load state: %w", err)
 	}
@@ -502,27 +505,35 @@ func runPushInWorktree(
 	}
 
 	// 7. Commit in Worktree
-	if err := fs.SaveState(wtSpaceDir, result.State); err != nil {
-		return fmt.Errorf("save state: %w", err)
-	}
-
-	for i, commitPlan := range result.Commits {
-		filesToAdd := make([]string, 0, len(commitPlan.StagedPaths)+1)
+	for _, commitPlan := range result.Commits {
+		filesToAdd := make([]string, 0, len(commitPlan.StagedPaths))
 		for _, relPath := range commitPlan.StagedPaths {
 			filesToAdd = append(filesToAdd, filepath.Join(wtSpaceDir, relPath))
-		}
-		if i == len(result.Commits)-1 {
-			filesToAdd = append(filesToAdd, filepath.Join(wtSpaceDir, fs.StateFileName))
 		}
 
 		repoPaths := make([]string, 0, len(filesToAdd))
 		for _, absPath := range filesToAdd {
 			rel, _ := filepath.Rel(worktreeDir, absPath)
-			repoPaths = append(repoPaths, rel)
+			repoPaths = append(repoPaths, filepath.ToSlash(rel))
 		}
 
-		if err := wtClient.AddForce(repoPaths...); err != nil {
-			return fmt.Errorf("git add failed: %w", err)
+		addCandidates := make([]string, 0, len(repoPaths))
+		for _, repoPath := range repoPaths {
+			absRepoPath := filepath.Join(worktreeDir, filepath.FromSlash(repoPath))
+			if _, statErr := os.Stat(absRepoPath); os.IsNotExist(statErr) {
+				if _, err := wtClient.Run("rm", "--cached", "--ignore-unmatch", "--", repoPath); err != nil {
+					return fmt.Errorf("git rm failed: %w", err)
+				}
+				continue
+			}
+			addCandidates = append(addCandidates, repoPath)
+		}
+
+		if len(addCandidates) > 0 {
+			addArgs := append([]string{"add", "-A", "--"}, addCandidates...)
+			if _, err := wtClient.Run(addArgs...); err != nil {
+				return fmt.Errorf("git add failed: %w", err)
+			}
 		}
 
 		subject := fmt.Sprintf("Sync %q to Confluence (v%d)", commitPlan.PageTitle, commitPlan.Version)
@@ -567,18 +578,62 @@ func runPushInWorktree(
 	// Clear stashRef so the defer in runPush doesn't try to pop again
 	*stashRef = ""
 
+	if err := fs.SaveState(spaceDir, result.State); err != nil {
+		_, _ = fmt.Fprintf(out, "warning: failed to save local state: %v\n", err)
+	}
+
 	_, _ = fmt.Fprintf(out, "push completed: %d page change(s) synced\n", len(result.Commits))
 	return nil
 }
 
 func resolvePushScopePath(client *git.Client, spaceDir string, target config.Target, targetCtx validateTargetContext) (string, error) {
+	_ = client
 	if target.IsFile() {
 		if len(targetCtx.files) != 1 {
 			return "", fmt.Errorf("expected one file target, got %d", len(targetCtx.files))
 		}
-		return client.ScopePath(targetCtx.files[0])
+		return gitScopePathFromPath(targetCtx.files[0])
 	}
-	return client.ScopePath(spaceDir)
+	return gitScopePathFromPath(spaceDir)
+}
+
+func gitScopePathFromPath(path string) (string, error) {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return ".", nil
+	}
+
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+
+	info, err := os.Stat(absPath)
+	if err != nil {
+		return "", err
+	}
+
+	if info.IsDir() {
+		prefix, err := git.RunGit(absPath, "rev-parse", "--show-prefix")
+		if err != nil {
+			return "", err
+		}
+		prefix = strings.TrimSpace(strings.ReplaceAll(prefix, "\\", "/"))
+		prefix = strings.TrimSuffix(prefix, "/")
+		if prefix == "" {
+			return ".", nil
+		}
+		return filepath.ToSlash(filepath.Clean(prefix)), nil
+	}
+
+	dir := filepath.Dir(absPath)
+	prefix, err := git.RunGit(dir, "rev-parse", "--show-prefix")
+	if err != nil {
+		return "", err
+	}
+	prefix = strings.TrimSpace(strings.ReplaceAll(prefix, "\\", "/"))
+	relPath := filepath.ToSlash(filepath.Clean(filepath.Join(prefix, filepath.Base(absPath))))
+	return relPath, nil
 }
 
 func gitPushBaselineRef(client *git.Client, spaceKey string) (string, error) {
@@ -630,12 +685,26 @@ func gitPushBaselineRef(client *git.Client, spaceKey string) (string, error) {
 	return lines[0], nil
 }
 
-func collectSyncPushChanges(client *git.Client, baselineRef, scopePath, repoRoot, spaceDir string) ([]syncflow.PushFileChange, error) {
-	changes, err := collectGitChangesWithUntracked(client, baselineRef, scopePath)
+func collectSyncPushChanges(client *git.Client, baselineRef, diffScopePath, spaceScopePath string) ([]syncflow.PushFileChange, error) {
+	changes, err := collectGitChangesWithUntracked(client, baselineRef, diffScopePath)
 	if err != nil {
 		return nil, err
 	}
-	return toSyncPushChanges(changes, repoRoot, spaceDir)
+	return toSyncPushChanges(changes, spaceScopePath)
+}
+
+func collectPushChangesForTarget(
+	client *git.Client,
+	baselineRef string,
+	target config.Target,
+	spaceScopePath string,
+	changeScopePath string,
+) ([]syncflow.PushFileChange, error) {
+	diffScopePath := spaceScopePath
+	if target.IsFile() {
+		diffScopePath = changeScopePath
+	}
+	return collectSyncPushChanges(client, baselineRef, diffScopePath, spaceScopePath)
 }
 
 func collectGitChangesWithUntracked(client *git.Client, baselineRef, scopePath string) ([]git.FileStatus, error) {
@@ -729,37 +798,28 @@ func restoreUntrackedFromStashParent(client *git.Client, stashRef, scopePath str
 	return nil
 }
 
-func toSyncPushChanges(changes []git.FileStatus, repoRoot, spaceDir string) ([]syncflow.PushFileChange, error) {
-	normalizedSpaceDir, err := normalizeCommandPath(spaceDir)
-	if err != nil {
-		return nil, err
+func toSyncPushChanges(changes []git.FileStatus, spaceScopePath string) ([]syncflow.PushFileChange, error) {
+	normalizedScope := filepath.ToSlash(filepath.Clean(spaceScopePath))
+	if normalizedScope == "." {
+		normalizedScope = ""
 	}
 
 	out := make([]syncflow.PushFileChange, 0, len(changes))
 	for _, change := range changes {
-		absPath := filepath.Join(repoRoot, filepath.FromSlash(change.Path))
-		normalizedAbsPath, err := normalizeCommandPath(absPath)
-		if err != nil {
-			return nil, err
-		}
-
-		relPath, err := filepath.Rel(normalizedSpaceDir, normalizedAbsPath)
-		if err != nil {
-			return nil, err
-		}
-
-		relPath = filepath.Clean(relPath)
-		if relPath == ".." || strings.HasPrefix(relPath, ".."+string(filepath.Separator)) {
-			lowerSpace := strings.ToLower(filepath.ToSlash(normalizedSpaceDir))
-			lowerAbs := strings.ToLower(filepath.ToSlash(normalizedAbsPath))
-			if lowerAbs != lowerSpace && !strings.HasPrefix(lowerAbs, lowerSpace+"/") {
+		normalizedPath := filepath.ToSlash(filepath.Clean(change.Path))
+		relPath := normalizedPath
+		if normalizedScope != "" {
+			if strings.HasPrefix(normalizedPath, normalizedScope+"/") {
+				relPath = strings.TrimPrefix(normalizedPath, normalizedScope+"/")
+			} else if normalizedPath == normalizedScope {
+				relPath = filepath.Base(filepath.FromSlash(normalizedPath))
+			} else {
 				continue
 			}
-			relPath = strings.TrimPrefix(lowerAbs, lowerSpace)
-			relPath = strings.TrimPrefix(relPath, "/")
 		}
 
-		relPath = filepath.ToSlash(relPath)
+		relPath = filepath.ToSlash(filepath.Clean(relPath))
+		relPath = strings.TrimPrefix(relPath, "./")
 		if relPath == "." || strings.HasPrefix(relPath, "../") {
 			continue
 		}
@@ -783,18 +843,6 @@ func toSyncPushChanges(changes []git.FileStatus, repoRoot, spaceDir string) ([]s
 		out = append(out, syncflow.PushFileChange{Type: changeType, Path: relPath})
 	}
 	return out, nil
-}
-
-func normalizeCommandPath(path string) (string, error) {
-	absPath, err := filepath.Abs(path)
-	if err != nil {
-		return "", err
-	}
-	resolvedPath, err := filepath.EvalSymlinks(absPath)
-	if err == nil && strings.TrimSpace(resolvedPath) != "" {
-		absPath = resolvedPath
-	}
-	return filepath.Clean(absPath), nil
 }
 
 func toSyncConflictPolicy(policy string) syncflow.PushConflictPolicy {

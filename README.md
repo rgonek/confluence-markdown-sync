@@ -57,7 +57,7 @@ conf push ENG --on-conflict=cancel
 ```
 
 ## At a glance 👀
-- Commands: `init`, `pull [TARGET]`, `push [TARGET]`, `validate [TARGET]`, `diff [TARGET]`
+- Commands: `init`, `pull [TARGET]`, `push [TARGET]`, `validate [TARGET]`, `diff [TARGET]`, `agents [TARGET]`, `relink [TARGET]`
 - Target rule: `.md` suffix means file mode; otherwise space mode (`SPACE_KEY`)
 - Required auth: `ATLASSIAN_DOMAIN`, `ATLASSIAN_EMAIL`, `ATLASSIAN_API_TOKEN`
 - Git remote is optional (local Git is enough)

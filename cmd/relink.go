@@ -116,7 +116,10 @@ func runTargetedRelink(cmd *cobra.Command, repoRoot, target string, index sync.G
 		// 2. Prompt
 		msg := fmt.Sprintf("Found %d absolute links in %d files in space %s pointing to %s. Update %s?",
 			result.LinksConverted, result.FilesChanged, currentSpaceKey, targetSpaceKey, currentSpaceKey)
-		if err := requireSafetyConfirmation(cmd.InOrStdin(), cmd.OutOrStdout(), msg, 0, false); err != nil {
+		if err := requireSafetyConfirmation(cmd.InOrStdin(), cmd.OutOrStdout(), msg, result.FilesChanged, false); err != nil {
+			if flagNonInteractive {
+				return err
+			}
 			// User said No or error, skip this space
 			continue
 		}
@@ -150,7 +153,10 @@ func runGlobalRelink(cmd *cobra.Command, repoRoot string, index sync.GlobalPageI
 		// 2. Prompt
 		msg := fmt.Sprintf("Found %d absolute links in %d files in space %s that can be resolved. Update %s?",
 			result.LinksConverted, result.FilesChanged, spaceKey, spaceKey)
-		if err := requireSafetyConfirmation(cmd.InOrStdin(), cmd.OutOrStdout(), msg, 0, false); err != nil {
+		if err := requireSafetyConfirmation(cmd.InOrStdin(), cmd.OutOrStdout(), msg, result.FilesChanged, false); err != nil {
+			if flagNonInteractive {
+				return err
+			}
 			continue
 		}
 

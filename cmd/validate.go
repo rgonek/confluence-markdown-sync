@@ -12,6 +12,7 @@ import (
 	"github.com/rgonek/confluence-markdown-sync/internal/config"
 	"github.com/rgonek/confluence-markdown-sync/internal/converter"
 	"github.com/rgonek/confluence-markdown-sync/internal/fs"
+	"github.com/rgonek/confluence-markdown-sync/internal/git"
 	syncflow "github.com/rgonek/confluence-markdown-sync/internal/sync"
 	"github.com/rgonek/jira-adf-converter/mdconverter"
 	"github.com/spf13/cobra"
@@ -19,7 +20,25 @@ import (
 
 type validateTargetContext struct {
 	spaceDir string
+	spaceKey string
 	files    []string
+}
+
+type validateImmutableFrontmatterResolver struct {
+	spaceDir string
+	spaceKey string
+	state    fs.SpaceState
+
+	gitClient   *git.Client
+	baselineRef string
+
+	baselineCache map[string]baselineFrontmatterCacheEntry
+}
+
+type baselineFrontmatterCacheEntry struct {
+	loaded bool
+	found  bool
+	fm     fs.Frontmatter
 }
 
 func newValidateCmd() *cobra.Command {
@@ -65,15 +84,20 @@ func runValidateTarget(out io.Writer, target config.Target) error {
 	if err != nil {
 		return fmt.Errorf("failed to load state: %w", err)
 	}
+	if strings.TrimSpace(ctx.spaceKey) == "" {
+		ctx.spaceKey = strings.TrimSpace(state.SpaceKey)
+	}
+
+	immutableResolver := newValidateImmutableFrontmatterResolver(ctx.spaceDir, ctx.spaceKey, state)
 
 	linkHook := syncflow.NewReverseLinkHook(ctx.spaceDir, index, cfg.Domain)
-	mediaHook := syncflow.NewReverseMediaHook(ctx.spaceDir, state.AttachmentIndex)
 
 	hasErrors := false
 	for _, file := range ctx.files {
 		rel, _ := filepath.Rel(ctx.spaceDir, file)
 
-		issues := validateFile(file, linkHook, mediaHook)
+		issues := validateFile(file, ctx.spaceDir, linkHook, state.AttachmentIndex)
+		issues = append(issues, immutableResolver.validate(file)...)
 		if len(issues) == 0 {
 			continue
 		}
@@ -105,6 +129,7 @@ func resolveValidateTargetContext(target config.Target) (validateTargetContext, 
 
 		return validateTargetContext{
 			spaceDir: findSpaceDirFromFile(abs, ""),
+			spaceKey: resolveValidateFileSpaceKey(abs),
 			files:    []string{abs},
 		}, nil
 	}
@@ -143,10 +168,135 @@ func resolveValidateTargetContext(target config.Target) (validateTargetContext, 
 	}
 	sort.Strings(files)
 
-	return validateTargetContext{spaceDir: spaceDir, files: files}, nil
+	return validateTargetContext{spaceDir: spaceDir, spaceKey: initialCtx.spaceKey, files: files}, nil
 }
 
-func validateFile(path string, linkHook mdconverter.LinkParseHook, mediaHook mdconverter.MediaParseHook) []fs.ValidationIssue {
+func resolveValidateFileSpaceKey(filePath string) string {
+	spaceDir := findSpaceDirFromFile(filePath, "")
+	state, err := fs.LoadState(spaceDir)
+	if err == nil {
+		if key := strings.TrimSpace(state.SpaceKey); key != "" {
+			return key
+		}
+	}
+
+	fm, err := fs.ReadFrontmatter(filePath)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(fm.Space)
+}
+
+func newValidateImmutableFrontmatterResolver(spaceDir, spaceKey string, state fs.SpaceState) *validateImmutableFrontmatterResolver {
+	resolver := &validateImmutableFrontmatterResolver{
+		spaceDir:      spaceDir,
+		spaceKey:      strings.TrimSpace(spaceKey),
+		state:         state,
+		baselineCache: map[string]baselineFrontmatterCacheEntry{},
+	}
+
+	if resolver.spaceKey == "" {
+		resolver.spaceKey = strings.TrimSpace(state.SpaceKey)
+	}
+	if resolver.spaceKey == "" {
+		return resolver
+	}
+
+	gitClient, err := git.NewClient()
+	if err != nil {
+		return resolver
+	}
+	resolver.gitClient = gitClient
+
+	baselineRef, err := gitPushBaselineRef(gitClient, resolver.spaceKey)
+	if err != nil {
+		return resolver
+	}
+	resolver.baselineRef = strings.TrimSpace(baselineRef)
+	return resolver
+}
+
+func (r *validateImmutableFrontmatterResolver) validate(absPath string) []fs.ValidationIssue {
+	current, err := fs.ReadFrontmatter(absPath)
+	if err != nil {
+		return nil
+	}
+
+	relPath, err := filepath.Rel(r.spaceDir, absPath)
+	if err != nil {
+		return nil
+	}
+	relPath = filepath.ToSlash(relPath)
+
+	previous := fs.Frontmatter{}
+	if id := strings.TrimSpace(r.state.PagePathIndex[relPath]); id != "" {
+		previous.ID = id
+	}
+
+	baselineFrontmatter, baselineFound := r.readBaselineFrontmatter(absPath)
+	if baselineFound {
+		if id := strings.TrimSpace(baselineFrontmatter.ID); id != "" {
+			previous.ID = id
+		}
+		if space := strings.TrimSpace(baselineFrontmatter.Space); space != "" {
+			previous.Space = space
+		}
+		previous.State = baselineFrontmatter.State
+	}
+
+	if strings.TrimSpace(previous.ID) == "" {
+		return nil
+	}
+
+	if strings.TrimSpace(previous.Space) == "" {
+		if key := strings.TrimSpace(r.state.SpaceKey); key != "" {
+			previous.Space = key
+		} else {
+			previous.Space = r.spaceKey
+		}
+	}
+
+	if !baselineFound {
+		// Without reliable prior lifecycle state, enforce ID/space immutability only.
+		previous.State = current.State
+	}
+
+	result := fs.ValidateImmutableFrontmatter(previous, current)
+	return result.Issues
+}
+
+func (r *validateImmutableFrontmatterResolver) readBaselineFrontmatter(absPath string) (fs.Frontmatter, bool) {
+	if r.gitClient == nil || strings.TrimSpace(r.baselineRef) == "" {
+		return fs.Frontmatter{}, false
+	}
+
+	repoPath, err := r.gitClient.ScopePath(absPath)
+	if err != nil {
+		return fs.Frontmatter{}, false
+	}
+	repoPath = filepath.ToSlash(filepath.Clean(repoPath))
+
+	if cached, ok := r.baselineCache[repoPath]; ok && cached.loaded {
+		return cached.fm, cached.found
+	}
+
+	raw, err := r.gitClient.Run("show", fmt.Sprintf("%s:%s", r.baselineRef, repoPath))
+	if err != nil {
+		r.baselineCache[repoPath] = baselineFrontmatterCacheEntry{loaded: true, found: false}
+		return fs.Frontmatter{}, false
+	}
+
+	doc, err := fs.ParseMarkdownDocument([]byte(raw))
+	if err != nil {
+		r.baselineCache[repoPath] = baselineFrontmatterCacheEntry{loaded: true, found: false}
+		return fs.Frontmatter{}, false
+	}
+
+	r.baselineCache[repoPath] = baselineFrontmatterCacheEntry{loaded: true, found: true, fm: doc.Frontmatter}
+	return doc.Frontmatter, true
+}
+
+func validateFile(path, spaceDir string, linkHook mdconverter.LinkParseHook, attachmentIndex map[string]string) []fs.ValidationIssue {
 	var issues []fs.ValidationIssue
 
 	// Read full document
@@ -161,6 +311,16 @@ func validateFile(path string, linkHook mdconverter.LinkParseHook, mediaHook mdc
 	// 1. Validate Schema
 	res := fs.ValidateFrontmatterSchema(doc.Frontmatter)
 	issues = append(issues, res.Issues...)
+
+	strictAttachmentIndex, _, err := syncflow.BuildStrictAttachmentIndex(spaceDir, path, doc.Body, attachmentIndex)
+	if err != nil {
+		issues = append(issues, fs.ValidationIssue{
+			Code:    "conversion_error",
+			Message: err.Error(),
+		})
+		return issues
+	}
+	mediaHook := syncflow.NewReverseMediaHook(spaceDir, strictAttachmentIndex)
 
 	// 2. Strict Conversion
 	_, err = converter.Reverse(context.Background(), []byte(doc.Body), converter.ReverseConfig{
