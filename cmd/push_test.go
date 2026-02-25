@@ -232,6 +232,68 @@ func TestRunPush_WritesStructuredCommitTrailers(t *testing.T) {
 	}
 }
 
+func TestRunPush_KeepsStateFileUntracked(t *testing.T) {
+	repo := t.TempDir()
+	spaceDir := preparePushRepoWithBaseline(t, repo)
+
+	trackedBefore := strings.TrimSpace(runGitForTest(t, repo, "ls-files", "**/.confluence-state.json"))
+	if trackedBefore != "" {
+		t.Fatalf("expected no tracked state file before push, got %q", trackedBefore)
+	}
+
+	writeMarkdown(t, filepath.Join(spaceDir, "root.md"), fs.MarkdownDocument{
+		Frontmatter: fs.Frontmatter{
+			Title:                  "Root",
+			ID:                     "1",
+			Space:                  "ENG",
+			Version:                1,
+			ConfluenceLastModified: "2026-02-01T10:00:00Z",
+		},
+		Body: "![asset](assets/new.png)\n",
+	})
+
+	assetPath := filepath.Join(spaceDir, "assets", "new.png")
+	if err := os.MkdirAll(filepath.Dir(assetPath), 0o750); err != nil {
+		t.Fatalf("mkdir assets dir: %v", err)
+	}
+	if err := os.WriteFile(assetPath, []byte("png"), 0o600); err != nil {
+		t.Fatalf("write asset: %v", err)
+	}
+
+	fake := newCmdFakePushRemote(1)
+	oldPushFactory := newPushRemote
+	oldPullFactory := newPullRemote
+	newPushRemote = func(_ *config.Config) (syncflow.PushRemote, error) { return fake, nil }
+	newPullRemote = func(_ *config.Config) (syncflow.PullRemote, error) { return fake, nil }
+	t.Cleanup(func() {
+		newPushRemote = oldPushFactory
+		newPullRemote = oldPullFactory
+	})
+
+	setupEnv(t)
+	chdirRepo(t, spaceDir)
+
+	cmd := &cobra.Command{}
+	cmd.SetOut(&bytes.Buffer{})
+
+	if err := runPush(cmd, config.Target{Mode: config.TargetModeSpace, Value: ""}, OnConflictCancel, false); err != nil {
+		t.Fatalf("runPush() unexpected error: %v", err)
+	}
+
+	state, err := fs.LoadState(spaceDir)
+	if err != nil {
+		t.Fatalf("load state: %v", err)
+	}
+	if got := strings.TrimSpace(state.AttachmentIndex["assets/new.png"]); got == "" {
+		t.Fatalf("expected attachment index to be updated for assets/new.png")
+	}
+
+	trackedAfter := strings.TrimSpace(runGitForTest(t, repo, "ls-files", "**/.confluence-state.json"))
+	if trackedAfter != "" {
+		t.Fatalf("expected no tracked state file after push, got %q", trackedAfter)
+	}
+}
+
 func TestRunPush_FileModeStillRequiresOnConflict(t *testing.T) {
 	repo := t.TempDir()
 	spaceDir := preparePushRepoWithBaseline(t, repo)
@@ -849,6 +911,10 @@ func preparePushRepoWithBaseline(t *testing.T, repo string) string {
 		AttachmentIndex: map[string]string{},
 	}); err != nil {
 		t.Fatalf("save state: %v", err)
+	}
+
+	if err := os.WriteFile(filepath.Join(repo, ".gitignore"), []byte(".env\n.confluence-state.json\n"), 0o600); err != nil {
+		t.Fatalf("write .gitignore: %v", err)
 	}
 
 	runGitForTest(t, repo, "add", ".")

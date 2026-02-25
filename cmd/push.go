@@ -385,6 +385,9 @@ func runPushInWorktree(
 	// 4. Validate (in worktree)
 	wtSpaceDir := filepath.Join(worktreeDir, spaceScopePath)
 	wtClient := &git.Client{RootDir: worktreeDir}
+	if err := os.MkdirAll(wtSpaceDir, 0o750); err != nil {
+		return fmt.Errorf("prepare worktree space directory: %w", err)
+	}
 
 	// Reset SyncBranch to HEAD (mixed) to ensure commits are granular and based on HEAD
 	currentHead, err := gitClient.ResolveRef("HEAD")
@@ -502,17 +505,10 @@ func runPushInWorktree(
 	}
 
 	// 7. Commit in Worktree
-	if err := fs.SaveState(wtSpaceDir, result.State); err != nil {
-		return fmt.Errorf("save state: %w", err)
-	}
-
-	for i, commitPlan := range result.Commits {
-		filesToAdd := make([]string, 0, len(commitPlan.StagedPaths)+1)
+	for _, commitPlan := range result.Commits {
+		filesToAdd := make([]string, 0, len(commitPlan.StagedPaths))
 		for _, relPath := range commitPlan.StagedPaths {
 			filesToAdd = append(filesToAdd, filepath.Join(wtSpaceDir, relPath))
-		}
-		if i == len(result.Commits)-1 {
-			filesToAdd = append(filesToAdd, filepath.Join(wtSpaceDir, fs.StateFileName))
 		}
 
 		repoPaths := make([]string, 0, len(filesToAdd))
@@ -521,7 +517,7 @@ func runPushInWorktree(
 			repoPaths = append(repoPaths, rel)
 		}
 
-		if err := wtClient.AddForce(repoPaths...); err != nil {
+		if err := wtClient.Add(repoPaths...); err != nil {
 			return fmt.Errorf("git add failed: %w", err)
 		}
 
@@ -566,6 +562,10 @@ func runPushInWorktree(
 	}
 	// Clear stashRef so the defer in runPush doesn't try to pop again
 	*stashRef = ""
+
+	if err := fs.SaveState(spaceDir, result.State); err != nil {
+		_, _ = fmt.Fprintf(out, "warning: failed to save local state: %v\n", err)
+	}
 
 	_, _ = fmt.Fprintf(out, "push completed: %d page change(s) synced\n", len(result.Commits))
 	return nil
