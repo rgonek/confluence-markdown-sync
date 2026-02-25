@@ -175,8 +175,6 @@ func runPull(cmd *cobra.Command, target config.Target) (runErr error) {
 					// Use --force to remove untracked files and directories
 					_, _ = runGit(repoRoot, "clean", "-fd", "--", scopePath)
 					_, _ = runGit(repoRoot, "checkout", "HEAD", "--", scopePath)
-					// Also remove .confluence-state.json if it was just created/modified
-					_ = os.Remove(filepath.Join(pullCtx.spaceDir, fs.StateFileName))
 				}
 
 				restoreErr := applyAndDropStash(repoRoot, stashRef, scopePath, cmd.InOrStdin(), out)

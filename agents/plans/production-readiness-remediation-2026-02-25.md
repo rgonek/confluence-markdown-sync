@@ -127,6 +127,8 @@ Close production-readiness gaps in `conf` before broad rollout.
 ---
 
 ### P0-6: Make pull failure cleanup state-safe
+**Status (2026-02-25): ✅ Completed in PR-E (`phase/pr-e-pull-cleanup-safety`).**
+
 **Problem**
 - Pull failure cleanup can remove `.confluence-state.json` unexpectedly.
 
