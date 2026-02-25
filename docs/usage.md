@@ -167,7 +167,7 @@ Markdown frontmatter keys:
 - user-editable keys:
   - `state` (lifecycle: `draft` | `current`)
   - `status` (visual lozenge: e.g., "Ready to review")
-  - `labels` (list of strings)
+  - `labels` (list of strings): each label must be non-empty after trim and must not contain whitespace; labels are normalized to lowercase and de-duplicated/sorted before sync operations
 
 Local state file:
 

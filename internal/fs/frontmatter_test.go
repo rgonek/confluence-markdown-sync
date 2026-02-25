@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -123,6 +124,46 @@ func TestValidateFrontmatterSchema(t *testing.T) {
 	})
 	if result.IsValid() {
 		t.Fatal("ValidateFrontmatterSchema(invalid) should fail")
+	}
+}
+
+func TestNormalizeLabels_DedupesAndSorts(t *testing.T) {
+	labels := []string{" team ", "OPS", "team", "ops", "", "  "}
+	got := NormalizeLabels(labels)
+	want := []string{"ops", "team"}
+
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("NormalizeLabels() = %v, want %v", got, want)
+	}
+}
+
+func TestValidateFrontmatterSchema_InvalidLabels(t *testing.T) {
+	result := ValidateFrontmatterSchema(Frontmatter{
+		Space:  "ENG",
+		Labels: []string{"", "  ", "ready to review", "tab\tlabel"},
+	})
+	if result.IsValid() {
+		t.Fatal("ValidateFrontmatterSchema() should fail for invalid labels")
+	}
+
+	if len(result.Issues) != 4 {
+		t.Fatalf("issues = %d, want 4", len(result.Issues))
+	}
+
+	messages := make([]string, 0, len(result.Issues))
+	for _, issue := range result.Issues {
+		messages = append(messages, issue.Message)
+	}
+
+	joined := strings.Join(messages, "\n")
+	if !strings.Contains(joined, "empty after trimming") {
+		t.Fatalf("expected empty label issue, got:\n%s", joined)
+	}
+	if !strings.Contains(joined, `"ready to review"`) {
+		t.Fatalf("expected whitespace label issue to identify label value, got:\n%s", joined)
+	}
+	if !strings.Contains(joined, `"tab\tlabel"`) {
+		t.Fatalf("expected tab whitespace label issue to identify label value, got:\n%s", joined)
 	}
 }
 

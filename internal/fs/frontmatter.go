@@ -6,7 +6,9 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
+	"unicode"
 
 	"gopkg.in/yaml.v3"
 )
@@ -103,7 +105,7 @@ func (fm Frontmatter) MarshalYAML() (any, error) {
 		Version:        fm.Version,
 		State:          normalizeStateForMarshal(fm.State),
 		Status:         fm.Status,
-		Labels:         fm.Labels,
+		Labels:         NormalizeLabels(fm.Labels),
 		Author:         fm.Author,
 		CreatedAt:      fm.CreatedAt,
 		LastModifiedAt: fm.LastModifiedAt,
@@ -192,6 +194,39 @@ type ValidationIssue struct {
 // ValidationResult is a list of validation issues.
 type ValidationResult struct {
 	Issues []ValidationIssue
+}
+
+// NormalizeLabels returns a deterministic, deduplicated label list.
+// Labels are trimmed, lowercased, de-duplicated, and sorted.
+func NormalizeLabels(labels []string) []string {
+	if len(labels) == 0 {
+		return nil
+	}
+
+	set := map[string]struct{}{}
+	for _, label := range labels {
+		normalized := strings.TrimSpace(strings.ToLower(label))
+		if normalized == "" {
+			continue
+		}
+		set[normalized] = struct{}{}
+	}
+
+	result := make([]string, 0, len(set))
+	for label := range set {
+		result = append(result, label)
+	}
+	sort.Strings(result)
+	return result
+}
+
+func containsWhitespace(value string) bool {
+	for _, r := range value {
+		if unicode.IsSpace(r) {
+			return true
+		}
+	}
+	return false
 }
 
 // IsValid reports whether validation produced no issues.
@@ -350,12 +385,21 @@ func ValidateFrontmatterSchema(fm Frontmatter) ValidationResult {
 		})
 	}
 
-	for _, label := range fm.Labels {
-		if strings.ContainsAny(label, " ") {
+	for i, rawLabel := range fm.Labels {
+		trimmed := strings.TrimSpace(rawLabel)
+		if trimmed == "" {
 			result.Issues = append(result.Issues, ValidationIssue{
 				Field:   "labels",
 				Code:    "invalid",
-				Message: fmt.Sprintf("label %q is invalid: Confluence labels cannot contain spaces", label),
+				Message: fmt.Sprintf("label at index %d is invalid: value is empty after trimming", i),
+			})
+			continue
+		}
+		if containsWhitespace(trimmed) {
+			result.Issues = append(result.Issues, ValidationIssue{
+				Field:   "labels",
+				Code:    "invalid",
+				Message: fmt.Sprintf("label %q is invalid: labels cannot contain whitespace", rawLabel),
 			})
 		}
 	}

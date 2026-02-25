@@ -154,7 +154,11 @@ Each slice should be mergeable independently with tests and docs updates.
   - Added existing-page content snapshots (title, parent, status, ADF) before mutation.
   - Added rollback content restore for post-update failures with `ROLLBACK_PAGE_CONTENT_RESTORED` / `ROLLBACK_PAGE_CONTENT_FAILED` diagnostics.
   - Ensured rollback is skipped in dry-run mode and added tests for both restore and dry-run behavior.
-- [ ] Slice 3: Label normalization/validation hardening.
+- [x] Slice 3: Label normalization/validation hardening.
+  - Added canonical label normalization in `internal/fs/frontmatter.go` (trim/lowercase/dedupe/sort).
+  - Strengthened schema validation for empty and whitespace-containing labels with clearer error messages.
+  - Applied normalized labels in push metadata sync + rollback comparisons and added no-op equivalence tests.
+  - Updated `README.md` and `docs/usage.md` with exact label rules.
 - [ ] Slice 4: AST-based relink engine.
 - [ ] Slice 5: Versioned UA and run-correlation logging.
 

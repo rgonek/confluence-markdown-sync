@@ -788,6 +788,28 @@ func TestPush_DryRunSkipsRollbackAttempts(t *testing.T) {
 	}
 }
 
+func TestSyncPageMetadata_EquivalentLabelSetsDoNotChurn(t *testing.T) {
+	remote := newRollbackPushRemote()
+	remote.labelsByPage["1"] = []string{"ops", "team"}
+
+	doc := fs.MarkdownDocument{
+		Frontmatter: fs.Frontmatter{
+			Labels: []string{" team ", "OPS", "team"},
+		},
+	}
+
+	if err := syncPageMetadata(context.Background(), remote, "1", doc); err != nil {
+		t.Fatalf("syncPageMetadata() error: %v", err)
+	}
+
+	if len(remote.addLabelsCalls) != 0 {
+		t.Fatalf("add labels calls = %d, want 0", len(remote.addLabelsCalls))
+	}
+	if len(remote.removeLabelCalls) != 0 {
+		t.Fatalf("remove label calls = %d, want 0", len(remote.removeLabelCalls))
+	}
+}
+
 func TestPush_DeleteBlocksLocalStateWhenArchiveTaskDoesNotComplete(t *testing.T) {
 	remote := newRollbackPushRemote()
 	remote.pagesByID["1"] = confluence.Page{

@@ -946,7 +946,7 @@ func capturePageMetadataSnapshot(ctx context.Context, remote PushRemote, pageID 
 
 	return pushMetadataSnapshot{
 		ContentStatus: strings.TrimSpace(status),
-		Labels:        normalizeLabelList(labels),
+		Labels:        fs.NormalizeLabels(labels),
 	}, nil
 }
 
@@ -976,12 +976,12 @@ func restorePageMetadataSnapshot(ctx context.Context, remote PushRemote, pageID 
 	}
 
 	targetLabelSet := map[string]struct{}{}
-	for _, label := range normalizeLabelList(snapshot.Labels) {
+	for _, label := range fs.NormalizeLabels(snapshot.Labels) {
 		targetLabelSet[label] = struct{}{}
 	}
 
 	currentLabelSet := map[string]struct{}{}
-	for _, label := range normalizeLabelList(remoteLabels) {
+	for _, label := range fs.NormalizeLabels(remoteLabels) {
 		currentLabelSet[label] = struct{}{}
 	}
 
@@ -1010,28 +1010,6 @@ func restorePageMetadataSnapshot(ctx context.Context, remote PushRemote, pageID 
 	}
 
 	return nil
-}
-
-func normalizeLabelList(labels []string) []string {
-	if len(labels) == 0 {
-		return nil
-	}
-
-	set := map[string]struct{}{}
-	for _, label := range labels {
-		label = strings.TrimSpace(label)
-		if label == "" {
-			continue
-		}
-		set[label] = struct{}{}
-	}
-
-	out := make([]string, 0, len(set))
-	for label := range set {
-		out = append(out, label)
-	}
-	sort.Strings(out)
-	return out
 }
 
 func resolveParentIDFromHierarchy(relPath, pageID, fallbackParentID string, pageIDByPath PageIndex, folderIDByPath map[string]string) string {
@@ -1500,13 +1478,13 @@ func syncPageMetadata(ctx context.Context, remote PushRemote, pageID string, doc
 	}
 
 	remoteLabelSet := map[string]struct{}{}
-	for _, l := range remoteLabels {
+	for _, l := range fs.NormalizeLabels(remoteLabels) {
 		remoteLabelSet[l] = struct{}{}
 	}
 
 	localLabelSet := map[string]struct{}{}
-	for _, l := range doc.Frontmatter.Labels {
-		localLabelSet[strings.TrimSpace(l)] = struct{}{}
+	for _, l := range fs.NormalizeLabels(doc.Frontmatter.Labels) {
+		localLabelSet[l] = struct{}{}
 	}
 
 	var toAdd []string
@@ -1523,6 +1501,8 @@ func syncPageMetadata(ctx context.Context, remote PushRemote, pageID string, doc
 			}
 		}
 	}
+
+	sort.Strings(toAdd)
 
 	if len(toAdd) > 0 {
 		if err := remote.AddLabels(ctx, pageID, toAdd); err != nil {
