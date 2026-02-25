@@ -12,6 +12,7 @@ This guide covers day-to-day usage of `conf`.
 - `diff` previews local vs remote content.
 - `agents` scaffolds an `AGENTS.md` file for AI-assisted authoring.
 - `relink` rewrites absolute Confluence links to local relative Markdown links.
+- `version` prints the CLI version (`conf version` or `conf --version`).
 
 ## Requirements
 
