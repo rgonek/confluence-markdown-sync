@@ -363,16 +363,12 @@ func runPushDryRun(
 		if errors.As(err, &conflictErr) {
 			return formatPushConflictError(conflictErr)
 		}
+		printPushDiagnostics(out, result.Diagnostics)
 		return err
 	}
 
 	_, _ = fmt.Fprintf(out, "\n[DRY-RUN] push completed: %d page change(s) would be synced\n", len(result.Commits))
-	if len(result.Diagnostics) > 0 {
-		_, _ = fmt.Fprintln(out, "\nDiagnostics:")
-		for _, diag := range result.Diagnostics {
-			_, _ = fmt.Fprintf(out, "  [%s] %s: %s\n", diag.Code, diag.Path, diag.Message)
-		}
-	}
+	printPushDiagnostics(out, result.Diagnostics)
 	return nil
 }
 
@@ -490,6 +486,7 @@ func runPushInWorktree(
 			}
 			return formatPushConflictError(conflictErr)
 		}
+		printPushDiagnostics(out, result.Diagnostics)
 		return err
 	}
 
@@ -498,12 +495,7 @@ func runPushInWorktree(
 		return nil
 	}
 
-	if len(result.Diagnostics) > 0 {
-		_, _ = fmt.Fprintln(out, "\nDiagnostics:")
-		for _, diag := range result.Diagnostics {
-			_, _ = fmt.Fprintf(out, "  [%s] %s: %s\n", diag.Code, diag.Path, diag.Message)
-		}
-	}
+	printPushDiagnostics(out, result.Diagnostics)
 
 	// 7. Commit in Worktree
 	for _, commitPlan := range result.Commits {
@@ -880,6 +872,17 @@ func pushHasDeleteChange(changes []syncflow.PushFileChange) bool {
 		}
 	}
 	return false
+}
+
+func printPushDiagnostics(out io.Writer, diagnostics []syncflow.PushDiagnostic) {
+	if len(diagnostics) == 0 {
+		return
+	}
+
+	_, _ = fmt.Fprintln(out, "\nDiagnostics:")
+	for _, diag := range diagnostics {
+		_, _ = fmt.Fprintf(out, "  [%s] %s: %s\n", diag.Code, diag.Path, diag.Message)
+	}
 }
 
 func formatPushConflictError(conflictErr *syncflow.PushConflictError) error {

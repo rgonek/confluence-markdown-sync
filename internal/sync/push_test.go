@@ -3,6 +3,8 @@ package sync
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -451,4 +453,361 @@ func TestCollectReferencedAssetPaths_FailsForNonAssetsReference(t *testing.T) {
 	if !strings.Contains(err.Error(), "assets/") {
 		t.Fatalf("unexpected error: %v", err)
 	}
+}
+
+func TestPush_PreflightStrictFailureSkipsRemoteMutations(t *testing.T) {
+	spaceDir := t.TempDir()
+	mdPath := filepath.Join(spaceDir, "new.md")
+
+	if err := fs.WriteMarkdownDocument(mdPath, fs.MarkdownDocument{
+		Frontmatter: fs.Frontmatter{
+			Title: "New",
+			Space: "ENG",
+		},
+		Body: "[Broken](missing.md)\n",
+	}); err != nil {
+		t.Fatalf("write markdown: %v", err)
+	}
+
+	remote := newRollbackPushRemote()
+
+	_, err := Push(context.Background(), remote, PushOptions{
+		SpaceKey:       "ENG",
+		SpaceDir:       spaceDir,
+		Domain:         "https://example.atlassian.net",
+		State:          fs.SpaceState{SpaceKey: "ENG"},
+		ConflictPolicy: PushConflictPolicyCancel,
+		Changes: []PushFileChange{{
+			Type: PushChangeAdd,
+			Path: "new.md",
+		}},
+	})
+	if err == nil {
+		t.Fatal("expected strict conversion error")
+	}
+	if !strings.Contains(err.Error(), "strict conversion failed") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if remote.createPageCalls != 0 {
+		t.Fatalf("create page calls = %d, want 0", remote.createPageCalls)
+	}
+	if remote.updatePageCalls != 0 {
+		t.Fatalf("update page calls = %d, want 0", remote.updatePageCalls)
+	}
+	if remote.uploadAttachmentCalls != 0 {
+		t.Fatalf("upload attachment calls = %d, want 0", remote.uploadAttachmentCalls)
+	}
+}
+
+func TestPush_RollbackDeletesCreatedPageAndAttachmentsOnUpdateFailure(t *testing.T) {
+	spaceDir := t.TempDir()
+	mdPath := filepath.Join(spaceDir, "new.md")
+	assetPath := filepath.Join(spaceDir, "assets", "new.png")
+
+	if err := os.MkdirAll(filepath.Dir(assetPath), 0o750); err != nil {
+		t.Fatalf("mkdir assets: %v", err)
+	}
+	if err := os.WriteFile(assetPath, []byte("png"), 0o600); err != nil {
+		t.Fatalf("write asset: %v", err)
+	}
+
+	if err := fs.WriteMarkdownDocument(mdPath, fs.MarkdownDocument{
+		Frontmatter: fs.Frontmatter{
+			Title: "New",
+			Space: "ENG",
+		},
+		Body: "![asset](assets/new.png)\n",
+	}); err != nil {
+		t.Fatalf("write markdown: %v", err)
+	}
+
+	remote := newRollbackPushRemote()
+	remote.failUpdate = true
+
+	result, err := Push(context.Background(), remote, PushOptions{
+		SpaceKey:       "ENG",
+		SpaceDir:       spaceDir,
+		Domain:         "https://example.atlassian.net",
+		State:          fs.SpaceState{SpaceKey: "ENG"},
+		ConflictPolicy: PushConflictPolicyCancel,
+		Changes: []PushFileChange{{
+			Type: PushChangeAdd,
+			Path: "new.md",
+		}},
+	})
+	if err == nil {
+		t.Fatal("expected update failure")
+	}
+	if !strings.Contains(err.Error(), "update page") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if remote.createPageCalls != 1 {
+		t.Fatalf("create page calls = %d, want 1", remote.createPageCalls)
+	}
+	if remote.uploadAttachmentCalls != 1 {
+		t.Fatalf("upload attachment calls = %d, want 1", remote.uploadAttachmentCalls)
+	}
+	if len(remote.deleteAttachmentCalls) != 1 {
+		t.Fatalf("delete attachment calls = %d, want 1", len(remote.deleteAttachmentCalls))
+	}
+	if len(remote.deletePageCalls) != 1 {
+		t.Fatalf("delete page calls = %d, want 1", len(remote.deletePageCalls))
+	}
+
+	hasAttachmentRollback := false
+	hasPageRollback := false
+	for _, diag := range result.Diagnostics {
+		switch diag.Code {
+		case "ROLLBACK_ATTACHMENT_DELETED":
+			hasAttachmentRollback = true
+		case "ROLLBACK_PAGE_DELETED":
+			hasPageRollback = true
+		}
+	}
+	if !hasAttachmentRollback {
+		t.Fatalf("expected ROLLBACK_ATTACHMENT_DELETED diagnostic, got %+v", result.Diagnostics)
+	}
+	if !hasPageRollback {
+		t.Fatalf("expected ROLLBACK_PAGE_DELETED diagnostic, got %+v", result.Diagnostics)
+	}
+}
+
+func TestPush_RollbackRestoresMetadataOnSyncFailure(t *testing.T) {
+	spaceDir := t.TempDir()
+	mdPath := filepath.Join(spaceDir, "root.md")
+
+	if err := fs.WriteMarkdownDocument(mdPath, fs.MarkdownDocument{
+		Frontmatter: fs.Frontmatter{
+			Title:   "Root",
+			ID:      "1",
+			Space:   "ENG",
+			Version: 1,
+			Status:  "Ready",
+			Labels:  []string{"team"},
+		},
+		Body: "content\n",
+	}); err != nil {
+		t.Fatalf("write markdown: %v", err)
+	}
+
+	remote := newRollbackPushRemote()
+	remote.pagesByID["1"] = confluence.Page{
+		ID:      "1",
+		SpaceID: "space-1",
+		Title:   "Root",
+		Version: 1,
+		BodyADF: []byte(`{"version":1,"type":"doc","content":[]}`),
+	}
+	remote.pages = append(remote.pages, remote.pagesByID["1"])
+	remote.contentStatuses["1"] = ""
+	remote.labelsByPage["1"] = []string{}
+	remote.failAddLabels = true
+
+	result, err := Push(context.Background(), remote, PushOptions{
+		SpaceKey:       "ENG",
+		SpaceDir:       spaceDir,
+		Domain:         "https://example.atlassian.net",
+		State:          fs.SpaceState{SpaceKey: "ENG", PagePathIndex: map[string]string{"root.md": "1"}},
+		ConflictPolicy: PushConflictPolicyCancel,
+		Changes: []PushFileChange{{
+			Type: PushChangeModify,
+			Path: "root.md",
+		}},
+	})
+	if err == nil {
+		t.Fatal("expected metadata sync failure")
+	}
+	if !strings.Contains(err.Error(), "sync metadata") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if got := strings.TrimSpace(remote.contentStatuses["1"]); got != "" {
+		t.Fatalf("content status after rollback = %q, want empty", got)
+	}
+	if len(remote.deleteContentStatusCalls) == 0 {
+		t.Fatalf("expected rollback to delete content status")
+	}
+
+	hasMetadataRollback := false
+	for _, diag := range result.Diagnostics {
+		if diag.Code == "ROLLBACK_METADATA_RESTORED" {
+			hasMetadataRollback = true
+			break
+		}
+	}
+	if !hasMetadataRollback {
+		t.Fatalf("expected ROLLBACK_METADATA_RESTORED diagnostic, got %+v", result.Diagnostics)
+	}
+}
+
+type rollbackPushRemote struct {
+	space                    confluence.Space
+	pages                    []confluence.Page
+	pagesByID                map[string]confluence.Page
+	contentStatuses          map[string]string
+	labelsByPage             map[string][]string
+	nextPageID               int
+	nextAttachmentID         int
+	createPageCalls          int
+	updatePageCalls          int
+	uploadAttachmentCalls    int
+	deletePageCalls          []string
+	deleteAttachmentCalls    []string
+	setContentStatusCalls    []string
+	deleteContentStatusCalls []string
+	addLabelsCalls           []string
+	removeLabelCalls         []string
+	failUpdate               bool
+	failAddLabels            bool
+}
+
+func newRollbackPushRemote() *rollbackPushRemote {
+	return &rollbackPushRemote{
+		space:            confluence.Space{ID: "space-1", Key: "ENG", Name: "Engineering"},
+		pagesByID:        map[string]confluence.Page{},
+		contentStatuses:  map[string]string{},
+		labelsByPage:     map[string][]string{},
+		nextPageID:       1,
+		nextAttachmentID: 1,
+	}
+}
+
+func (f *rollbackPushRemote) GetSpace(_ context.Context, spaceKey string) (confluence.Space, error) {
+	return f.space, nil
+}
+
+func (f *rollbackPushRemote) ListPages(_ context.Context, _ confluence.PageListOptions) (confluence.PageListResult, error) {
+	return confluence.PageListResult{Pages: append([]confluence.Page(nil), f.pages...)}, nil
+}
+
+func (f *rollbackPushRemote) GetPage(_ context.Context, pageID string) (confluence.Page, error) {
+	page, ok := f.pagesByID[pageID]
+	if !ok {
+		return confluence.Page{}, confluence.ErrNotFound
+	}
+	return page, nil
+}
+
+func (f *rollbackPushRemote) GetContentStatus(_ context.Context, pageID string) (string, error) {
+	return f.contentStatuses[pageID], nil
+}
+
+func (f *rollbackPushRemote) SetContentStatus(_ context.Context, pageID string, statusName string) error {
+	f.setContentStatusCalls = append(f.setContentStatusCalls, pageID)
+	f.contentStatuses[pageID] = strings.TrimSpace(statusName)
+	return nil
+}
+
+func (f *rollbackPushRemote) DeleteContentStatus(_ context.Context, pageID string) error {
+	f.deleteContentStatusCalls = append(f.deleteContentStatusCalls, pageID)
+	f.contentStatuses[pageID] = ""
+	return nil
+}
+
+func (f *rollbackPushRemote) GetLabels(_ context.Context, pageID string) ([]string, error) {
+	labels := append([]string(nil), f.labelsByPage[pageID]...)
+	return labels, nil
+}
+
+func (f *rollbackPushRemote) AddLabels(_ context.Context, pageID string, labels []string) error {
+	f.addLabelsCalls = append(f.addLabelsCalls, pageID)
+	if f.failAddLabels {
+		return errors.New("simulated add labels failure")
+	}
+	f.labelsByPage[pageID] = append(f.labelsByPage[pageID], labels...)
+	return nil
+}
+
+func (f *rollbackPushRemote) RemoveLabel(_ context.Context, pageID string, labelName string) error {
+	f.removeLabelCalls = append(f.removeLabelCalls, pageID)
+	filtered := make([]string, 0)
+	for _, existing := range f.labelsByPage[pageID] {
+		if existing == labelName {
+			continue
+		}
+		filtered = append(filtered, existing)
+	}
+	f.labelsByPage[pageID] = filtered
+	return nil
+}
+
+func (f *rollbackPushRemote) CreatePage(_ context.Context, input confluence.PageUpsertInput) (confluence.Page, error) {
+	f.createPageCalls++
+	id := fmt.Sprintf("new-page-%d", f.nextPageID)
+	f.nextPageID++
+	page := confluence.Page{
+		ID:           id,
+		SpaceID:      input.SpaceID,
+		ParentPageID: input.ParentPageID,
+		Title:        input.Title,
+		Version:      1,
+		WebURL:       "https://example.atlassian.net/wiki/pages/" + id,
+		BodyADF:      []byte(`{"version":1,"type":"doc","content":[]}`),
+	}
+	f.pagesByID[id] = page
+	f.pages = append(f.pages, page)
+	return page, nil
+}
+
+func (f *rollbackPushRemote) UpdatePage(_ context.Context, pageID string, input confluence.PageUpsertInput) (confluence.Page, error) {
+	f.updatePageCalls++
+	if f.failUpdate {
+		return confluence.Page{}, errors.New("simulated update failure")
+	}
+	updated := confluence.Page{
+		ID:           pageID,
+		SpaceID:      input.SpaceID,
+		ParentPageID: input.ParentPageID,
+		Title:        input.Title,
+		Version:      input.Version,
+		WebURL:       "https://example.atlassian.net/wiki/pages/" + pageID,
+		BodyADF:      input.BodyADF,
+	}
+	f.pagesByID[pageID] = updated
+	for i := range f.pages {
+		if f.pages[i].ID == pageID {
+			f.pages[i] = updated
+		}
+	}
+	return updated, nil
+}
+
+func (f *rollbackPushRemote) ArchivePages(_ context.Context, _ []string) (confluence.ArchiveResult, error) {
+	return confluence.ArchiveResult{TaskID: "task-1"}, nil
+}
+
+func (f *rollbackPushRemote) DeletePage(_ context.Context, pageID string, _ bool) error {
+	f.deletePageCalls = append(f.deletePageCalls, pageID)
+	delete(f.pagesByID, pageID)
+	filtered := make([]confluence.Page, 0, len(f.pages))
+	for _, page := range f.pages {
+		if page.ID == pageID {
+			continue
+		}
+		filtered = append(filtered, page)
+	}
+	f.pages = filtered
+	return nil
+}
+
+func (f *rollbackPushRemote) UploadAttachment(_ context.Context, input confluence.AttachmentUploadInput) (confluence.Attachment, error) {
+	f.uploadAttachmentCalls++
+	id := fmt.Sprintf("att-%d", f.nextAttachmentID)
+	f.nextAttachmentID++
+	return confluence.Attachment{ID: id, PageID: input.PageID, Filename: input.Filename}, nil
+}
+
+func (f *rollbackPushRemote) DeleteAttachment(_ context.Context, attachmentID string, _ string) error {
+	f.deleteAttachmentCalls = append(f.deleteAttachmentCalls, attachmentID)
+	return nil
+}
+
+func (f *rollbackPushRemote) CreateFolder(_ context.Context, input confluence.FolderCreateInput) (confluence.Folder, error) {
+	return confluence.Folder{ID: "folder-1", SpaceID: input.SpaceID, Title: input.Title, ParentID: input.ParentID}, nil
+}
+
+func (f *rollbackPushRemote) MovePage(_ context.Context, pageID string, targetID string) error {
+	return nil
 }
