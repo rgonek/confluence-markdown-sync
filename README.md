@@ -66,6 +66,9 @@ conf push ENG --on-conflict=cancel
 ## Docs 📚
 - Usage and command reference: `docs/usage.md`
 - Automation and CI behavior: `docs/automation.md`
+- Security policy: `SECURITY.md`
+- Support policy: `SUPPORT.md`
+- License: `LICENSE`
 
 ## Development 🧑‍💻
 - `make build`
