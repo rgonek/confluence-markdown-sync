@@ -250,9 +250,10 @@ func collectLinkDestinationOccurrences(content []byte) []linkDestinationOccurren
 
 		if content[i] == '`' {
 			run := countRepeatedByte(content, i, '`')
-			if inlineCodeDelimiterLen == 0 {
+			switch inlineCodeDelimiterLen {
+			case 0:
 				inlineCodeDelimiterLen = run
-			} else if inlineCodeDelimiterLen == run {
+			case run:
 				inlineCodeDelimiterLen = 0
 			}
 			i += run
