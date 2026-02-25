@@ -7,6 +7,8 @@ import (
 	"io"
 	"log/slog"
 	"strings"
+
+	"github.com/charmbracelet/huh"
 )
 
 const safetyConfirmationThreshold = 10
@@ -36,7 +38,28 @@ func requireSafetyConfirmation(in io.Reader, out io.Writer, action string, chang
 	if hasDeletes {
 		deleteNote = " and includes delete operations"
 	}
-	if _, err := fmt.Fprintf(out, "%s will affect %d markdown file(s)%s. Continue? [y/N]: ", action, changedCount, deleteNote); err != nil {
+	title := fmt.Sprintf("%s will affect %d markdown file(s)%s. Continue?", action, changedCount, deleteNote)
+
+	if outputSupportsProgress(out) {
+		var confirm bool
+		form := huh.NewForm(
+			huh.NewGroup(
+				huh.NewConfirm().
+					Title(title).
+					Value(&confirm),
+			),
+		).WithOutput(out)
+		if err := form.Run(); err != nil {
+			return err
+		}
+		if !confirm {
+			return fmt.Errorf("%s cancelled", action)
+		}
+		return nil
+	}
+
+	// Plain-text fallback for non-TTY environments.
+	if _, err := fmt.Fprintf(out, "%s [y/N]: ", title); err != nil {
 		return fmt.Errorf("write prompt: %w", err)
 	}
 	choice, err := readPromptLine(in)
@@ -68,15 +91,40 @@ func resolvePushConflictPolicy(in io.Reader, out io.Writer, onConflict string, i
 		return "", fmt.Errorf("--non-interactive requires --on-conflict=pull-merge|force|cancel")
 	}
 
+	if outputSupportsProgress(out) {
+		var choice string
+		form := huh.NewForm(
+			huh.NewGroup(
+				huh.NewSelect[string]().
+					Title("Conflict policy for remote-ahead pages").
+					Options(
+						huh.NewOption("cancel (default)", OnConflictCancel),
+						huh.NewOption("pull-merge", OnConflictPullMerge),
+						huh.NewOption("force", OnConflictForce),
+					).
+					Value(&choice),
+			),
+		).WithOutput(out)
+		if err := form.Run(); err != nil {
+			return "", err
+		}
+		if choice == "" {
+			choice = OnConflictCancel
+		}
+		slog.Info("push_conflict_policy_resolved", "policy", choice, "source", "prompt")
+		return choice, nil
+	}
+
+	// Plain-text fallback for non-TTY environments.
 	if _, err := fmt.Fprint(out, "Conflict policy for remote-ahead pages [pull-merge/force/cancel] (default cancel): "); err != nil {
 		return "", fmt.Errorf("write prompt: %w", err)
 	}
-	choice, err := readPromptLine(in)
+	rawChoice, err := readPromptLine(in)
 	if err != nil {
 		return "", err
 	}
 
-	switch strings.ToLower(strings.TrimSpace(choice)) {
+	switch strings.ToLower(strings.TrimSpace(rawChoice)) {
 	case "", "c", "cancel":
 		slog.Info("push_conflict_policy_resolved", "policy", OnConflictCancel, "source", "prompt")
 		return OnConflictCancel, nil
@@ -87,7 +135,7 @@ func resolvePushConflictPolicy(in io.Reader, out io.Writer, onConflict string, i
 		slog.Info("push_conflict_policy_resolved", "policy", OnConflictForce, "source", "prompt")
 		return OnConflictForce, nil
 	default:
-		return "", fmt.Errorf("invalid conflict policy %q: expected pull-merge, force, or cancel", choice)
+		return "", fmt.Errorf("invalid conflict policy %q: expected pull-merge, force, or cancel", rawChoice)
 	}
 }
 
@@ -99,13 +147,27 @@ func askToContinueOnDownloadError(in io.Reader, out io.Writer, attachmentID stri
 		return true
 	}
 
-	if _, writeErr := fmt.Fprintf(out, "\nError downloading attachment %s (page %s): %v\n", attachmentID, pageID, err); writeErr != nil {
-		return false
-	}
-	if _, writeErr := fmt.Fprint(out, "Continue anyway? [y/N]: "); writeErr != nil {
-		return false
+	title := warningStyle.Render(fmt.Sprintf("Error downloading attachment %s (page %s): %v", attachmentID, pageID, err)) + "\nContinue anyway?"
+
+	if outputSupportsProgress(out) {
+		var confirm bool
+		form := huh.NewForm(
+			huh.NewGroup(
+				huh.NewConfirm().
+					Title(title).
+					Value(&confirm),
+			),
+		).WithOutput(out)
+		if runErr := form.Run(); runErr != nil {
+			return false
+		}
+		return confirm
 	}
 
+	// Plain-text fallback for non-TTY environments.
+	if _, writeErr := fmt.Fprintf(out, "\n%s [y/N]: ", title); writeErr != nil {
+		return false
+	}
 	choice, rerr := readPromptLine(in)
 	if rerr != nil {
 		return false
@@ -115,7 +177,6 @@ func askToContinueOnDownloadError(in io.Reader, out io.Writer, attachmentID stri
 }
 
 func readPromptLine(in io.Reader) (string, error) {
-
 	reader := bufio.NewReader(in)
 	line, err := reader.ReadString('\n')
 	if err != nil && !errors.Is(err, io.EOF) {
