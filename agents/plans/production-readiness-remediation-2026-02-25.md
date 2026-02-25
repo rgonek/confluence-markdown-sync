@@ -63,6 +63,8 @@ Close production-readiness gaps in `conf` before broad rollout.
 ---
 
 ### P0-3: Fix push snapshot/worktree fidelity
+**Status (2026-02-25): ✅ Completed in PR-D (`phase/pr-d-push-snapshot-fidelity`).**
+
 **Problem**
 - Push snapshot/worktree model must include staged, unstaged, untracked, and deletions in-scope; current flow resets to `HEAD` and only restores untracked stash parent in worktree.
 
@@ -86,6 +88,8 @@ Close production-readiness gaps in `conf` before broad rollout.
 ---
 
 ### P0-4: Make no-op push truly no-op operationally
+**Status (2026-02-25): ✅ Completed in PR-D (`phase/pr-d-push-snapshot-fidelity`).**
+
 **Problem**
 - No-op push should avoid creating snapshot refs, sync branch, or worktree.
 
