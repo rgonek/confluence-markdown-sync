@@ -41,5 +41,4 @@ lint:
 ## clean: remove build artifacts
 clean:
 	$(GO) clean
-	@if exist $(BINARY) del /f $(BINARY)
-	@if exist $(BINARY).exe del /f $(BINARY).exe
+	rm -f $(BINARY) $(BINARY).exe

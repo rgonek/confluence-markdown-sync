@@ -8,7 +8,7 @@ The following improvements and fixes have been identified and should be addresse
 - [x] 1. Add Version Injection & Command
 - [x] 2. Dynamic Media Type Detection
 - [x] 3. Windows CI Testing Matrix
-- [ ] 4. Cross-Platform Makefile
+- [x] 4. Cross-Platform Makefile
 - [ ] 5. Test Performance Optimization (cmd package)
 
 ## 1. Add Version Injection & Command
