@@ -22,7 +22,8 @@ Additional pull flag:
 Additional push flag:
 
 - `--on-conflict=pull-merge|force|cancel`
-  - required with `push --non-interactive`.
+  - required with `push --non-interactive` for file targets.
+  - optional for space targets (defaults to `pull-merge`).
 
 ## Safety Confirmation Rules
 
@@ -41,7 +42,7 @@ Behavior:
 
 When remote versions are ahead:
 
-- `pull-merge`: stop and reconcile via pull + merge workflow.
+- `pull-merge`: when a remote-ahead conflict is detected, `push` triggers `pull`, then stops so you can review/resolve and retry push.
 - `force`: overwrite based on remote head.
 - `cancel`: stop without remote writes.
 
@@ -76,7 +77,7 @@ jobs:
           go-version: '1.25.x'
 
       - name: Build conf
-        run: go build -o conf .
+        run: go build -o conf ./cmd/conf
 
       - name: Pull docs
         env:

@@ -144,6 +144,8 @@ Close production-readiness gaps in `conf` before broad rollout.
 ---
 
 ### P1-2: Docs and behavior alignment
+**Status (2026-02-25): 🟡 Partially completed in PR-A (`phase/pr-a-state-invariant-docs`).**
+
 - Update docs to reflect actual command set (`agents`, `relink` included).
 - Correct CI/build snippet to `go build -o conf ./cmd/conf`.
 - Align automation docs with implemented `--on-conflict` behavior, or adjust code to match docs.

@@ -10,6 +10,8 @@ This guide covers day-to-day usage of `conf`.
 - `push` converts Markdown back to ADF and updates Confluence.
 - `validate` checks a workspace before remote writes.
 - `diff` previews local vs remote content.
+- `agents` scaffolds an `AGENTS.md` file for AI-assisted authoring.
+- `relink` rewrites absolute Confluence links to local relative Markdown links.
 
 ## Requirements
 
@@ -118,6 +120,26 @@ Highlights:
 - converts using best-effort forward conversion,
 - compares using `git diff --no-index`,
 - supports both file and space targets.
+
+### `conf agents [TARGET]`
+
+Scaffolds an `AGENTS.md` file in a managed space directory.
+
+Highlights:
+
+- supports multiple templates via `--type`,
+- preserves existing `AGENTS.md` (no overwrite),
+- works against a space key or explicit target directory.
+
+### `conf relink [TARGET]`
+
+Converts absolute Confluence links in Markdown to relative local links when targets are managed in the repo.
+
+Highlights:
+
+- supports global or targeted relink,
+- dry-runs each scope before prompting,
+- applies only when links can be resolved from local state/index.
 
 ### `conf push [TARGET]`
 
