@@ -73,7 +73,6 @@ func init() {
 		newPushCmd(),
 		newValidateCmd(),
 		newDiffCmd(),
-		newAgentsCmd(),
 		newRelinkCmd(),
 		newVersionCmd(),
 	)

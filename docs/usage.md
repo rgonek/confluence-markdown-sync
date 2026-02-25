@@ -10,7 +10,7 @@ This guide covers day-to-day usage of `conf`.
 - `push` converts Markdown back to ADF and updates Confluence.
 - `validate` checks a workspace before remote writes.
 - `diff` previews local vs remote content.
-- `agents` scaffolds an `AGENTS.md` file for AI-assisted authoring.
+- `init agents` scaffolds an `AGENTS.md` file for AI-assisted authoring.
 - `relink` rewrites absolute Confluence links to local relative Markdown links.
 - `version` prints the CLI version (`conf version` or `conf --version`).
 
@@ -122,7 +122,7 @@ Highlights:
 - compares using `git diff --no-index`,
 - supports both file and space targets.
 
-### `conf agents [TARGET]`
+### `conf init agents [TARGET]`
 
 Scaffolds an `AGENTS.md` file in a managed space directory.
 

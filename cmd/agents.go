@@ -10,13 +10,13 @@ import (
 	"github.com/spf13/cobra"
 )
 
-func newAgentsCmd() *cobra.Command {
+func newInitAgentsCmd() *cobra.Command {
 	var templateType string
 
 	cmd := &cobra.Command{
 		Use:   "agents [TARGET]",
 		Short: "Initialize an AGENTS.md file for a space",
-		Long: `agents creates an AGENTS.md file in the target space directory with instructions for AI agents.
+		Long: `init agents creates an AGENTS.md file in the target space directory with instructions for AI agents.
 		
 You can choose from several templates using the --type flag:
 - technical-documentation (default): Optimized for engineering docs, diagrams, and API references.
@@ -25,6 +25,9 @@ You can choose from several templates using the --type flag:
 - product-requirements: Optimized for PRDs, user stories, and acceptance criteria.
 - customer-support: Optimized for knowledge base articles, FAQs, and troubleshooting guides.
 - general: A minimal template with core sync rules.`,
+		Example: `  conf init agents ENG
+  conf init agents "Technical documentation (TD)" --type technical-documentation
+  conf init agents .\Technical documentation (TD)\Architecture.md --type prd`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			var raw string
