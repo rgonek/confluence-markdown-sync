@@ -5,12 +5,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/rgonek/confluence-markdown-sync/internal/config"
-	"github.com/rgonek/confluence-markdown-sync/internal/confluence"
 	"github.com/rgonek/confluence-markdown-sync/internal/fs"
 	"github.com/rgonek/confluence-markdown-sync/internal/git"
 	syncflow "github.com/rgonek/confluence-markdown-sync/internal/sync"
@@ -25,11 +26,7 @@ const (
 )
 
 var newPushRemote = func(cfg *config.Config) (syncflow.PushRemote, error) {
-	return confluence.NewClient(confluence.ClientConfig{
-		BaseURL:  cfg.Domain,
-		Email:    cfg.Email,
-		APIToken: cfg.APIToken,
-	})
+	return newConfluenceClientFromConfig(cfg)
 }
 
 var flagPushPreflight bool
@@ -84,6 +81,31 @@ func runPush(cmd *cobra.Command, target config.Target, onConflict string, dryRun
 	ctx := getCommandContext(cmd)
 	out := ensureSynchronizedCmdOutput(cmd)
 	preflight := flagPushPreflight
+	startedAt := time.Now()
+	telemetrySpaceKey := "unknown"
+	telemetryConflictPolicy := ""
+	slog.Info("push_started", "target_mode", target.Mode, "target", target.Value, "dry_run", dryRun, "preflight", preflight)
+	defer func() {
+		duration := time.Since(startedAt)
+		if runErr != nil {
+			slog.Warn("push_finished",
+				"space_key", telemetrySpaceKey,
+				"conflict_policy", telemetryConflictPolicy,
+				"dry_run", dryRun,
+				"preflight", preflight,
+				"duration_ms", duration.Milliseconds(),
+				"error", runErr.Error(),
+			)
+			return
+		}
+		slog.Info("push_finished",
+			"space_key", telemetrySpaceKey,
+			"conflict_policy", telemetryConflictPolicy,
+			"dry_run", dryRun,
+			"preflight", preflight,
+			"duration_ms", duration.Milliseconds(),
+		)
+	}()
 
 	if preflight && dryRun {
 		return errors.New("--preflight and --dry-run cannot be used together")
@@ -94,6 +116,7 @@ func runPush(cmd *cobra.Command, target config.Target, onConflict string, dryRun
 			return err
 		}
 		onConflict = resolvedPolicy
+		telemetryConflictPolicy = resolvedPolicy
 	}
 
 	initialCtx, err := resolveInitialPullContext(target)
@@ -102,6 +125,7 @@ func runPush(cmd *cobra.Command, target config.Target, onConflict string, dryRun
 	}
 	spaceDir := initialCtx.spaceDir
 	spaceKey := initialCtx.spaceKey
+	telemetrySpaceKey = strings.TrimSpace(spaceKey)
 
 	envPath := findEnvPath(spaceDir)
 	cfg, err := config.Load(envPath)
@@ -112,6 +136,7 @@ func runPush(cmd *cobra.Command, target config.Target, onConflict string, dryRun
 	if !initialCtx.fixedDir {
 		remote, err := newPushRemote(cfg)
 		if err == nil {
+			defer closeRemoteIfPossible(remote)
 			space, err := remote.GetSpace(ctx, spaceKey)
 			if err == nil {
 				spaceDir = filepath.Join(filepath.Dir(spaceDir), fs.SanitizeSpaceDirName(space.Name, space.Key))
@@ -140,7 +165,7 @@ func runPush(cmd *cobra.Command, target config.Target, onConflict string, dryRun
 	}
 
 	if preflight {
-		return runPushPreflight(out, target, spaceKey, spaceDir, gitClient, spaceScopePath, changeScopePath)
+		return runPushPreflight(ctx, out, target, spaceKey, spaceDir, gitClient, spaceScopePath, changeScopePath)
 	}
 
 	ts := nowUTC()
@@ -238,6 +263,7 @@ func runPush(cmd *cobra.Command, target config.Target, onConflict string, dryRun
 }
 
 func runPushPreflight(
+	ctx context.Context,
 	out io.Writer,
 	target config.Target,
 	spaceKey, spaceDir string,
@@ -266,7 +292,7 @@ func runPushPreflight(
 	} else {
 		currentTarget = config.Target{Mode: config.TargetModeSpace, Value: spaceDir}
 	}
-	if err := runValidateTarget(out, currentTarget); err != nil {
+	if err := runValidateTargetWithContext(ctx, out, currentTarget); err != nil {
 		return fmt.Errorf("preflight validate failed: %w", err)
 	}
 
@@ -314,7 +340,7 @@ func runPushDryRun(
 	} else {
 		currentTarget = config.Target{Mode: config.TargetModeSpace, Value: spaceDir}
 	}
-	if err := runValidateTarget(out, currentTarget); err != nil {
+	if err := runValidateTargetWithContext(ctx, out, currentTarget); err != nil {
 		return fmt.Errorf("pre-push validate failed: %w", err)
 	}
 
@@ -328,6 +354,7 @@ func runPushDryRun(
 	if err != nil {
 		return fmt.Errorf("create confluence client: %w", err)
 	}
+	defer closeRemoteIfPossible(realRemote)
 
 	remote := &dryRunPushRemote{inner: realRemote, out: out, domain: cfg.Domain}
 
@@ -362,16 +389,12 @@ func runPushDryRun(
 		if errors.As(err, &conflictErr) {
 			return formatPushConflictError(conflictErr)
 		}
+		printPushDiagnostics(out, result.Diagnostics)
 		return err
 	}
 
 	_, _ = fmt.Fprintf(out, "\n[DRY-RUN] push completed: %d page change(s) would be synced\n", len(result.Commits))
-	if len(result.Diagnostics) > 0 {
-		_, _ = fmt.Fprintln(out, "\nDiagnostics:")
-		for _, diag := range result.Diagnostics {
-			_, _ = fmt.Fprintf(out, "  [%s] %s: %s\n", diag.Code, diag.Path, diag.Message)
-		}
-	}
+	printPushDiagnostics(out, result.Diagnostics)
 	return nil
 }
 
@@ -418,7 +441,7 @@ func runPushInWorktree(
 		wtTarget = config.Target{Mode: config.TargetModeSpace, Value: wtSpaceDir}
 	}
 
-	if err := runValidateTarget(out, wtTarget); err != nil {
+	if err := runValidateTargetWithContext(ctx, out, wtTarget); err != nil {
 		return fmt.Errorf("pre-push validate failed: %w", err)
 	}
 
@@ -454,6 +477,7 @@ func runPushInWorktree(
 	if err != nil {
 		return fmt.Errorf("create confluence client: %w", err)
 	}
+	defer closeRemoteIfPossible(remote)
 
 	state, err := fs.LoadState(spaceDir)
 	if err != nil {
@@ -477,7 +501,15 @@ func runPushInWorktree(
 	if err != nil {
 		var conflictErr *syncflow.PushConflictError
 		if errors.As(err, &conflictErr) {
+			slog.Warn("push_conflict_detected",
+				"path", conflictErr.Path,
+				"page_id", conflictErr.PageID,
+				"local_version", conflictErr.LocalVersion,
+				"remote_version", conflictErr.RemoteVersion,
+				"policy", conflictErr.Policy,
+			)
 			if onConflict == OnConflictPullMerge {
+				slog.Info("push_conflict_resolution", "strategy", OnConflictPullMerge, "action", "run_pull")
 				_, _ = fmt.Fprintf(out, "conflict detected for %s; policy is %s, attempting automatic pull-merge...\n", conflictErr.Path, onConflict)
 				// Clear stashRef before pull-merge since pull will restore workspace
 				*stashRef = ""
@@ -489,20 +521,17 @@ func runPushInWorktree(
 			}
 			return formatPushConflictError(conflictErr)
 		}
+		printPushDiagnostics(out, result.Diagnostics)
 		return err
 	}
 
 	if len(result.Commits) == 0 {
+		slog.Info("push_sync_result", "space_key", spaceKey, "commit_count", 0, "diagnostics", len(result.Diagnostics))
 		_, _ = fmt.Fprintln(out, "push completed with no pushable markdown changes (no-op)")
 		return nil
 	}
 
-	if len(result.Diagnostics) > 0 {
-		_, _ = fmt.Fprintln(out, "\nDiagnostics:")
-		for _, diag := range result.Diagnostics {
-			_, _ = fmt.Fprintf(out, "  [%s] %s: %s\n", diag.Code, diag.Path, diag.Message)
-		}
-	}
+	printPushDiagnostics(out, result.Diagnostics)
 
 	// 7. Commit in Worktree
 	for _, commitPlan := range result.Commits {
@@ -583,6 +612,7 @@ func runPushInWorktree(
 	}
 
 	_, _ = fmt.Fprintf(out, "push completed: %d page change(s) synced\n", len(result.Commits))
+	slog.Info("push_sync_result", "space_key", spaceKey, "commit_count", len(result.Commits), "diagnostics", len(result.Diagnostics))
 	return nil
 }
 
@@ -879,6 +909,17 @@ func pushHasDeleteChange(changes []syncflow.PushFileChange) bool {
 		}
 	}
 	return false
+}
+
+func printPushDiagnostics(out io.Writer, diagnostics []syncflow.PushDiagnostic) {
+	if len(diagnostics) == 0 {
+		return
+	}
+
+	_, _ = fmt.Fprintln(out, "\nDiagnostics:")
+	for _, diag := range diagnostics {
+		_, _ = fmt.Fprintf(out, "  [%s] %s: %s\n", diag.Code, diag.Path, diag.Message)
+	}
 }
 
 func formatPushConflictError(conflictErr *syncflow.PushConflictError) error {

@@ -172,11 +172,8 @@ func runGlobalRelink(cmd *cobra.Command, repoRoot string, index sync.GlobalPageI
 }
 
 func getSpaceKeyFromState(dir string, state fs.SpaceState) string {
-	for relPath := range state.PagePathIndex {
-		doc, err := fs.ReadMarkdownDocument(filepath.Join(dir, filepath.FromSlash(relPath)))
-		if err == nil && doc.Frontmatter.Space != "" {
-			return doc.Frontmatter.Space
-		}
+	if key := strings.TrimSpace(state.SpaceKey); key != "" {
+		return key
 	}
-	return filepath.Base(dir)
+	return inferSpaceKeyFromDirName(dir)
 }

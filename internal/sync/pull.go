@@ -147,6 +147,10 @@ func Pull(ctx context.Context, remote PullRemote, opts PullOptions) (PullResult,
 	if err != nil {
 		return PullResult{}, fmt.Errorf("resolve space %q: %w", opts.SpaceKey, err)
 	}
+	state.SpaceKey = strings.TrimSpace(space.Key)
+	if state.SpaceKey == "" {
+		state.SpaceKey = strings.TrimSpace(opts.SpaceKey)
+	}
 
 	if opts.Progress != nil {
 		opts.Progress.SetDescription("Scanning space for pages")
@@ -811,7 +815,18 @@ func listAllChanges(ctx context.Context, remote PullRemote, opts confluence.Chan
 		if !changeResult.HasMore {
 			break
 		}
-		start += len(changeResult.Changes)
+
+		next := changeResult.NextStart
+		if next <= start {
+			next = start + len(changeResult.Changes)
+		}
+		if next <= start && opts.Limit > 0 {
+			next = start + opts.Limit
+		}
+		if next <= start {
+			break
+		}
+		start = next
 	}
 	return result, nil
 }

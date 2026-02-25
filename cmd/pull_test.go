@@ -122,6 +122,87 @@ func TestRunPull_RestoresScopedStashAndCreatesTag(t *testing.T) {
 	}
 }
 
+func TestResolveInitialPullContext_TrackedDirWithoutSpaceKeyUsesDirSuffix(t *testing.T) {
+	spaceDir := filepath.Join(t.TempDir(), "Technical documentation (TD)")
+	if err := os.MkdirAll(spaceDir, 0o750); err != nil {
+		t.Fatalf("mkdir space dir: %v", err)
+	}
+
+	if err := fs.SaveState(spaceDir, fs.SpaceState{
+		PagePathIndex: map[string]string{
+			"missing.md": "1",
+		},
+	}); err != nil {
+		t.Fatalf("save state: %v", err)
+	}
+
+	chdirRepo(t, spaceDir)
+
+	ctx, err := resolveInitialPullContext(config.Target{Mode: config.TargetModeSpace, Value: ""})
+	if err != nil {
+		t.Fatalf("resolveInitialPullContext() error: %v", err)
+	}
+
+	if ctx.spaceDir != spaceDir {
+		t.Fatalf("spaceDir = %q, want %q", ctx.spaceDir, spaceDir)
+	}
+	if ctx.spaceKey != "TD" {
+		t.Fatalf("spaceKey = %q, want TD", ctx.spaceKey)
+	}
+	if !ctx.fixedDir {
+		t.Fatal("expected fixedDir=true for tracked directory")
+	}
+}
+
+func TestListAllPullChangesForEstimate_UsesContinuationOffsets(t *testing.T) {
+	starts := make([]int, 0)
+
+	remote := &cmdFakePullRemote{
+		listChanges: func(opts confluence.ChangeListOptions) (confluence.ChangeListResult, error) {
+			starts = append(starts, opts.Start)
+			switch opts.Start {
+			case 0:
+				return confluence.ChangeListResult{
+					Changes:   []confluence.Change{{PageID: "1"}},
+					HasMore:   true,
+					NextStart: 40,
+				}, nil
+			case 40:
+				return confluence.ChangeListResult{
+					Changes:   []confluence.Change{{PageID: "2"}},
+					HasMore:   true,
+					NextStart: 90,
+				}, nil
+			case 90:
+				return confluence.ChangeListResult{
+					Changes: []confluence.Change{{PageID: "3"}},
+					HasMore: false,
+				}, nil
+			default:
+				return confluence.ChangeListResult{}, fmt.Errorf("unexpected start: %d", opts.Start)
+			}
+		},
+	}
+
+	changes, err := listAllPullChangesForEstimate(context.Background(), remote, confluence.ChangeListOptions{
+		SpaceKey: "ENG",
+		Limit:    25,
+	}, nil)
+	if err != nil {
+		t.Fatalf("listAllPullChangesForEstimate() error: %v", err)
+	}
+
+	if len(changes) != 3 {
+		t.Fatalf("changes count = %d, want 3", len(changes))
+	}
+	if len(starts) != 3 {
+		t.Fatalf("start count = %d, want 3", len(starts))
+	}
+	if starts[0] != 0 || starts[1] != 40 || starts[2] != 90 {
+		t.Fatalf("starts = %v, want [0 40 90]", starts)
+	}
+}
+
 func TestRunPull_FailureCleanupPreservesStateFile(t *testing.T) {
 	runParallelCommandTest(t)
 
@@ -216,6 +297,126 @@ func TestRunPull_FailureCleanupPreservesStateFile(t *testing.T) {
 	}
 	if stateAfter.LastPullHighWatermark != "2026-02-01T00:00:00Z" {
 		t.Fatalf("state watermark changed unexpectedly: %q", stateAfter.LastPullHighWatermark)
+	}
+}
+
+func TestRunPull_DiscardLocalFailureRestoresLocalChanges(t *testing.T) {
+	runParallelCommandTest(t)
+
+	repo := t.TempDir()
+	setupGitRepo(t, repo)
+
+	spaceDir := filepath.Join(repo, "Engineering (ENG)")
+	if err := os.MkdirAll(spaceDir, 0o750); err != nil {
+		t.Fatalf("mkdir space: %v", err)
+	}
+
+	writeMarkdown(t, filepath.Join(spaceDir, "root.md"), fs.MarkdownDocument{
+		Frontmatter: fs.Frontmatter{
+			Title:                  "Root",
+			ID:                     "1",
+			Space:                  "ENG",
+			Version:                1,
+			ConfluenceLastModified: "2026-02-01T08:00:00Z",
+		},
+		Body: "old body\n",
+	})
+	if err := fs.SaveState(spaceDir, fs.SpaceState{
+		SpaceKey:              "ENG",
+		LastPullHighWatermark: "2026-02-01T00:00:00Z",
+		PagePathIndex: map[string]string{
+			"root.md": "1",
+		},
+	}); err != nil {
+		t.Fatalf("save state: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, ".gitignore"), []byte(".env\n.confluence-state.json\n"), 0o600); err != nil {
+		t.Fatalf("write .gitignore: %v", err)
+	}
+
+	runGitForTest(t, repo, "add", ".")
+	runGitForTest(t, repo, "commit", "-m", "initial")
+
+	localUntracked := filepath.Join(spaceDir, "local-notes.md")
+	if err := os.WriteFile(localUntracked, []byte("keep me\n"), 0o600); err != nil {
+		t.Fatalf("write local notes: %v", err)
+	}
+
+	fake := &cmdFakePullRemote{
+		space: confluence.Space{ID: "space-1", Key: "ENG", Name: "Engineering"},
+		pages: []confluence.Page{{
+			ID:           "1",
+			SpaceID:      "space-1",
+			Title:        "Root",
+			Version:      2,
+			LastModified: time.Date(2026, time.February, 1, 11, 0, 0, 0, time.UTC),
+		}},
+		pagesByID: map[string]confluence.Page{
+			"1": {
+				ID:           "1",
+				SpaceID:      "space-1",
+				Title:        "Root",
+				Version:      2,
+				LastModified: time.Date(2026, time.February, 1, 11, 0, 0, 0, time.UTC),
+			},
+		},
+		getPageErr:  errors.New("simulated page fetch failure"),
+		attachments: map[string][]byte{},
+	}
+
+	oldFactory := newPullRemote
+	newPullRemote = func(_ *config.Config) (syncflow.PullRemote, error) { return fake, nil }
+	t.Cleanup(func() { newPullRemote = oldFactory })
+
+	previousForce := flagPullForce
+	flagPullForce = true
+	t.Cleanup(func() { flagPullForce = previousForce })
+
+	previousDiscard := flagPullDiscardLocal
+	flagPullDiscardLocal = true
+	t.Cleanup(func() { flagPullDiscardLocal = previousDiscard })
+
+	setupEnv(t)
+	chdirRepo(t, repo)
+
+	cmd := &cobra.Command{}
+	cmd.SetOut(&bytes.Buffer{})
+	err := runPull(cmd, config.Target{Mode: config.TargetModeSpace, Value: "Engineering (ENG)"})
+	if err == nil {
+		t.Fatal("runPull() expected error")
+	}
+
+	raw, readErr := os.ReadFile(localUntracked) //nolint:gosec // test file path is controlled temp workspace
+	if readErr != nil {
+		t.Fatalf("expected local notes to be restored on failure: %v", readErr)
+	}
+	if strings.TrimSpace(string(raw)) != "keep me" {
+		t.Fatalf("local notes content = %q, want keep me", string(raw))
+	}
+
+	stashList := strings.TrimSpace(runGitForTest(t, repo, "stash", "list"))
+	if stashList != "" {
+		t.Fatalf("stash should be empty after restoration, got %q", stashList)
+	}
+}
+
+func TestIsPullGeneratedPath(t *testing.T) {
+	testCases := []struct {
+		path string
+		want bool
+	}{
+		{path: "Engineering (ENG)/root.md", want: true},
+		{path: "Engineering (ENG)/.confluence-state.json", want: true},
+		{path: "Engineering (ENG)/assets/1/att.png", want: true},
+		{path: "Engineering (ENG)/notes.txt", want: false},
+		{path: "Engineering (ENG)/scripts/build.ps1", want: false},
+	}
+
+	for _, tc := range testCases {
+		got := isPullGeneratedPath(tc.path)
+		if got != tc.want {
+			t.Fatalf("isPullGeneratedPath(%q) = %v, want %v", tc.path, got, tc.want)
+		}
 	}
 }
 
@@ -641,6 +842,7 @@ type cmdFakePullRemote struct {
 	folderErr   error
 	getPageErr  error
 	changes     []confluence.Change
+	listChanges func(opts confluence.ChangeListOptions) (confluence.ChangeListResult, error)
 	pagesByID   map[string]confluence.Page
 	attachments map[string][]byte
 }
@@ -668,7 +870,10 @@ func (f *cmdFakePullRemote) GetFolder(_ context.Context, folderID string) (confl
 	return folder, nil
 }
 
-func (f *cmdFakePullRemote) ListChanges(_ context.Context, _ confluence.ChangeListOptions) (confluence.ChangeListResult, error) {
+func (f *cmdFakePullRemote) ListChanges(_ context.Context, opts confluence.ChangeListOptions) (confluence.ChangeListResult, error) {
+	if f.listChanges != nil {
+		return f.listChanges(opts)
+	}
 	return confluence.ChangeListResult{Changes: f.changes}, nil
 }
 

@@ -19,8 +19,8 @@ type coverageGate struct {
 
 func main() {
 	gates := []coverageGate{
-		{pkg: "./cmd", minimum: 60.0, profile: "coverage-cmd.out"},
-		{pkg: "./internal/sync", minimum: 60.0, profile: "coverage-sync.out"},
+		{pkg: "./cmd", minimum: 65.0, profile: "coverage-cmd.out"},
+		{pkg: "./internal/sync", minimum: 65.0, profile: "coverage-sync.out"},
 		{pkg: "./internal/git", minimum: 55.0, profile: "coverage-git.out"},
 	}
 

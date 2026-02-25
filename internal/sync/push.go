@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"mime"
 	"net/http"
 	"os"
@@ -107,6 +108,27 @@ type PushResult struct {
 	Diagnostics []PushDiagnostic
 }
 
+type pushMetadataSnapshot struct {
+	ContentStatus string
+	Labels        []string
+}
+
+type rollbackAttachment struct {
+	PageID       string
+	AttachmentID string
+	Path         string
+}
+
+type pushRollbackTracker struct {
+	relPath            string
+	createdPageID      string
+	uploadedAssets     []rollbackAttachment
+	metadataPageID     string
+	metadataSnapshot   *pushMetadataSnapshot
+	metadataRestoreReq bool
+	diagnostics        *[]PushDiagnostic
+}
+
 // PushConflictError indicates a remote-ahead page conflict.
 type PushConflictError struct {
 	Path          string
@@ -205,7 +227,7 @@ func Push(ctx context.Context, remote PushRemote, opts PushOptions) (PushResult,
 		case PushChangeDelete:
 			commit, err := pushDeletePage(ctx, remote, opts, state, remotePageByID, relPath)
 			if err != nil {
-				return PushResult{}, err
+				return PushResult{State: state, Commits: commits, Diagnostics: diagnostics}, err
 			}
 			if commit.Path != "" {
 				commits = append(commits, commit)
@@ -226,7 +248,7 @@ func Push(ctx context.Context, remote PushRemote, opts PushOptions) (PushResult,
 				&diagnostics,
 			)
 			if err != nil {
-				return PushResult{}, err
+				return PushResult{State: state, Commits: commits, Diagnostics: diagnostics}, err
 			}
 			if commit.Path != "" {
 				commits = append(commits, commit)
@@ -336,6 +358,8 @@ func pushUpsertPage(
 
 	pageID := strings.TrimSpace(doc.Frontmatter.ID)
 	targetState := normalizePageLifecycleState(doc.Frontmatter.State)
+	dirPath := normalizeRelPath(filepath.ToSlash(filepath.Dir(filepath.FromSlash(relPath))))
+	title := resolveLocalTitle(doc, relPath)
 
 	trackedPageID := strings.TrimSpace(state.PagePathIndex[relPath])
 	if trackedPageID != "" {
@@ -370,6 +394,23 @@ func pushUpsertPage(
 	localVersion := doc.Frontmatter.Version
 	fallbackParentID := strings.TrimSpace(doc.Frontmatter.ConfluenceParentPageID)
 	var remotePage confluence.Page
+	isExistingPage := pageID != ""
+
+	rollback := newPushRollbackTracker(relPath, diagnostics)
+	failWithRollback := func(opErr error) (PushCommitPlan, error) {
+		slog.Warn("push_mutation_failed",
+			"path", relPath,
+			"error", opErr.Error(),
+			"rollback_created_page", strings.TrimSpace(rollback.createdPageID) != "",
+			"rollback_uploaded_assets", len(rollback.uploadedAssets),
+			"rollback_metadata_snapshot", rollback.metadataRestoreReq,
+		)
+		if rollbackErr := rollback.rollback(ctx, remote); rollbackErr != nil {
+			return PushCommitPlan{}, errors.Join(opErr, fmt.Errorf("rollback for %s: %w", relPath, rollbackErr))
+		}
+		return PushCommitPlan{}, opErr
+	}
+
 	if pageID != "" {
 		// Always fetch the latest version specifically for the page we're about to update
 		// to avoid eventual consistency issues with space-wide listing.
@@ -414,50 +455,9 @@ func pushUpsertPage(
 				}
 			}
 		}
-	} else {
-		dirPath := normalizeRelPath(filepath.ToSlash(filepath.Dir(filepath.FromSlash(relPath))))
-		if dirPath != "" && dirPath != "." {
-			var err error
-			folderIDByPath, err = ensureFolderHierarchy(ctx, remote, space.ID, dirPath, folderIDByPath, diagnostics)
-			if err != nil {
-				return PushCommitPlan{}, fmt.Errorf("ensure folder hierarchy for %s: %w", relPath, err)
-			}
-		}
-
-		title := resolveLocalTitle(doc, relPath)
-		resolvedParentID := resolveParentIDFromHierarchy(relPath, "", fallbackParentID, pageIDByPath, folderIDByPath)
-
-		created, err := remote.CreatePage(ctx, confluence.PageUpsertInput{
-			SpaceID:      space.ID,
-			ParentPageID: resolvedParentID,
-			Title:        title,
-			Status:       targetState,
-			BodyADF:      []byte(`{"version":1,"type":"doc","content":[]}`),
-		})
-		if err != nil {
-			return PushCommitPlan{}, fmt.Errorf("create placeholder page for %s: %w", relPath, err)
-		}
-		pageID = created.ID
-
-		if resolvedParentID != "" && dirPath != "" && dirPath != "." {
-			if err := remote.MovePage(ctx, pageID, resolvedParentID); err != nil {
-				return PushCommitPlan{}, fmt.Errorf("move page %s to folder %s: %w", pageID, resolvedParentID, err)
-			}
-		}
-
-		if err := syncPageMetadata(ctx, remote, pageID, doc); err != nil {
-			return PushCommitPlan{}, fmt.Errorf("sync metadata for %s: %w", relPath, err)
-		}
-
-		doc.Frontmatter.ID = pageID
-		doc.Frontmatter.Space = opts.SpaceKey
-		doc.Frontmatter.Version = created.Version
-		localVersion = created.Version
-		remotePage = created
-		remotePageByID[pageID] = created
-		pageIDByPath[normalizeRelPath(relPath)] = pageID
 	}
 
+	// Phase 1: preflight planning and strict conversion validation.
 	linkHook := NewReverseLinkHook(opts.SpaceDir, pageIDByPath, opts.Domain)
 	strictAttachmentIndex, referencedAssetPaths, err := BuildStrictAttachmentIndex(opts.SpaceDir, absPath, doc.Body, attachmentIDByPath)
 	if err != nil {
@@ -471,6 +471,43 @@ func pushUpsertPage(
 		Strict:    true,
 	}, absPath); err != nil {
 		return PushCommitPlan{}, fmt.Errorf("strict conversion failed for %s: %w", relPath, err)
+	}
+
+	// Phase 2: perform remote mutations after preflight succeeds.
+	if !isExistingPage {
+		if dirPath != "" && dirPath != "." {
+			folderIDByPath, err = ensureFolderHierarchy(ctx, remote, space.ID, dirPath, folderIDByPath, diagnostics)
+			if err != nil {
+				return failWithRollback(fmt.Errorf("ensure folder hierarchy for %s: %w", relPath, err))
+			}
+		}
+
+		resolvedParentID := resolveParentIDFromHierarchy(relPath, "", fallbackParentID, pageIDByPath, folderIDByPath)
+		created, createErr := remote.CreatePage(ctx, confluence.PageUpsertInput{
+			SpaceID:      space.ID,
+			ParentPageID: resolvedParentID,
+			Title:        title,
+			Status:       targetState,
+			BodyADF:      []byte(`{"version":1,"type":"doc","content":[]}`),
+		})
+		if createErr != nil {
+			return failWithRollback(fmt.Errorf("create placeholder page for %s: %w", relPath, createErr))
+		}
+
+		pageID = strings.TrimSpace(created.ID)
+		if pageID == "" {
+			return failWithRollback(fmt.Errorf("create placeholder page for %s returned empty page ID", relPath))
+		}
+
+		rollback.trackCreatedPage(pageID)
+		localVersion = created.Version
+		remotePage = created
+		remotePageByID[pageID] = created
+		pageIDByPath[normalizeRelPath(relPath)] = pageID
+
+		doc.Frontmatter.ID = pageID
+		doc.Frontmatter.Space = opts.SpaceKey
+		doc.Frontmatter.Version = created.Version
 	}
 
 	touchedAssets := make([]string, 0)
@@ -495,16 +532,17 @@ func pushUpsertPage(
 			Data:        raw,
 		})
 		if err != nil {
-			return PushCommitPlan{}, fmt.Errorf("upload asset %s: %w", assetRelPath, err)
+			return failWithRollback(fmt.Errorf("upload asset %s: %w", assetRelPath, err))
 		}
 
 		uploadedID := strings.TrimSpace(uploaded.ID)
 		if uploadedID == "" {
-			return PushCommitPlan{}, fmt.Errorf("upload asset %s returned empty attachment ID", assetRelPath)
+			return failWithRollback(fmt.Errorf("upload asset %s returned empty attachment ID", assetRelPath))
 		}
 
 		attachmentIDByPath[assetRelPath] = uploadedID
 		state.AttachmentIndex[assetRelPath] = uploadedID
+		rollback.trackUploadedAttachment(pageID, uploadedID, assetRelPath)
 		referencedIDs[uploadedID] = struct{}{}
 		touchedAssets = append(touchedAssets, assetRelPath)
 	}
@@ -521,7 +559,7 @@ func pushUpsertPage(
 			continue
 		}
 		if err := remote.DeleteAttachment(ctx, attachmentID, pageID); err != nil && !errors.Is(err, confluence.ErrNotFound) {
-			return PushCommitPlan{}, fmt.Errorf("delete stale attachment %s: %w", attachmentID, err)
+			return failWithRollback(fmt.Errorf("delete stale attachment %s: %w", attachmentID, err))
 		}
 		delete(state.AttachmentIndex, stalePath)
 		delete(attachmentIDByPath, stalePath)
@@ -535,10 +573,9 @@ func pushUpsertPage(
 		Strict:    true,
 	}, absPath)
 	if err != nil {
-		return PushCommitPlan{}, fmt.Errorf("strict conversion failed for %s after attachment mapping: %w", relPath, err)
+		return failWithRollback(fmt.Errorf("strict conversion failed for %s after attachment mapping: %w", relPath, err))
 	}
 
-	title := resolveLocalTitle(doc, relPath)
 	resolvedParentID := resolveParentIDFromHierarchy(relPath, pageID, fallbackParentID, pageIDByPath, folderIDByPath)
 	nextVersion := localVersion + 1
 	if policy == PushConflictPolicyForce && remotePage.Version >= nextVersion {
@@ -548,7 +585,7 @@ func pushUpsertPage(
 	// Post-process ADF to ensure required attributes for Confluence v2 API
 	finalADF, err := ensureADFMediaCollection(reverse.ADF, pageID)
 	if err != nil {
-		return PushCommitPlan{}, fmt.Errorf("post-process ADF for %s: %w", relPath, err)
+		return failWithRollback(fmt.Errorf("post-process ADF for %s: %w", relPath, err))
 	}
 
 	updatedPage, err := remote.UpdatePage(ctx, pageID, confluence.PageUpsertInput{
@@ -560,18 +597,27 @@ func pushUpsertPage(
 		BodyADF:      finalADF,
 	})
 	if err != nil {
-		return PushCommitPlan{}, fmt.Errorf("update page %s: %w", pageID, err)
+		return failWithRollback(fmt.Errorf("update page %s: %w", pageID, err))
+	}
+
+	if isExistingPage {
+		snapshot, snapshotErr := capturePageMetadataSnapshot(ctx, remote, pageID)
+		if snapshotErr != nil {
+			return failWithRollback(fmt.Errorf("capture metadata snapshot for %s: %w", relPath, snapshotErr))
+		}
+		rollback.trackMetadataSnapshot(pageID, snapshot)
 	}
 
 	if err := syncPageMetadata(ctx, remote, pageID, doc); err != nil {
-		return PushCommitPlan{}, fmt.Errorf("sync metadata for %s: %w", relPath, err)
+		return failWithRollback(fmt.Errorf("sync metadata for %s: %w", relPath, err))
 	}
+	rollback.clearMetadataSnapshot()
 
 	doc.Frontmatter.Title = title
 	doc.Frontmatter.Version = updatedPage.Version
 	if !opts.DryRun {
 		if err := fs.WriteMarkdownDocument(absPath, doc); err != nil {
-			return PushCommitPlan{}, fmt.Errorf("write markdown %s: %w", relPath, err)
+			return failWithRollback(fmt.Errorf("write markdown %s: %w", relPath, err))
 		}
 	}
 
@@ -589,6 +635,246 @@ func pushUpsertPage(
 		URL:         updatedPage.WebURL,
 		StagedPaths: stagedPaths,
 	}, nil
+}
+
+func newPushRollbackTracker(relPath string, diagnostics *[]PushDiagnostic) *pushRollbackTracker {
+	return &pushRollbackTracker{
+		relPath:     relPath,
+		diagnostics: diagnostics,
+	}
+}
+
+func appendPushDiagnostic(diagnostics *[]PushDiagnostic, path, code, message string) {
+	if diagnostics == nil {
+		return
+	}
+	*diagnostics = append(*diagnostics, PushDiagnostic{
+		Path:    path,
+		Code:    code,
+		Message: message,
+	})
+}
+
+func (r *pushRollbackTracker) trackCreatedPage(pageID string) {
+	pageID = strings.TrimSpace(pageID)
+	if pageID == "" {
+		return
+	}
+	r.createdPageID = pageID
+}
+
+func (r *pushRollbackTracker) trackUploadedAttachment(pageID, attachmentID, path string) {
+	attachmentID = strings.TrimSpace(attachmentID)
+	if attachmentID == "" {
+		return
+	}
+	r.uploadedAssets = append(r.uploadedAssets, rollbackAttachment{
+		PageID:       strings.TrimSpace(pageID),
+		AttachmentID: attachmentID,
+		Path:         normalizeRelPath(path),
+	})
+}
+
+func (r *pushRollbackTracker) trackMetadataSnapshot(pageID string, snapshot pushMetadataSnapshot) {
+	r.metadataPageID = strings.TrimSpace(pageID)
+	r.metadataSnapshot = &snapshot
+	r.metadataRestoreReq = true
+}
+
+func (r *pushRollbackTracker) clearMetadataSnapshot() {
+	r.metadataRestoreReq = false
+}
+
+func (r *pushRollbackTracker) rollback(ctx context.Context, remote PushRemote) error {
+	var rollbackErr error
+
+	if r.metadataRestoreReq && r.metadataSnapshot != nil && strings.TrimSpace(r.metadataPageID) != "" {
+		slog.Info("push_rollback_step", "path", r.relPath, "step", "metadata", "page_id", r.metadataPageID)
+		if err := restorePageMetadataSnapshot(ctx, remote, r.metadataPageID, *r.metadataSnapshot); err != nil {
+			slog.Warn("push_rollback_step_failed", "path", r.relPath, "step", "metadata", "page_id", r.metadataPageID, "error", err.Error())
+			appendPushDiagnostic(
+				r.diagnostics,
+				r.relPath,
+				"ROLLBACK_METADATA_FAILED",
+				fmt.Sprintf("failed to restore metadata for page %s: %v", r.metadataPageID, err),
+			)
+			rollbackErr = errors.Join(rollbackErr, fmt.Errorf("restore metadata for page %s: %w", r.metadataPageID, err))
+		} else {
+			slog.Info("push_rollback_step_succeeded", "path", r.relPath, "step", "metadata", "page_id", r.metadataPageID)
+			appendPushDiagnostic(
+				r.diagnostics,
+				r.relPath,
+				"ROLLBACK_METADATA_RESTORED",
+				fmt.Sprintf("restored metadata for page %s", r.metadataPageID),
+			)
+		}
+	}
+
+	for _, uploaded := range r.uploadedAssets {
+		if strings.TrimSpace(uploaded.AttachmentID) == "" {
+			continue
+		}
+		slog.Info("push_rollback_step", "path", r.relPath, "step", "attachment", "attachment_id", uploaded.AttachmentID, "page_id", uploaded.PageID)
+
+		if err := remote.DeleteAttachment(ctx, uploaded.AttachmentID, uploaded.PageID); err != nil && !errors.Is(err, confluence.ErrNotFound) {
+			slog.Warn("push_rollback_step_failed", "path", r.relPath, "step", "attachment", "attachment_id", uploaded.AttachmentID, "page_id", uploaded.PageID, "error", err.Error())
+			path := uploaded.Path
+			if path == "" {
+				path = r.relPath
+			}
+			appendPushDiagnostic(
+				r.diagnostics,
+				path,
+				"ROLLBACK_ATTACHMENT_FAILED",
+				fmt.Sprintf("failed to delete uploaded attachment %s: %v", uploaded.AttachmentID, err),
+			)
+			rollbackErr = errors.Join(rollbackErr, fmt.Errorf("delete uploaded attachment %s: %w", uploaded.AttachmentID, err))
+			continue
+		}
+
+		path := uploaded.Path
+		if path == "" {
+			path = r.relPath
+		}
+		slog.Info("push_rollback_step_succeeded", "path", r.relPath, "step", "attachment", "attachment_id", uploaded.AttachmentID, "page_id", uploaded.PageID)
+		appendPushDiagnostic(
+			r.diagnostics,
+			path,
+			"ROLLBACK_ATTACHMENT_DELETED",
+			fmt.Sprintf("deleted uploaded attachment %s", uploaded.AttachmentID),
+		)
+	}
+
+	if strings.TrimSpace(r.createdPageID) != "" {
+		slog.Info("push_rollback_step", "path", r.relPath, "step", "created_page", "page_id", r.createdPageID)
+		if err := remote.DeletePage(ctx, r.createdPageID, true); err != nil && !errors.Is(err, confluence.ErrNotFound) {
+			slog.Warn("push_rollback_step_failed", "path", r.relPath, "step", "created_page", "page_id", r.createdPageID, "error", err.Error())
+			appendPushDiagnostic(
+				r.diagnostics,
+				r.relPath,
+				"ROLLBACK_PAGE_DELETE_FAILED",
+				fmt.Sprintf("failed to delete created page %s: %v", r.createdPageID, err),
+			)
+			rollbackErr = errors.Join(rollbackErr, fmt.Errorf("delete created page %s: %w", r.createdPageID, err))
+		} else {
+			slog.Info("push_rollback_step_succeeded", "path", r.relPath, "step", "created_page", "page_id", r.createdPageID)
+			appendPushDiagnostic(
+				r.diagnostics,
+				r.relPath,
+				"ROLLBACK_PAGE_DELETED",
+				fmt.Sprintf("deleted created page %s", r.createdPageID),
+			)
+		}
+	}
+
+	if rollbackErr != nil {
+		slog.Warn("push_rollback_finished", "path", r.relPath, "status", "failed", "error", rollbackErr.Error())
+	} else {
+		slog.Info("push_rollback_finished", "path", r.relPath, "status", "succeeded")
+	}
+
+	return rollbackErr
+}
+
+func capturePageMetadataSnapshot(ctx context.Context, remote PushRemote, pageID string) (pushMetadataSnapshot, error) {
+	status, err := remote.GetContentStatus(ctx, pageID)
+	if err != nil {
+		return pushMetadataSnapshot{}, fmt.Errorf("get content status: %w", err)
+	}
+
+	labels, err := remote.GetLabels(ctx, pageID)
+	if err != nil {
+		return pushMetadataSnapshot{}, fmt.Errorf("get labels: %w", err)
+	}
+
+	return pushMetadataSnapshot{
+		ContentStatus: strings.TrimSpace(status),
+		Labels:        normalizeLabelList(labels),
+	}, nil
+}
+
+func restorePageMetadataSnapshot(ctx context.Context, remote PushRemote, pageID string, snapshot pushMetadataSnapshot) error {
+	targetStatus := strings.TrimSpace(snapshot.ContentStatus)
+	currentStatus, err := remote.GetContentStatus(ctx, pageID)
+	if err != nil {
+		return fmt.Errorf("get content status: %w", err)
+	}
+	currentStatus = strings.TrimSpace(currentStatus)
+
+	if currentStatus != targetStatus {
+		if targetStatus == "" {
+			if err := remote.DeleteContentStatus(ctx, pageID); err != nil {
+				return fmt.Errorf("delete content status: %w", err)
+			}
+		} else {
+			if err := remote.SetContentStatus(ctx, pageID, targetStatus); err != nil {
+				return fmt.Errorf("set content status: %w", err)
+			}
+		}
+	}
+
+	remoteLabels, err := remote.GetLabels(ctx, pageID)
+	if err != nil {
+		return fmt.Errorf("get labels: %w", err)
+	}
+
+	targetLabelSet := map[string]struct{}{}
+	for _, label := range normalizeLabelList(snapshot.Labels) {
+		targetLabelSet[label] = struct{}{}
+	}
+
+	currentLabelSet := map[string]struct{}{}
+	for _, label := range normalizeLabelList(remoteLabels) {
+		currentLabelSet[label] = struct{}{}
+	}
+
+	for label := range currentLabelSet {
+		if _, keep := targetLabelSet[label]; keep {
+			continue
+		}
+		if err := remote.RemoveLabel(ctx, pageID, label); err != nil {
+			return fmt.Errorf("remove label %q: %w", label, err)
+		}
+	}
+
+	toAdd := make([]string, 0)
+	for label := range targetLabelSet {
+		if _, exists := currentLabelSet[label]; exists {
+			continue
+		}
+		toAdd = append(toAdd, label)
+	}
+	sort.Strings(toAdd)
+
+	if len(toAdd) > 0 {
+		if err := remote.AddLabels(ctx, pageID, toAdd); err != nil {
+			return fmt.Errorf("add labels: %w", err)
+		}
+	}
+
+	return nil
+}
+
+func normalizeLabelList(labels []string) []string {
+	if len(labels) == 0 {
+		return nil
+	}
+
+	set := map[string]struct{}{}
+	for _, label := range labels {
+		label = strings.TrimSpace(label)
+		if label == "" {
+			continue
+		}
+		set[label] = struct{}{}
+	}
+
+	out := make([]string, 0, len(set))
+	for label := range set {
+		out = append(out, label)
+	}
+	sort.Strings(out)
+	return out
 }
 
 func resolveParentIDFromHierarchy(relPath, pageID, fallbackParentID string, pageIDByPath PageIndex, folderIDByPath map[string]string) string {

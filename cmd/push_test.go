@@ -882,8 +882,8 @@ func TestRunPush_NonInteractiveRequiresYesForDeleteConfirmation(t *testing.T) {
 	if !strings.Contains(err.Error(), "requires confirmation") {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if factoryCalls != 1 {
-		t.Fatalf("expected push remote factory to be called exactly once for early resolution, got %d", factoryCalls)
+	if factoryCalls != 0 {
+		t.Fatalf("expected push remote factory to not be called before confirmation, got %d", factoryCalls)
 	}
 }
 

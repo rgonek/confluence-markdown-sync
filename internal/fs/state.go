@@ -109,6 +109,7 @@ func FindAllStateFiles(root string) (map[string]SpaceState, error) {
 }
 
 func (s *SpaceState) normalize() {
+	s.SpaceKey = strings.TrimSpace(s.SpaceKey)
 
 	if s.PagePathIndex == nil {
 		s.PagePathIndex = map[string]string{}

@@ -37,6 +37,11 @@ type ClientConfig struct {
 	APIToken   string
 	HTTPClient *http.Client
 	UserAgent  string
+
+	RateLimitRPS     int
+	RetryMaxAttempts int
+	RetryBaseDelay   time.Duration
+	RetryMaxDelay    time.Duration
 }
 
 // Client is an HTTP-backed Confluence API client.
@@ -47,6 +52,7 @@ type Client struct {
 	httpClient     *http.Client
 	downloadClient *http.Client
 	limiter        *rateLimiter
+	retry          retryPolicy
 	userAgent      string
 }
 
@@ -112,6 +118,20 @@ func NewClient(cfg ClientConfig) (*Client, error) {
 		userAgent = defaultUserAgent
 	}
 
+	rateLimitRPS := cfg.RateLimitRPS
+	if rateLimitRPS <= 0 {
+		rateLimitRPS = DefaultRateLimitRPS
+	}
+
+	retryAttempts := cfg.RetryMaxAttempts
+	if retryAttempts < 0 {
+		retryAttempts = 0
+	}
+	if cfg.RetryMaxAttempts == 0 {
+		retryAttempts = DefaultRetryMaxAttempts
+	}
+	retry := newRetryPolicy(retryAttempts, cfg.RetryBaseDelay, cfg.RetryMaxDelay)
+
 	downloadClient := &http.Client{
 		Timeout:   defaultDownloadTimeout,
 		Transport: transport,
@@ -123,9 +143,19 @@ func NewClient(cfg ClientConfig) (*Client, error) {
 		apiToken:       token,
 		httpClient:     httpClient,
 		downloadClient: downloadClient,
-		limiter:        newRateLimiter(defaultRateLimit),
+		limiter:        newRateLimiter(rateLimitRPS),
+		retry:          retry,
 		userAgent:      userAgent,
 	}, nil
+}
+
+// Close releases background resources used by the client.
+func (c *Client) Close() error {
+	if c == nil || c.limiter == nil {
+		return nil
+	}
+	c.limiter.stop()
+	return nil
 }
 
 // ListSpaces returns a list of spaces.
@@ -763,6 +793,28 @@ func (c *Client) do(req *http.Request, out any) error {
 	for attempt := 0; ; attempt++ {
 		resp, err := c.httpClient.Do(req)
 		if err != nil {
+			if c.retry.shouldRetry(req, nil, err, attempt) {
+				delay := c.retry.retryDelay(attempt+1, nil)
+				slog.Info("http retry",
+					"method", req.Method,
+					"url", req.URL.String(),
+					"attempt", attempt+1,
+					"delay_ms", delay.Milliseconds(),
+					"reason", "network_error",
+					"error", err,
+				)
+				if sleepErr := contextSleep(req.Context(), delay); sleepErr != nil {
+					return sleepErr
+				}
+				if req.GetBody != nil {
+					newBody, gbErr := req.GetBody()
+					if gbErr != nil {
+						return fmt.Errorf("reset request body for retry: %w", gbErr)
+					}
+					req.Body = newBody
+				}
+				continue
+			}
 			return err
 		}
 
@@ -770,8 +822,16 @@ func (c *Client) do(req *http.Request, out any) error {
 			bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrorBodyBytes))
 			_ = resp.Body.Close()
 
-			if isRetryableStatus(resp.StatusCode) && attempt < maxRetryAttempts {
-				delay := retryDelay(attempt+1, resp)
+			if c.retry.shouldRetry(req, resp, nil, attempt) {
+				delay := c.retry.retryDelay(attempt+1, resp)
+				slog.Info("http retry",
+					"method", req.Method,
+					"url", req.URL.String(),
+					"attempt", attempt+1,
+					"delay_ms", delay.Milliseconds(),
+					"reason", "status_code",
+					"status", resp.StatusCode,
+				)
 				if sleepErr := contextSleep(req.Context(), delay); sleepErr != nil {
 					return sleepErr
 				}

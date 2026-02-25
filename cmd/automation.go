@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"strings"
 )
 
@@ -54,10 +55,12 @@ func resolvePushConflictPolicy(in io.Reader, out io.Writer, onConflict string, i
 		return "", err
 	}
 	if onConflict != "" {
+		slog.Info("push_conflict_policy_resolved", "policy", onConflict, "source", "flag")
 		return onConflict, nil
 	}
 
 	if isSpace {
+		slog.Info("push_conflict_policy_resolved", "policy", OnConflictPullMerge, "source", "default_space")
 		return OnConflictPullMerge, nil
 	}
 
@@ -75,10 +78,13 @@ func resolvePushConflictPolicy(in io.Reader, out io.Writer, onConflict string, i
 
 	switch strings.ToLower(strings.TrimSpace(choice)) {
 	case "", "c", "cancel":
+		slog.Info("push_conflict_policy_resolved", "policy", OnConflictCancel, "source", "prompt")
 		return OnConflictCancel, nil
 	case "p", "pull-merge", "pull_merge", "pullmerge":
+		slog.Info("push_conflict_policy_resolved", "policy", OnConflictPullMerge, "source", "prompt")
 		return OnConflictPullMerge, nil
 	case "f", "force":
+		slog.Info("push_conflict_policy_resolved", "policy", OnConflictForce, "source", "prompt")
 		return OnConflictForce, nil
 	default:
 		return "", fmt.Errorf("invalid conflict policy %q: expected pull-merge, force, or cancel", choice)

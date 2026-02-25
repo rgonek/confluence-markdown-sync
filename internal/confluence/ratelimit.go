@@ -2,20 +2,26 @@ package confluence
 
 import (
 	"context"
+	"sync"
 	"time"
 )
 
-const defaultRateLimit = 5 // requests per second
+const DefaultRateLimitRPS = 5 // requests per second
 
 // rateLimiter is a simple token-bucket rate limiter backed by a time.Ticker.
 // It allows up to rps requests per second by consuming one token per request.
 type rateLimiter struct {
-	tokens chan struct{}
-	done   chan struct{}
+	tokens   chan struct{}
+	done     chan struct{}
+	stopOnce sync.Once
 }
 
 // newRateLimiter creates a rate limiter that allows rps requests per second.
 func newRateLimiter(rps int) *rateLimiter {
+	if rps <= 0 {
+		rps = DefaultRateLimitRPS
+	}
+
 	rl := &rateLimiter{
 		tokens: make(chan struct{}, rps),
 		done:   make(chan struct{}),
@@ -58,5 +64,7 @@ func (rl *rateLimiter) wait(ctx context.Context) error {
 
 // stop shuts down the background ticker goroutine.
 func (rl *rateLimiter) stop() {
-	close(rl.done)
+	rl.stopOnce.Do(func() {
+		close(rl.done)
+	})
 }

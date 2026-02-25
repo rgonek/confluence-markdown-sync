@@ -3,7 +3,7 @@ MAIN       := ./cmd/conf
 GO         := go
 GOFLAGS    :=
 
-.PHONY: build install test coverage-check fmt lint clean
+.PHONY: build install test coverage-check fmt fmt-check lint clean
 
 ## build: compile the conf binary
 build:
@@ -30,15 +30,15 @@ test-e2e: build
 fmt:
 	$(GO) fmt ./...
 
-## lint: run golangci-lint (falls back to go vet)
+## fmt-check: fail if go files are unformatted
+fmt-check:
+	$(GO) run ./tools/gofmtcheck
+
+## lint: run static checks
 lint:
-	@if command -v golangci-lint >/dev/null 2>&1; then \
-		golangci-lint run ./...; \
-	else \
-		$(GO) vet ./...; \
-	fi
+	$(GO) vet ./...
 
 ## clean: remove build artifacts
 clean:
 	$(GO) clean
-	rm -f $(BINARY) $(BINARY).exe
+	$(GO) clean -cache

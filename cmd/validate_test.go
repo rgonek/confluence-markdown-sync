@@ -2,6 +2,8 @@ package cmd
 
 import (
 	"bytes"
+	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -262,5 +264,34 @@ func TestRunValidateTarget_FailsForMissingAssetFile(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "asset assets/missing.png not found") {
 		t.Fatalf("expected missing asset validation error, got:\n%s", out.String())
+	}
+}
+
+func TestRunValidateTargetWithContext_ReturnsCancellation(t *testing.T) {
+	repo := t.TempDir()
+	setupGitRepo(t, repo)
+	setupEnv(t)
+
+	spaceDir := filepath.Join(repo, "Engineering (ENG)")
+	if err := os.MkdirAll(spaceDir, 0o750); err != nil {
+		t.Fatalf("mkdir space dir: %v", err)
+	}
+
+	writeMarkdown(t, filepath.Join(spaceDir, "root.md"), fs.MarkdownDocument{
+		Frontmatter: fs.Frontmatter{Title: "Root", ID: "1", Space: "ENG", Version: 1},
+		Body:        "content\n",
+	})
+	if err := fs.SaveState(spaceDir, fs.SpaceState{SpaceKey: "ENG", PagePathIndex: map[string]string{"root.md": "1"}}); err != nil {
+		t.Fatalf("save state: %v", err)
+	}
+
+	chdirRepo(t, repo)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	err := runValidateTargetWithContext(ctx, &bytes.Buffer{}, config.Target{Mode: config.TargetModeSpace, Value: "Engineering (ENG)"})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected context canceled error, got: %v", err)
 	}
 }

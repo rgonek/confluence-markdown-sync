@@ -22,6 +22,41 @@ func TestNewClient_RequiresCoreConfig(t *testing.T) {
 	}
 }
 
+func TestNewClient_AppliesRateAndRetryPolicyConfig(t *testing.T) {
+	client, err := NewClient(ClientConfig{
+		BaseURL:          "https://example.test",
+		Email:            "user@example.com",
+		APIToken:         "token-123",
+		RateLimitRPS:     9,
+		RetryMaxAttempts: 7,
+		RetryBaseDelay:   200 * time.Millisecond,
+		RetryMaxDelay:    3 * time.Second,
+	})
+	if err != nil {
+		t.Fatalf("NewClient() unexpected error: %v", err)
+	}
+
+	if got := cap(client.limiter.tokens); got != 9 {
+		t.Fatalf("rate limiter capacity = %d, want 9", got)
+	}
+	if client.retry.maxAttempts != 7 {
+		t.Fatalf("retry max attempts = %d, want 7", client.retry.maxAttempts)
+	}
+	if client.retry.baseDelay != 200*time.Millisecond {
+		t.Fatalf("retry base delay = %v, want 200ms", client.retry.baseDelay)
+	}
+	if client.retry.maxDelay != 3*time.Second {
+		t.Fatalf("retry max delay = %v, want 3s", client.retry.maxDelay)
+	}
+
+	if err := client.Close(); err != nil {
+		t.Fatalf("Close() unexpected error: %v", err)
+	}
+	if err := client.Close(); err != nil {
+		t.Fatalf("Close() should be idempotent, got error: %v", err)
+	}
+}
+
 func TestListSpaces_UsesExpectedEndpointAndAuth(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {

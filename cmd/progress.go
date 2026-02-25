@@ -3,10 +3,13 @@ package cmd
 import (
 	"fmt"
 	"io"
+	"log/slog"
 	"time"
 
 	"github.com/schollz/progressbar/v3"
 )
+
+var progressDescriptionSwitchDelay = 100 * time.Millisecond
 
 type consoleProgress struct {
 	bar         *progressbar.ProgressBar
@@ -33,14 +36,18 @@ func newConsoleProgress(out io.Writer, description string) *consoleProgress {
 func (p *consoleProgress) SetDescription(desc string) {
 	// Add a small sleep when switching descriptions to prevent flickering
 	// and ensure the user can see the transition
-	time.Sleep(100 * time.Millisecond)
+	if progressDescriptionSwitchDelay > 0 {
+		time.Sleep(progressDescriptionSwitchDelay)
+	}
 	p.description = desc
 	p.bar.Describe(desc)
+	slog.Debug("progress_description", "description", desc)
 }
 
 func (p *consoleProgress) SetCurrentItem(name string) {
 	if name == "" {
 		p.bar.Describe(p.description)
+		slog.Debug("progress_item", "description", p.description, "item", "")
 	} else {
 		// Truncate item for display
 		display := name
@@ -48,6 +55,7 @@ func (p *consoleProgress) SetCurrentItem(name string) {
 			display = "..." + display[len(display)-27:]
 		}
 		p.bar.Describe(fmt.Sprintf("%s (%s)", p.description, display))
+		slog.Debug("progress_item", "description", p.description, "item", name)
 	}
 }
 

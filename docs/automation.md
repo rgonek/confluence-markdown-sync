@@ -48,6 +48,56 @@ When remote versions are ahead:
 
 In non-interactive usage, set one explicitly.
 
+## Pull Conflict Handling Runbook
+
+When `conf pull` restores stashed local changes and Git reports conflicts, interactive mode offers:
+
+- `Keep both` (default): keeps conflict markers so you can resolve manually.
+- `Use Remote`: discards local conflicting hunks and keeps pulled remote content.
+- `Use Local`: reapplies local stashed content over pulled remote updates.
+
+Recommended operator flow:
+
+1. Prefer `Keep both` for high-signal docs where intent matters.
+2. Resolve markers and run `conf validate <SPACE_KEY>`.
+3. Commit the merge-resolution result before the next `conf push`.
+
+For automation (`--non-interactive`), conflicts fail fast and require manual follow-up.
+
+## Push Rollback Expectations
+
+`conf push` performs strict preflight validation before remote writes. If a mutation fails mid-page, push attempts rollback for:
+
+- pages created during the failed operation,
+- attachments uploaded during the failed operation,
+- page metadata changes (content status and labels).
+
+Rollback outcomes are surfaced as diagnostics in command output:
+
+- `ROLLBACK_METADATA_RESTORED` / `ROLLBACK_METADATA_FAILED`
+- `ROLLBACK_ATTACHMENT_DELETED` / `ROLLBACK_ATTACHMENT_FAILED`
+- `ROLLBACK_PAGE_DELETED` / `ROLLBACK_PAGE_DELETE_FAILED`
+
+If any `*_FAILED` code appears, treat the run as partial and inspect the referenced page before retrying.
+
+## Dry-Run Behavior (`push --dry-run`)
+
+`--dry-run` simulates remote actions and conversion without mutating Confluence or local Git state.
+
+Use it to verify:
+
+- changed markdown scope,
+- planned page operations,
+- conversion and link/media resolution readiness.
+
+Recommended sequence before unattended push:
+
+```powershell
+conf validate ENG
+conf push ENG --dry-run --on-conflict=cancel
+conf push ENG --yes --non-interactive --on-conflict=cancel
+```
+
 ## Recommended Non-Interactive Commands
 
 ```powershell
@@ -99,3 +149,4 @@ jobs:
 - `push` always runs `validate` before remote writes.
 - A Git remote is not required for `conf` operations.
 - Sync state is local (`.confluence-state.json`) and should remain gitignored.
+- After non-no-op syncs, use generated tags (`confluence-sync/pull/...`, `confluence-sync/push/...`) for audit and recovery checkpoints.

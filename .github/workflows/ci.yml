@@ -34,6 +34,9 @@ jobs:
       - name: Vet
         run: go vet ./...
 
+      - name: Build
+        run: go build -trimpath ./cmd/conf
+
       - name: Test
         run: go test -race ./...
 
@@ -42,15 +45,7 @@ jobs:
         run: go run ./tools/coveragecheck
 
       - name: Check formatting
-        if: matrix.os == 'ubuntu-latest'
-        run: |
-          go_files="$(git ls-files '*.go')"
-          unformatted="$(gofmt -l $go_files)"
-          if [ -n "$unformatted" ]; then
-            echo "The following files are not gofmt-formatted:"
-            echo "$unformatted"
-            exit 1
-          fi
+        run: go run ./tools/gofmtcheck
 
       - name: Lint
         if: matrix.os == 'ubuntu-latest'

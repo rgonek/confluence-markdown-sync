@@ -82,3 +82,26 @@ func TestRunRelink_NonInteractiveRequiresYesForHighImpactChanges(t *testing.T) {
 		t.Fatalf("expected source doc to remain unchanged on confirmation failure, got:\n%s", string(raw))
 	}
 }
+
+func TestGetSpaceKeyFromState_PrefersStateMetadata(t *testing.T) {
+	dir := t.TempDir()
+	state := fs.SpaceState{
+		SpaceKey:      "OPS",
+		PagePathIndex: map[string]string{"missing.md": "1"},
+	}
+
+	if got := getSpaceKeyFromState(dir, state); got != "OPS" {
+		t.Fatalf("space key = %q, want OPS", got)
+	}
+}
+
+func TestGetSpaceKeyFromState_FallsBackToDirectorySuffix(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "Operations (OPS)")
+	if err := os.MkdirAll(dir, 0o750); err != nil {
+		t.Fatalf("mkdir dir: %v", err)
+	}
+
+	if got := getSpaceKeyFromState(dir, fs.SpaceState{}); got != "OPS" {
+		t.Fatalf("space key = %q, want OPS", got)
+	}
+}

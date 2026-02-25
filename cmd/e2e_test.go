@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -18,12 +19,8 @@ import (
 )
 
 func TestWorkflow_ConflictResolution(t *testing.T) {
-	if os.Getenv("ATLASSIAN_DOMAIN") == "" {
-		t.Skip("Skipping E2E test: ATLASSIAN_DOMAIN not set")
-	}
-
-	spaceKey := "TD"
-	pageID := "2981891" // Simple.md
+	spaceKey := requireE2ESandboxSpaceKey(t)
+	pageID := requireE2ESandboxPageID(t)
 
 	ctx := context.Background()
 	cfg, err := config.Load("") // Load from env
@@ -41,20 +38,8 @@ func TestWorkflow_ConflictResolution(t *testing.T) {
 	}
 
 	// 0. Build conf
-	wd, _ := os.Getwd()
-	// Find project root by looking for go.mod
-	rootDir := wd
-	for {
-		if _, err := os.Stat(filepath.Join(rootDir, "go.mod")); err == nil {
-			break
-		}
-		parent := filepath.Dir(rootDir)
-		if parent == rootDir {
-			break
-		}
-		rootDir = parent
-	}
-	confBin := filepath.Join(rootDir, "conf.exe")
+	rootDir := projectRootFromWD(t)
+	confBin := confBinaryForOS(rootDir)
 
 	// 1. Setup temp workspace
 	tmpDir, err := os.MkdirTemp("", "conf-e2e-*")
@@ -84,11 +69,8 @@ func TestWorkflow_ConflictResolution(t *testing.T) {
 	// pull
 	runCMS("pull", spaceKey, "--yes")
 
-	// Verify Simple.md exists
-	simplePath := filepath.Join(tmpDir, "Technical documentation (TD)", "Simple.md")
-	if _, err := os.Stat(simplePath); err != nil {
-		t.Fatalf("Simple.md not found after pull: %v", err)
-	}
+	spaceDir := findPulledSpaceDir(t, tmpDir)
+	simplePath := findMarkdownByPageID(t, spaceDir, pageID)
 
 	// 2. Modify local
 	doc, err := fs.ReadMarkdownDocument(simplePath)
@@ -122,7 +104,7 @@ func TestWorkflow_ConflictResolution(t *testing.T) {
 	time.Sleep(5 * time.Second)
 
 	// 4. Try push --on-conflict=cancel -> should fail
-	cmd := exec.Command(confBin, "push", "Technical documentation (TD)/Simple.md", "--on-conflict=cancel", "--yes", "--non-interactive")
+	cmd := exec.Command(confBin, "push", simplePath, "--on-conflict=cancel", "--yes", "--non-interactive")
 	cmd.Dir = tmpDir
 	out, err := cmd.CombinedOutput()
 	if err == nil {
@@ -134,7 +116,7 @@ func TestWorkflow_ConflictResolution(t *testing.T) {
 	fmt.Printf("Push failed as expected (Conflict detected)\n")
 
 	// 5. Run pull to resolve conflict (this will fail with merge conflict in file)
-	cmd = exec.Command(confBin, "pull", "Technical documentation (TD)/Simple.md", "--yes", "--non-interactive")
+	cmd = exec.Command(confBin, "pull", simplePath, "--yes", "--non-interactive")
 	cmd.Dir = tmpDir
 	out, _ = cmd.CombinedOutput()
 	if !strings.Contains(string(out), "conflict") {
@@ -155,20 +137,20 @@ func TestWorkflow_ConflictResolution(t *testing.T) {
 	}
 
 	// Mark as resolved in git
-	runCmd("git", "add", "Technical documentation (TD)/Simple.md")
+	relSimplePath, err := filepath.Rel(tmpDir, simplePath)
+	if err != nil {
+		t.Fatalf("rel path: %v", err)
+	}
+	runCmd("git", "add", filepath.ToSlash(relSimplePath))
 
 	// 7. Push again -> should succeed
-	runCMS("push", "Technical documentation (TD)/Simple.md", "--on-conflict=cancel", "--yes", "--non-interactive")
+	runCMS("push", simplePath, "--on-conflict=cancel", "--yes", "--non-interactive")
 	fmt.Printf("Push after manual resolution succeeded\n")
 }
 
 func TestWorkflow_PushAutoPullMerge(t *testing.T) {
-	if os.Getenv("ATLASSIAN_DOMAIN") == "" {
-		t.Skip("Skipping E2E test: ATLASSIAN_DOMAIN not set")
-	}
-
-	spaceKey := "TD"
-	pageID := "2981891" // Simple.md
+	spaceKey := requireE2ESandboxSpaceKey(t)
+	pageID := requireE2ESandboxPageID(t)
 
 	ctx := context.Background()
 	cfg, err := config.Load("")
@@ -179,20 +161,8 @@ func TestWorkflow_PushAutoPullMerge(t *testing.T) {
 	})
 
 	// 0. Setup
-	wd, _ := os.Getwd()
-	// Find project root by looking for go.mod
-	rootDir := wd
-	for {
-		if _, err := os.Stat(filepath.Join(rootDir, "go.mod")); err == nil {
-			break
-		}
-		parent := filepath.Dir(rootDir)
-		if parent == rootDir {
-			break
-		}
-		rootDir = parent
-	}
-	confBin := filepath.Join(rootDir, "conf.exe")
+	rootDir := projectRootFromWD(t)
+	confBin := confBinaryForOS(rootDir)
 
 	tmpDir, err := os.MkdirTemp("", "conf-e2e-autopull-*")
 	if err != nil {
@@ -215,7 +185,8 @@ func TestWorkflow_PushAutoPullMerge(t *testing.T) {
 	runCMS("pull", spaceKey, "--yes")
 
 	// 2. Modify local
-	simplePath := filepath.Join(tmpDir, "Technical documentation (TD)", "Simple.md")
+	spaceDir := findPulledSpaceDir(t, tmpDir)
+	simplePath := findMarkdownByPageID(t, spaceDir, pageID)
 	doc, _ := fs.ReadMarkdownDocument(simplePath)
 	doc.Body += "\n\nLocal change for auto pull-merge test"
 	_ = fs.WriteMarkdownDocument(simplePath, doc)
@@ -233,7 +204,7 @@ func TestWorkflow_PushAutoPullMerge(t *testing.T) {
 
 	// 4. Run push with --on-conflict=pull-merge
 	// This should trigger the automatic pull
-	pcmd := exec.Command(confBin, "push", "Technical documentation (TD)/Simple.md", "--on-conflict=pull-merge", "--yes", "--non-interactive")
+	pcmd := exec.Command(confBin, "push", simplePath, "--on-conflict=pull-merge", "--yes", "--non-interactive")
 	pcmd.Dir = tmpDir
 	out, err := pcmd.CombinedOutput()
 	// It might fail with a content conflict error (which is what happens in this test setup)
@@ -256,27 +227,11 @@ func TestWorkflow_PushAutoPullMerge(t *testing.T) {
 }
 
 func TestWorkflow_AgenticFullCycle(t *testing.T) {
-	if os.Getenv("ATLASSIAN_DOMAIN") == "" {
-		t.Skip("Skipping E2E test: ATLASSIAN_DOMAIN not set")
-	}
-
-	spaceKey := "TD"
+	spaceKey := requireE2ESandboxSpaceKey(t)
 
 	// 0. Setup
-	wd, _ := os.Getwd()
-	// Find project root by looking for go.mod
-	rootDir := wd
-	for {
-		if _, err := os.Stat(filepath.Join(rootDir, "go.mod")); err == nil {
-			break
-		}
-		parent := filepath.Dir(rootDir)
-		if parent == rootDir {
-			break
-		}
-		rootDir = parent
-	}
-	confBin := filepath.Join(rootDir, "conf.exe")
+	rootDir := projectRootFromWD(t)
+	confBin := confBinaryForOS(rootDir)
 
 	tmpDir, err := os.MkdirTemp("", "conf-e2e-agentic-*")
 	if err != nil {
@@ -299,7 +254,8 @@ func TestWorkflow_AgenticFullCycle(t *testing.T) {
 	runCMS("pull", spaceKey, "--yes", "--non-interactive")
 
 	// 2. Edit
-	simplePath := filepath.Join(tmpDir, "Technical documentation (TD)", "Simple.md")
+	spaceDir := findPulledSpaceDir(t, tmpDir)
+	simplePath := findFirstMarkdownFile(t, spaceDir)
 	doc, err := fs.ReadMarkdownDocument(simplePath)
 	if err != nil {
 		t.Fatalf("ReadMarkdown: %v", err)
@@ -310,38 +266,23 @@ func TestWorkflow_AgenticFullCycle(t *testing.T) {
 	}
 
 	// 3. Validate
-	runCMS("validate", "Technical documentation (TD)/Simple.md")
+	runCMS("validate", simplePath)
 
 	// 4. Diff
-	runCMS("diff", "Technical documentation (TD)/Simple.md")
+	runCMS("diff", simplePath)
 
 	// 5. Push
-	runCMS("push", "Technical documentation (TD)/Simple.md", "--on-conflict=cancel", "--yes", "--non-interactive")
+	runCMS("push", simplePath, "--on-conflict=cancel", "--yes", "--non-interactive")
 
 	fmt.Printf("Agentic full cycle succeeded\n")
 }
 
 func TestWorkflow_PushDryRunNonMutating(t *testing.T) {
-	if os.Getenv("ATLASSIAN_DOMAIN") == "" {
-		t.Skip("Skipping E2E test: ATLASSIAN_DOMAIN not set")
-	}
-
-	spaceKey := "TD"
+	spaceKey := requireE2ESandboxSpaceKey(t)
 
 	// 0. Setup
-	wd, _ := os.Getwd()
-	rootDir := wd
-	for {
-		if _, err := os.Stat(filepath.Join(rootDir, "go.mod")); err == nil {
-			break
-		}
-		parent := filepath.Dir(rootDir)
-		if parent == rootDir {
-			break
-		}
-		rootDir = parent
-	}
-	confBin := filepath.Join(rootDir, "conf.exe")
+	rootDir := projectRootFromWD(t)
+	confBin := confBinaryForOS(rootDir)
 
 	tmpDir, err := os.MkdirTemp("", "conf-e2e-dryrun-*")
 	if err != nil {
@@ -364,14 +305,15 @@ func TestWorkflow_PushDryRunNonMutating(t *testing.T) {
 	runCMS("pull", spaceKey, "--yes")
 
 	// 2. Modify local
-	simplePath := filepath.Join(tmpDir, "Technical documentation (TD)", "Simple.md")
+	spaceDir := findPulledSpaceDir(t, tmpDir)
+	simplePath := findFirstMarkdownFile(t, spaceDir)
 	doc, _ := fs.ReadMarkdownDocument(simplePath)
 	originalVersion := doc.Frontmatter.Version
 	doc.Body += "\n\nDry run test change"
 	_ = fs.WriteMarkdownDocument(simplePath, doc)
 
 	// 3. Run push --dry-run
-	runCMS("push", "Technical documentation (TD)/Simple.md", "--dry-run", "--yes", "--non-interactive", "--on-conflict=force")
+	runCMS("push", simplePath, "--dry-run", "--yes", "--non-interactive", "--on-conflict=force")
 
 	// 4. Verify local file is UNCHANGED in terms of version
 	docAfter, _ := fs.ReadMarkdownDocument(simplePath)
@@ -404,27 +346,12 @@ func TestWorkflow_PushDryRunNonMutating(t *testing.T) {
 }
 
 func TestWorkflow_PullDiscardLocal(t *testing.T) {
-	if os.Getenv("ATLASSIAN_DOMAIN") == "" {
-		t.Skip("Skipping E2E test: ATLASSIAN_DOMAIN not set")
-	}
-
-	spaceKey := "TD"
+	spaceKey := requireE2ESandboxSpaceKey(t)
 
 	// 0. Setup
 
-	wd, _ := os.Getwd()
-	rootDir := wd
-	for {
-		if _, err := os.Stat(filepath.Join(rootDir, "go.mod")); err == nil {
-			break
-		}
-		parent := filepath.Dir(rootDir)
-		if parent == rootDir {
-			break
-		}
-		rootDir = parent
-	}
-	confBin := filepath.Join(rootDir, "conf.exe")
+	rootDir := projectRootFromWD(t)
+	confBin := confBinaryForOS(rootDir)
 
 	tmpDir, err := os.MkdirTemp("", "conf-e2e-discard-*")
 	if err != nil {
@@ -447,13 +374,14 @@ func TestWorkflow_PullDiscardLocal(t *testing.T) {
 	runCMS("pull", spaceKey, "--yes")
 
 	// 2. Modify local
-	simplePath := filepath.Join(tmpDir, "Technical documentation (TD)", "Simple.md")
+	spaceDir := findPulledSpaceDir(t, tmpDir)
+	simplePath := findFirstMarkdownFile(t, spaceDir)
 	doc, _ := fs.ReadMarkdownDocument(simplePath)
 	doc.Body += "\n\nLocal change to be discarded"
 	_ = fs.WriteMarkdownDocument(simplePath, doc)
 
 	// 3. Pull with --discard-local
-	runCMS("pull", "Technical documentation (TD)/Simple.md", "--discard-local", "--yes")
+	runCMS("pull", simplePath, "--discard-local", "--yes")
 
 	// 4. Verify local change is GONE
 	docAfter, _ := fs.ReadMarkdownDocument(simplePath)
@@ -462,4 +390,149 @@ func TestWorkflow_PullDiscardLocal(t *testing.T) {
 	}
 
 	fmt.Printf("Pull --discard-local test passed\n")
+}
+
+func requireE2ESandboxSpaceKey(t *testing.T) string {
+	t.Helper()
+
+	if strings.TrimSpace(os.Getenv("ATLASSIAN_DOMAIN")) == "" {
+		t.Skip("Skipping E2E test: ATLASSIAN_DOMAIN not set")
+	}
+
+	spaceKey := strings.TrimSpace(os.Getenv("CONF_E2E_SANDBOX_SPACE_KEY"))
+	if spaceKey == "" {
+		t.Skip("Skipping E2E test: CONF_E2E_SANDBOX_SPACE_KEY not set")
+	}
+
+	return spaceKey
+}
+
+func requireE2ESandboxPageID(t *testing.T) string {
+	t.Helper()
+
+	pageID := strings.TrimSpace(os.Getenv("CONF_E2E_CONFLICT_PAGE_ID"))
+	if pageID == "" {
+		t.Skip("Skipping E2E test: CONF_E2E_CONFLICT_PAGE_ID not set")
+	}
+
+	return pageID
+}
+
+func projectRootFromWD(t *testing.T) string {
+	t.Helper()
+
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Getwd: %v", err)
+	}
+
+	rootDir := wd
+	for {
+		if _, err := os.Stat(filepath.Join(rootDir, "go.mod")); err == nil {
+			return rootDir
+		}
+		parent := filepath.Dir(rootDir)
+		if parent == rootDir {
+			break
+		}
+		rootDir = parent
+	}
+
+	t.Fatalf("could not locate project root from %s", wd)
+	return ""
+}
+
+func confBinaryForOS(rootDir string) string {
+	if runtime.GOOS == "windows" {
+		return filepath.Join(rootDir, "conf.exe")
+	}
+	return filepath.Join(rootDir, "conf")
+}
+
+func findPulledSpaceDir(t *testing.T, workspaceRoot string) string {
+	t.Helper()
+
+	entries, err := os.ReadDir(workspaceRoot)
+	if err != nil {
+		t.Fatalf("ReadDir(%s): %v", workspaceRoot, err)
+	}
+
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		candidate := filepath.Join(workspaceRoot, entry.Name())
+		if _, err := os.Stat(filepath.Join(candidate, fs.StateFileName)); err == nil {
+			return candidate
+		}
+	}
+
+	t.Fatalf("could not find pulled space directory under %s", workspaceRoot)
+	return ""
+}
+
+func findMarkdownByPageID(t *testing.T, spaceDir, pageID string) string {
+	t.Helper()
+
+	var matched string
+	err := filepath.WalkDir(spaceDir, func(path string, d os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if d.IsDir() {
+			if d.Name() == "assets" || strings.HasPrefix(d.Name(), ".") {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if filepath.Ext(path) != ".md" {
+			return nil
+		}
+
+		doc, err := fs.ReadMarkdownDocument(path)
+		if err != nil {
+			return err
+		}
+		if strings.TrimSpace(doc.Frontmatter.ID) == pageID {
+			matched = path
+			return filepath.SkipAll
+		}
+		return nil
+	})
+	if err != nil && err != filepath.SkipAll {
+		t.Fatalf("find markdown by page id: %v", err)
+	}
+	if strings.TrimSpace(matched) == "" {
+		t.Fatalf("could not find markdown file for page ID %s in %s", pageID, spaceDir)
+	}
+	return matched
+}
+
+func findFirstMarkdownFile(t *testing.T, spaceDir string) string {
+	t.Helper()
+
+	var matched string
+	err := filepath.WalkDir(spaceDir, func(path string, d os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if d.IsDir() {
+			if d.Name() == "assets" || strings.HasPrefix(d.Name(), ".") {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if filepath.Ext(path) == ".md" {
+			matched = path
+			return filepath.SkipAll
+		}
+		return nil
+	})
+	if err != nil && err != filepath.SkipAll {
+		t.Fatalf("find first markdown: %v", err)
+	}
+	if strings.TrimSpace(matched) == "" {
+		t.Fatalf("no markdown files found in %s", spaceDir)
+	}
+	return matched
 }

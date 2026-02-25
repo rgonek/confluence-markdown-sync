@@ -176,3 +176,8 @@ func (d *dryRunPushRemote) MovePage(ctx context.Context, pageID string, targetID
 	fmt.Fprintf(d.out, "[DRY-RUN] MOVE PAGE (PUT %s/wiki/rest/api/content/%s/move/append/%s)\n\n", d.domain, pageID, targetID)
 	return nil
 }
+
+func (d *dryRunPushRemote) Close() error {
+	closeRemoteIfPossible(d.inner)
+	return nil
+}

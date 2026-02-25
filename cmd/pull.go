@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -27,11 +28,7 @@ var (
 	flagPullRelink       = false
 
 	newPullRemote = func(cfg *config.Config) (syncflow.PullRemote, error) {
-		return confluence.NewClient(confluence.ClientConfig{
-			BaseURL:  cfg.Domain,
-			Email:    cfg.Email,
-			APIToken: cfg.APIToken,
-		})
+		return newConfluenceClientFromConfig(cfg)
 	}
 
 	nowUTC = func() time.Time {
@@ -74,6 +71,36 @@ If omitted, the space is inferred from the current directory name.`,
 func runPull(cmd *cobra.Command, target config.Target) (runErr error) {
 	ctx := getCommandContext(cmd)
 	out := ensureSynchronizedCmdOutput(cmd)
+	startedAt := time.Now()
+	telemetrySpaceKey := ""
+	telemetryUpdated := 0
+	telemetryDeleted := 0
+	telemetryAssetsDownloaded := 0
+	telemetryDiagnostics := 0
+	slog.Info("pull_started", "target_mode", target.Mode, "target", target.Value)
+
+	defer func() {
+		if telemetrySpaceKey == "" {
+			telemetrySpaceKey = "unknown"
+		}
+		duration := time.Since(startedAt)
+		if runErr != nil {
+			slog.Warn("pull_finished",
+				"space_key", telemetrySpaceKey,
+				"duration_ms", duration.Milliseconds(),
+				"error", runErr.Error(),
+			)
+			return
+		}
+		slog.Info("pull_finished",
+			"space_key", telemetrySpaceKey,
+			"duration_ms", duration.Milliseconds(),
+			"updated_markdown", telemetryUpdated,
+			"deleted_markdown", telemetryDeleted,
+			"downloaded_assets", telemetryAssetsDownloaded,
+			"diagnostics", telemetryDiagnostics,
+		)
+	}()
 
 	// 1. Initial resolution of key/dir
 	initialCtx, err := resolveInitialPullContext(target)
@@ -95,6 +122,7 @@ func runPull(cmd *cobra.Command, target config.Target) (runErr error) {
 	if err != nil {
 		return fmt.Errorf("create confluence client: %w", err)
 	}
+	defer closeRemoteIfPossible(remote)
 
 	// 3. Resolve actual space metadata and final directory
 	space, err := remote.GetSpace(ctx, initialCtx.spaceKey)
@@ -114,6 +142,7 @@ func runPull(cmd *cobra.Command, target config.Target) (runErr error) {
 		spaceDir:     spaceDir,
 		targetPageID: initialCtx.targetPageID,
 	}
+	telemetrySpaceKey = pullCtx.spaceKey
 
 	scopeDirExisted := dirExists(pullCtx.spaceDir)
 
@@ -135,7 +164,6 @@ func runPull(cmd *cobra.Command, target config.Target) (runErr error) {
 	if err != nil {
 		return err
 	}
-
 	affectedCount := impact.changedMarkdown + impact.deletedMarkdown
 	if err := requireSafetyConfirmation(cmd.InOrStdin(), out, "pull", affectedCount, impact.deletedMarkdown > 0); err != nil {
 		return err
@@ -145,7 +173,6 @@ func runPull(cmd *cobra.Command, target config.Target) (runErr error) {
 	if err != nil {
 		return err
 	}
-
 	scopePath, err := gitScopePath(repoRoot, pullCtx.spaceDir)
 	if err != nil {
 		return err
@@ -160,10 +187,13 @@ func runPull(cmd *cobra.Command, target config.Target) (runErr error) {
 		}
 		if stashRef != "" {
 			defer func() {
-				if flagPullDiscardLocal {
+				if flagPullDiscardLocal && runErr == nil {
 					_, _ = fmt.Fprintf(out, "Discarding local changes (dropped stash %s)\n", stashRef)
 					_, _ = runGit(repoRoot, "stash", "drop", stashRef)
 					return
+				}
+				if flagPullDiscardLocal && runErr != nil {
+					_, _ = fmt.Fprintf(out, "Pull failed; preserving local changes from stash %s\n", stashRef)
 				}
 
 				if runErr != nil {
@@ -210,6 +240,10 @@ func runPull(cmd *cobra.Command, target config.Target) (runErr error) {
 	if err != nil {
 		return err
 	}
+	telemetryUpdated = len(result.UpdatedMarkdown)
+	telemetryDeleted = len(result.DeletedMarkdown)
+	telemetryAssetsDownloaded = len(result.DownloadedAssets)
+	telemetryDiagnostics = len(result.Diagnostics)
 
 	if err := fs.SaveState(pullCtx.spaceDir, result.State); err != nil {
 		return fmt.Errorf("save state: %w", err)
@@ -315,7 +349,6 @@ func resolveInitialPullContext(target config.Target) (initialPullContext, error)
 		if _, err := os.Stat(filepath.Join(cwd, fs.StateFileName)); err == nil {
 			state, err := fs.LoadState(cwd)
 			if err == nil {
-				// Check state.SpaceKey first before falling back to file iteration
 				if strings.TrimSpace(state.SpaceKey) != "" {
 					return initialPullContext{
 						spaceKey: state.SpaceKey,
@@ -323,20 +356,13 @@ func resolveInitialPullContext(target config.Target) (initialPullContext, error)
 						fixedDir: true,
 					}, nil
 				}
-				// Fall back to finding space key from file frontmatter
-				if len(state.PagePathIndex) > 0 {
-					for relPath := range state.PagePathIndex {
-						doc, err := fs.ReadMarkdownDocument(filepath.Join(cwd, filepath.FromSlash(relPath)))
-						if err == nil && doc.Frontmatter.Space != "" {
-							return initialPullContext{
-								spaceKey: doc.Frontmatter.Space,
-								spaceDir: cwd,
-								fixedDir: true,
-							}, nil
-						}
-					}
-				}
 			}
+
+			return initialPullContext{
+				spaceKey: inferSpaceKeyFromDirName(cwd),
+				spaceDir: cwd,
+				fixedDir: true,
+			}, nil
 		}
 
 		spaceDir, err := filepath.Abs(cwd)
@@ -360,7 +386,6 @@ func resolveInitialPullContext(target config.Target) (initialPullContext, error)
 		if _, err := os.Stat(filepath.Join(spaceDir, fs.StateFileName)); err == nil {
 			state, err := fs.LoadState(spaceDir)
 			if err == nil {
-				// Check state.SpaceKey first before falling back to file iteration
 				if strings.TrimSpace(state.SpaceKey) != "" {
 					return initialPullContext{
 						spaceKey: state.SpaceKey,
@@ -368,18 +393,13 @@ func resolveInitialPullContext(target config.Target) (initialPullContext, error)
 						fixedDir: true,
 					}, nil
 				}
-				// Fall back to finding space key from file frontmatter
-				for relPath := range state.PagePathIndex {
-					doc, err := fs.ReadMarkdownDocument(filepath.Join(spaceDir, filepath.FromSlash(relPath)))
-					if err == nil && doc.Frontmatter.Space != "" {
-						return initialPullContext{
-							spaceKey: doc.Frontmatter.Space,
-							spaceDir: spaceDir,
-							fixedDir: true,
-						}, nil
-					}
-				}
 			}
+
+			return initialPullContext{
+				spaceKey: inferSpaceKeyFromDirName(spaceDir),
+				spaceDir: spaceDir,
+				fixedDir: true,
+			}, nil
 		}
 
 		return initialPullContext{
@@ -420,8 +440,52 @@ func resolveInitialPullContext(target config.Target) (initialPullContext, error)
 }
 
 func cleanupFailedPullScope(repoRoot, scopePath string) {
-	_, _ = runGit(repoRoot, "clean", "-fd", "--", scopePath)
-	_, _ = runGit(repoRoot, "checkout", "HEAD", "--", scopePath)
+	if _, err := runGit(repoRoot, "restore", "--source=HEAD", "--staged", "--worktree", "--", scopePath); err != nil {
+		_, _ = runGit(repoRoot, "checkout", "HEAD", "--", scopePath)
+	}
+	removeScopedPullGeneratedFiles(repoRoot, scopePath)
+}
+
+func removeScopedPullGeneratedFiles(repoRoot, scopePath string) {
+	out, err := runGit(repoRoot, "ls-files", "--others", "--exclude-standard", "--", scopePath)
+	if err != nil {
+		return
+	}
+
+	for _, line := range strings.Split(strings.ReplaceAll(out, "\r\n", "\n"), "\n") {
+		repoPath := strings.TrimSpace(line)
+		if repoPath == "" {
+			continue
+		}
+		repoPath = filepath.ToSlash(filepath.Clean(repoPath))
+		if !isPullGeneratedPath(repoPath) {
+			continue
+		}
+		_ = os.RemoveAll(filepath.Join(repoRoot, filepath.FromSlash(repoPath)))
+	}
+}
+
+func isPullGeneratedPath(repoPath string) bool {
+	normalized := strings.TrimSpace(filepath.ToSlash(filepath.Clean(repoPath)))
+	if normalized == "" || normalized == "." {
+		return false
+	}
+
+	if strings.EqualFold(filepath.Base(normalized), fs.StateFileName) {
+		return true
+	}
+	if strings.HasSuffix(strings.ToLower(normalized), ".md") {
+		return true
+	}
+
+	segments := strings.Split(normalized, "/")
+	for _, segment := range segments {
+		if strings.EqualFold(segment, "assets") {
+			return true
+		}
+	}
+
+	return false
 }
 
 func findSpaceDirFromFile(filePath, spaceKey string) string {
@@ -440,6 +504,23 @@ func findSpaceDirFromFile(filePath, spaceKey string) string {
 		dir = parent
 	}
 	return filepath.Dir(filePath)
+}
+
+func inferSpaceKeyFromDirName(spaceDir string) string {
+	base := strings.TrimSpace(filepath.Base(spaceDir))
+	if base == "" {
+		return base
+	}
+	if strings.HasSuffix(base, ")") {
+		openIdx := strings.LastIndex(base, "(")
+		if openIdx >= 0 && openIdx < len(base)-1 {
+			candidate := strings.TrimSpace(base[openIdx+1 : len(base)-1])
+			if candidate != "" {
+				return candidate
+			}
+		}
+	}
+	return base
 }
 
 func findEnvPath(startDir string) string {
@@ -799,8 +880,12 @@ func listAllPullChangesForEstimate(
 		if !changeResult.HasMore {
 			break
 		}
+
 		next := changeResult.NextStart
 		if next <= start {
+			next = start + len(changeResult.Changes)
+		}
+		if next <= start && opts.Limit > 0 {
 			next = start + opts.Limit
 		}
 		if next <= start {

@@ -20,11 +20,7 @@ import (
 )
 
 var newDiffRemote = func(cfg *config.Config) (syncflow.PullRemote, error) {
-	return confluence.NewClient(confluence.ClientConfig{
-		BaseURL:  cfg.Domain,
-		Email:    cfg.Email,
-		APIToken: cfg.APIToken,
-	})
+	return newConfluenceClientFromConfig(cfg)
 }
 
 type diffContext struct {
@@ -55,7 +51,10 @@ If omitted, the space is inferred from the current directory name.`,
 }
 
 func runDiff(cmd *cobra.Command, target config.Target) error {
-	ctx := context.Background()
+	ctx := getCommandContext(cmd)
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	out := cmd.OutOrStdout()
 
 	initialCtx, err := resolveInitialPullContext(target)
@@ -73,6 +72,7 @@ func runDiff(cmd *cobra.Command, target config.Target) error {
 	if err != nil {
 		return fmt.Errorf("create confluence client: %w", err)
 	}
+	defer closeRemoteIfPossible(remote)
 
 	space, err := remote.GetSpace(ctx, initialCtx.spaceKey)
 	if err != nil {
