@@ -21,9 +21,9 @@ Deliver a production-grade reliability and operations baseline for conf by closi
 - [x] Unify incremental pagination to use continuation semantics across estimate and execution paths and prevent offset drift (internal/sync/pull.go:793, internal/sync/pull.go:814, cmd/pull.go:776).
 - [x] Persist SpaceKey as authoritative sync state and remove markdown-scan fallback inference during target resolution (internal/fs/state.go:18, internal/sync/pull.go:619, cmd/pull.go:319).
 - [x] Propagate command context through diff and validate conversion paths so cancellation immediately stops expensive operations (cmd/conf/main.go:13, cmd/diff.go:58, cmd/validate.go:326).
-- [ ] Extend retry behavior to include transient network and timeout failures while preserving idempotent remote interactions (internal/confluence/client.go:763, internal/confluence/retry.go:18).
-- [ ] Make retry and rate-limit policies operator-configurable through flags and environment to handle tenant-specific quotas (internal/confluence/ratelimit.go:8, cmd/root.go:59).
-- [ ] Add explicit client close lifecycle for limiter resources so long-running automation does not leak background goroutines (internal/confluence/ratelimit.go:60, internal/confluence/client.go:120).
+- [x] Extend retry behavior to include transient network and timeout failures while preserving idempotent remote interactions (internal/confluence/client.go:763, internal/confluence/retry.go:18).
+- [x] Make retry and rate-limit policies operator-configurable through flags and environment to handle tenant-specific quotas (internal/confluence/ratelimit.go:8, cmd/root.go:59).
+- [x] Add explicit client close lifecycle for limiter resources so long-running automation does not leak background goroutines (internal/confluence/ratelimit.go:60, internal/confluence/client.go:120).
 - [ ] Raise quality gates and add tests for uncovered high-risk paths in push, relink, progress, and root command wiring (internal/sync/push.go:260, internal/sync/push.go:1034, cmd/relink.go:139, cmd/progress.go:17, cmd/root.go:40, tools/coveragecheck/main.go:22, .golangci.yml:7).
 - [ ] Rework e2e suites to require sandbox configuration and remove hardcoded live identifiers so tests align with safety policy (cmd/e2e_test.go:25, cmd/e2e_test.go:171, cmd/e2e_test.go:258, AGENTS.md:55).
 - [ ] Expand release workflow with checksums, signing, SBOM generation, vulnerability scanning, and publish steps for verifiable artifacts (.github/workflows/release.yml:34).

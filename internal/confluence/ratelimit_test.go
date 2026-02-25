@@ -72,3 +72,9 @@ func TestRateLimiter_ThrottlesRequestsOverTime(t *testing.T) {
 		t.Fatalf("token arrived too quickly (%v), expected ~%v", elapsed, tickInterval)
 	}
 }
+
+func TestRateLimiter_StopIsIdempotent(t *testing.T) {
+	rl := newRateLimiter(1)
+	rl.stop()
+	rl.stop()
+}

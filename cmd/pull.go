@@ -27,11 +27,7 @@ var (
 	flagPullRelink       = false
 
 	newPullRemote = func(cfg *config.Config) (syncflow.PullRemote, error) {
-		return confluence.NewClient(confluence.ClientConfig{
-			BaseURL:  cfg.Domain,
-			Email:    cfg.Email,
-			APIToken: cfg.APIToken,
-		})
+		return newConfluenceClientFromConfig(cfg)
 	}
 
 	nowUTC = func() time.Time {
@@ -95,6 +91,7 @@ func runPull(cmd *cobra.Command, target config.Target) (runErr error) {
 	if err != nil {
 		return fmt.Errorf("create confluence client: %w", err)
 	}
+	defer closeRemoteIfPossible(remote)
 
 	// 3. Resolve actual space metadata and final directory
 	space, err := remote.GetSpace(ctx, initialCtx.spaceKey)

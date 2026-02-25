@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 )
@@ -112,8 +113,8 @@ func TestDo_ExhaustsRetries(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error after all retries exhausted")
 	}
-	// 1 initial + maxRetryAttempts retries
-	wantCalls := 1 + maxRetryAttempts
+	// 1 initial + DefaultRetryMaxAttempts retries
+	wantCalls := 1 + DefaultRetryMaxAttempts
 	if calls != wantCalls {
 		t.Fatalf("server calls = %d, want %d", calls, wantCalls)
 	}
@@ -160,7 +161,7 @@ func TestDo_RetriesPreserveRequestBody(t *testing.T) {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		if _, err := io.WriteString(w, `{"id":"101","title":"New","spaceId":"S1","version":{"number":1}}`); err != nil {
+		if _, err := io.WriteString(w, `{"id":"101","title":"Updated","spaceId":"S1","version":{"number":2}}`); err != nil {
 			t.Fatalf("write response: %v", err)
 		}
 	}))
@@ -174,11 +175,12 @@ func TestDo_RetriesPreserveRequestBody(t *testing.T) {
 
 	input := PageUpsertInput{
 		SpaceID: "S1",
-		Title:   "New",
+		Title:   "Updated",
+		Version: 2,
 	}
-	_, err := client.CreatePage(context.Background(), input)
+	_, err := client.UpdatePage(context.Background(), "101", input)
 	if err != nil {
-		t.Fatalf("CreatePage() error = %v", err)
+		t.Fatalf("UpdatePage() error = %v", err)
 	}
 	if calls != 2 {
 		t.Fatalf("calls = %d, want 2", calls)
@@ -192,4 +194,69 @@ func TestDo_RetriesPreserveRequestBody(t *testing.T) {
 	if bodies[0] != bodies[1] {
 		t.Fatalf("retry body differs: call1=%q call2=%q", bodies[0], bodies[1])
 	}
+}
+
+func TestDo_DoesNotRetryNonIdempotentPost(t *testing.T) {
+	calls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	t.Cleanup(server.Close)
+
+	client, _ := NewClient(ClientConfig{
+		BaseURL:  server.URL,
+		Email:    "u",
+		APIToken: "t",
+	})
+
+	_, err := client.CreatePage(context.Background(), PageUpsertInput{SpaceID: "S1", Title: "New"})
+	if err == nil {
+		t.Fatal("expected create page to fail")
+	}
+	if calls != 1 {
+		t.Fatalf("calls = %d, want 1", calls)
+	}
+}
+
+func TestDo_RetriesTransientTimeoutForIdempotentRequest(t *testing.T) {
+	calls := 0
+	transport := roundTripperFunc(func(req *http.Request) (*http.Response, error) {
+		calls++
+		if calls == 1 {
+			return nil, &url.Error{Op: "Get", URL: req.URL.String(), Err: context.DeadlineExceeded}
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     make(http.Header),
+			Body:       io.NopCloser(strings.NewReader(`{"results":[],"meta":{"cursor":""}}`)),
+			Request:    req,
+		}, nil
+	})
+
+	client, err := NewClient(ClientConfig{
+		BaseURL:  "https://example.test",
+		Email:    "u",
+		APIToken: "t",
+		HTTPClient: &http.Client{
+			Transport: transport,
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewClient() unexpected error: %v", err)
+	}
+
+	_, err = client.ListSpaces(context.Background(), SpaceListOptions{})
+	if err != nil {
+		t.Fatalf("ListSpaces() error = %v, want nil", err)
+	}
+	if calls != 2 {
+		t.Fatalf("calls = %d, want 2", calls)
+	}
+}
+
+type roundTripperFunc func(req *http.Request) (*http.Response, error)
+
+func (f roundTripperFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return f(req)
 }

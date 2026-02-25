@@ -10,7 +10,6 @@ import (
 	"strings"
 
 	"github.com/rgonek/confluence-markdown-sync/internal/config"
-	"github.com/rgonek/confluence-markdown-sync/internal/confluence"
 	"github.com/rgonek/confluence-markdown-sync/internal/fs"
 	"github.com/rgonek/confluence-markdown-sync/internal/git"
 	syncflow "github.com/rgonek/confluence-markdown-sync/internal/sync"
@@ -25,11 +24,7 @@ const (
 )
 
 var newPushRemote = func(cfg *config.Config) (syncflow.PushRemote, error) {
-	return confluence.NewClient(confluence.ClientConfig{
-		BaseURL:  cfg.Domain,
-		Email:    cfg.Email,
-		APIToken: cfg.APIToken,
-	})
+	return newConfluenceClientFromConfig(cfg)
 }
 
 var flagPushPreflight bool
@@ -112,6 +107,7 @@ func runPush(cmd *cobra.Command, target config.Target, onConflict string, dryRun
 	if !initialCtx.fixedDir {
 		remote, err := newPushRemote(cfg)
 		if err == nil {
+			defer closeRemoteIfPossible(remote)
 			space, err := remote.GetSpace(ctx, spaceKey)
 			if err == nil {
 				spaceDir = filepath.Join(filepath.Dir(spaceDir), fs.SanitizeSpaceDirName(space.Name, space.Key))
@@ -329,6 +325,7 @@ func runPushDryRun(
 	if err != nil {
 		return fmt.Errorf("create confluence client: %w", err)
 	}
+	defer closeRemoteIfPossible(realRemote)
 
 	remote := &dryRunPushRemote{inner: realRemote, out: out, domain: cfg.Domain}
 
@@ -451,6 +448,7 @@ func runPushInWorktree(
 	if err != nil {
 		return fmt.Errorf("create confluence client: %w", err)
 	}
+	defer closeRemoteIfPossible(remote)
 
 	state, err := fs.LoadState(spaceDir)
 	if err != nil {
