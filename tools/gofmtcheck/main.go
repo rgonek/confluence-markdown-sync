@@ -34,7 +34,7 @@ func main() {
 			return nil
 		}
 
-		raw, readErr := os.ReadFile(path)
+		raw, readErr := os.ReadFile(path) //nolint:gosec // path is produced by repository-local WalkDir traversal
 		if readErr != nil {
 			return readErr
 		}
@@ -44,7 +44,9 @@ func main() {
 			return fmt.Errorf("format %s: %w", path, fmtErr)
 		}
 
-		if !bytes.Equal(raw, formatted) {
+		normalizedRaw := bytes.ReplaceAll(raw, []byte("\r\n"), []byte("\n"))
+
+		if !bytes.Equal(normalizedRaw, formatted) {
 			rel, relErr := filepath.Rel(root, path)
 			if relErr != nil {
 				rel = path

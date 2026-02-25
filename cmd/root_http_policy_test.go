@@ -9,6 +9,8 @@ import (
 	"github.com/spf13/cobra"
 )
 
+type testContextKey string
+
 func TestApplyHTTPPolicyEnvOverrides_UsesEnvWhenFlagsUnset(t *testing.T) {
 	restore := preserveHTTPPolicyFlags(t)
 	defer restore()
@@ -106,12 +108,13 @@ func TestGetCommandContext_FallsBackToBackground(t *testing.T) {
 }
 
 func TestGetCommandContext_UsesCommandContext(t *testing.T) {
-	parent := context.WithValue(context.Background(), "k", "v") //nolint:revive // test key is intentionally local
+	key := testContextKey("k")
+	parent := context.WithValue(context.Background(), key, "v")
 	cmd := &cobra.Command{}
 	cmd.SetContext(parent)
 
 	ctx := getCommandContext(cmd)
-	if got := ctx.Value("k"); got != "v" {
+	if got := ctx.Value(key); got != "v" {
 		t.Fatalf("context value = %v, want v", got)
 	}
 }
