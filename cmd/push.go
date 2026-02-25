@@ -5,9 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/rgonek/confluence-markdown-sync/internal/config"
 	"github.com/rgonek/confluence-markdown-sync/internal/fs"
@@ -79,6 +81,31 @@ func runPush(cmd *cobra.Command, target config.Target, onConflict string, dryRun
 	ctx := getCommandContext(cmd)
 	out := ensureSynchronizedCmdOutput(cmd)
 	preflight := flagPushPreflight
+	startedAt := time.Now()
+	telemetrySpaceKey := "unknown"
+	telemetryConflictPolicy := ""
+	slog.Info("push_started", "target_mode", target.Mode, "target", target.Value, "dry_run", dryRun, "preflight", preflight)
+	defer func() {
+		duration := time.Since(startedAt)
+		if runErr != nil {
+			slog.Warn("push_finished",
+				"space_key", telemetrySpaceKey,
+				"conflict_policy", telemetryConflictPolicy,
+				"dry_run", dryRun,
+				"preflight", preflight,
+				"duration_ms", duration.Milliseconds(),
+				"error", runErr.Error(),
+			)
+			return
+		}
+		slog.Info("push_finished",
+			"space_key", telemetrySpaceKey,
+			"conflict_policy", telemetryConflictPolicy,
+			"dry_run", dryRun,
+			"preflight", preflight,
+			"duration_ms", duration.Milliseconds(),
+		)
+	}()
 
 	if preflight && dryRun {
 		return errors.New("--preflight and --dry-run cannot be used together")
@@ -89,6 +116,7 @@ func runPush(cmd *cobra.Command, target config.Target, onConflict string, dryRun
 			return err
 		}
 		onConflict = resolvedPolicy
+		telemetryConflictPolicy = resolvedPolicy
 	}
 
 	initialCtx, err := resolveInitialPullContext(target)
@@ -97,6 +125,7 @@ func runPush(cmd *cobra.Command, target config.Target, onConflict string, dryRun
 	}
 	spaceDir := initialCtx.spaceDir
 	spaceKey := initialCtx.spaceKey
+	telemetrySpaceKey = strings.TrimSpace(spaceKey)
 
 	envPath := findEnvPath(spaceDir)
 	cfg, err := config.Load(envPath)
@@ -472,7 +501,15 @@ func runPushInWorktree(
 	if err != nil {
 		var conflictErr *syncflow.PushConflictError
 		if errors.As(err, &conflictErr) {
+			slog.Warn("push_conflict_detected",
+				"path", conflictErr.Path,
+				"page_id", conflictErr.PageID,
+				"local_version", conflictErr.LocalVersion,
+				"remote_version", conflictErr.RemoteVersion,
+				"policy", conflictErr.Policy,
+			)
 			if onConflict == OnConflictPullMerge {
+				slog.Info("push_conflict_resolution", "strategy", OnConflictPullMerge, "action", "run_pull")
 				_, _ = fmt.Fprintf(out, "conflict detected for %s; policy is %s, attempting automatic pull-merge...\n", conflictErr.Path, onConflict)
 				// Clear stashRef before pull-merge since pull will restore workspace
 				*stashRef = ""
@@ -489,6 +526,7 @@ func runPushInWorktree(
 	}
 
 	if len(result.Commits) == 0 {
+		slog.Info("push_sync_result", "space_key", spaceKey, "commit_count", 0, "diagnostics", len(result.Diagnostics))
 		_, _ = fmt.Fprintln(out, "push completed with no pushable markdown changes (no-op)")
 		return nil
 	}
@@ -574,6 +612,7 @@ func runPushInWorktree(
 	}
 
 	_, _ = fmt.Fprintf(out, "push completed: %d page change(s) synced\n", len(result.Commits))
+	slog.Info("push_sync_result", "space_key", spaceKey, "commit_count", len(result.Commits), "diagnostics", len(result.Diagnostics))
 	return nil
 }
 

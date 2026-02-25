@@ -30,7 +30,7 @@ Deliver a production-grade reliability and operations baseline for conf by closi
 - [ ] Replace shell-specific clean behavior and validate developer targets on Windows and Linux to improve portability (Makefile:44, .github/workflows/ci.yml:21).
 - [ ] Add licensing and support-governance documents so distribution posture matches installation and release expectations (README.md:13).
 - [ ] Expand operator runbooks for conflict handling, rollback expectations, and dry-run behavior with test-backed guidance (docs/automation.md:41, cmd/push.go:350, cmd/pull.go:574).
-- [ ] Add structured pull and push telemetry for timing, retries, conflict choices, and rollback events to improve incident diagnosis (cmd/root.go:63, internal/confluence/client.go:757, cmd/progress.go:33).
+- [x] Add structured pull and push telemetry for timing, retries, conflict choices, and rollback events to improve incident diagnosis (cmd/pull.go:71, cmd/push.go:79, cmd/automation.go:52, internal/confluence/client.go:787, internal/sync/push.go:399, cmd/progress.go:36).
 
 ## Verification Criteria
 

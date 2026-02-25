@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"mime"
 	"net/http"
 	"os"
@@ -397,6 +398,13 @@ func pushUpsertPage(
 
 	rollback := newPushRollbackTracker(relPath, diagnostics)
 	failWithRollback := func(opErr error) (PushCommitPlan, error) {
+		slog.Warn("push_mutation_failed",
+			"path", relPath,
+			"error", opErr.Error(),
+			"rollback_created_page", strings.TrimSpace(rollback.createdPageID) != "",
+			"rollback_uploaded_assets", len(rollback.uploadedAssets),
+			"rollback_metadata_snapshot", rollback.metadataRestoreReq,
+		)
 		if rollbackErr := rollback.rollback(ctx, remote); rollbackErr != nil {
 			return PushCommitPlan{}, errors.Join(opErr, fmt.Errorf("rollback for %s: %w", relPath, rollbackErr))
 		}
@@ -681,7 +689,9 @@ func (r *pushRollbackTracker) rollback(ctx context.Context, remote PushRemote) e
 	var rollbackErr error
 
 	if r.metadataRestoreReq && r.metadataSnapshot != nil && strings.TrimSpace(r.metadataPageID) != "" {
+		slog.Info("push_rollback_step", "path", r.relPath, "step", "metadata", "page_id", r.metadataPageID)
 		if err := restorePageMetadataSnapshot(ctx, remote, r.metadataPageID, *r.metadataSnapshot); err != nil {
+			slog.Warn("push_rollback_step_failed", "path", r.relPath, "step", "metadata", "page_id", r.metadataPageID, "error", err.Error())
 			appendPushDiagnostic(
 				r.diagnostics,
 				r.relPath,
@@ -690,6 +700,7 @@ func (r *pushRollbackTracker) rollback(ctx context.Context, remote PushRemote) e
 			)
 			rollbackErr = errors.Join(rollbackErr, fmt.Errorf("restore metadata for page %s: %w", r.metadataPageID, err))
 		} else {
+			slog.Info("push_rollback_step_succeeded", "path", r.relPath, "step", "metadata", "page_id", r.metadataPageID)
 			appendPushDiagnostic(
 				r.diagnostics,
 				r.relPath,
@@ -703,8 +714,10 @@ func (r *pushRollbackTracker) rollback(ctx context.Context, remote PushRemote) e
 		if strings.TrimSpace(uploaded.AttachmentID) == "" {
 			continue
 		}
+		slog.Info("push_rollback_step", "path", r.relPath, "step", "attachment", "attachment_id", uploaded.AttachmentID, "page_id", uploaded.PageID)
 
 		if err := remote.DeleteAttachment(ctx, uploaded.AttachmentID, uploaded.PageID); err != nil && !errors.Is(err, confluence.ErrNotFound) {
+			slog.Warn("push_rollback_step_failed", "path", r.relPath, "step", "attachment", "attachment_id", uploaded.AttachmentID, "page_id", uploaded.PageID, "error", err.Error())
 			path := uploaded.Path
 			if path == "" {
 				path = r.relPath
@@ -723,6 +736,7 @@ func (r *pushRollbackTracker) rollback(ctx context.Context, remote PushRemote) e
 		if path == "" {
 			path = r.relPath
 		}
+		slog.Info("push_rollback_step_succeeded", "path", r.relPath, "step", "attachment", "attachment_id", uploaded.AttachmentID, "page_id", uploaded.PageID)
 		appendPushDiagnostic(
 			r.diagnostics,
 			path,
@@ -732,7 +746,9 @@ func (r *pushRollbackTracker) rollback(ctx context.Context, remote PushRemote) e
 	}
 
 	if strings.TrimSpace(r.createdPageID) != "" {
+		slog.Info("push_rollback_step", "path", r.relPath, "step", "created_page", "page_id", r.createdPageID)
 		if err := remote.DeletePage(ctx, r.createdPageID, true); err != nil && !errors.Is(err, confluence.ErrNotFound) {
+			slog.Warn("push_rollback_step_failed", "path", r.relPath, "step", "created_page", "page_id", r.createdPageID, "error", err.Error())
 			appendPushDiagnostic(
 				r.diagnostics,
 				r.relPath,
@@ -741,6 +757,7 @@ func (r *pushRollbackTracker) rollback(ctx context.Context, remote PushRemote) e
 			)
 			rollbackErr = errors.Join(rollbackErr, fmt.Errorf("delete created page %s: %w", r.createdPageID, err))
 		} else {
+			slog.Info("push_rollback_step_succeeded", "path", r.relPath, "step", "created_page", "page_id", r.createdPageID)
 			appendPushDiagnostic(
 				r.diagnostics,
 				r.relPath,
@@ -748,6 +765,12 @@ func (r *pushRollbackTracker) rollback(ctx context.Context, remote PushRemote) e
 				fmt.Sprintf("deleted created page %s", r.createdPageID),
 			)
 		}
+	}
+
+	if rollbackErr != nil {
+		slog.Warn("push_rollback_finished", "path", r.relPath, "status", "failed", "error", rollbackErr.Error())
+	} else {
+		slog.Info("push_rollback_finished", "path", r.relPath, "status", "succeeded")
 	}
 
 	return rollbackErr

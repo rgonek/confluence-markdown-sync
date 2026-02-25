@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 	"io"
+	"log/slog"
 	"time"
 
 	"github.com/schollz/progressbar/v3"
@@ -40,11 +41,13 @@ func (p *consoleProgress) SetDescription(desc string) {
 	}
 	p.description = desc
 	p.bar.Describe(desc)
+	slog.Debug("progress_description", "description", desc)
 }
 
 func (p *consoleProgress) SetCurrentItem(name string) {
 	if name == "" {
 		p.bar.Describe(p.description)
+		slog.Debug("progress_item", "description", p.description, "item", "")
 	} else {
 		// Truncate item for display
 		display := name
@@ -52,6 +55,7 @@ func (p *consoleProgress) SetCurrentItem(name string) {
 			display = "..." + display[len(display)-27:]
 		}
 		p.bar.Describe(fmt.Sprintf("%s (%s)", p.description, display))
+		slog.Debug("progress_item", "description", p.description, "item", name)
 	}
 }
 

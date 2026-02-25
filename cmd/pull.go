@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -70,6 +71,36 @@ If omitted, the space is inferred from the current directory name.`,
 func runPull(cmd *cobra.Command, target config.Target) (runErr error) {
 	ctx := getCommandContext(cmd)
 	out := ensureSynchronizedCmdOutput(cmd)
+	startedAt := time.Now()
+	telemetrySpaceKey := ""
+	telemetryUpdated := 0
+	telemetryDeleted := 0
+	telemetryAssetsDownloaded := 0
+	telemetryDiagnostics := 0
+	slog.Info("pull_started", "target_mode", target.Mode, "target", target.Value)
+
+	defer func() {
+		if telemetrySpaceKey == "" {
+			telemetrySpaceKey = "unknown"
+		}
+		duration := time.Since(startedAt)
+		if runErr != nil {
+			slog.Warn("pull_finished",
+				"space_key", telemetrySpaceKey,
+				"duration_ms", duration.Milliseconds(),
+				"error", runErr.Error(),
+			)
+			return
+		}
+		slog.Info("pull_finished",
+			"space_key", telemetrySpaceKey,
+			"duration_ms", duration.Milliseconds(),
+			"updated_markdown", telemetryUpdated,
+			"deleted_markdown", telemetryDeleted,
+			"downloaded_assets", telemetryAssetsDownloaded,
+			"diagnostics", telemetryDiagnostics,
+		)
+	}()
 
 	// 1. Initial resolution of key/dir
 	initialCtx, err := resolveInitialPullContext(target)
@@ -111,6 +142,7 @@ func runPull(cmd *cobra.Command, target config.Target) (runErr error) {
 		spaceDir:     spaceDir,
 		targetPageID: initialCtx.targetPageID,
 	}
+	telemetrySpaceKey = pullCtx.spaceKey
 
 	scopeDirExisted := dirExists(pullCtx.spaceDir)
 
@@ -132,7 +164,6 @@ func runPull(cmd *cobra.Command, target config.Target) (runErr error) {
 	if err != nil {
 		return err
 	}
-
 	affectedCount := impact.changedMarkdown + impact.deletedMarkdown
 	if err := requireSafetyConfirmation(cmd.InOrStdin(), out, "pull", affectedCount, impact.deletedMarkdown > 0); err != nil {
 		return err
@@ -142,7 +173,6 @@ func runPull(cmd *cobra.Command, target config.Target) (runErr error) {
 	if err != nil {
 		return err
 	}
-
 	scopePath, err := gitScopePath(repoRoot, pullCtx.spaceDir)
 	if err != nil {
 		return err
@@ -210,6 +240,10 @@ func runPull(cmd *cobra.Command, target config.Target) (runErr error) {
 	if err != nil {
 		return err
 	}
+	telemetryUpdated = len(result.UpdatedMarkdown)
+	telemetryDeleted = len(result.DeletedMarkdown)
+	telemetryAssetsDownloaded = len(result.DownloadedAssets)
+	telemetryDiagnostics = len(result.Diagnostics)
 
 	if err := fs.SaveState(pullCtx.spaceDir, result.State); err != nil {
 		return fmt.Errorf("save state: %w", err)
