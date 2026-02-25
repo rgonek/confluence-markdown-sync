@@ -463,7 +463,7 @@ func pushUpsertPage(
 		}
 
 		assetAbsPath := filepath.Join(opts.SpaceDir, filepath.FromSlash(assetRelPath))
-		raw, err := os.ReadFile(assetAbsPath)
+		raw, err := os.ReadFile(assetAbsPath) //nolint:gosec // asset path is resolved from validated in-scope markdown references
 		if err != nil {
 			return PushCommitPlan{}, fmt.Errorf("read asset %s: %w", assetRelPath, err)
 		}

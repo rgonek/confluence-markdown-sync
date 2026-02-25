@@ -122,7 +122,9 @@ func runDiff(cmd *cobra.Command, target config.Target) error {
 		return err
 	}
 	for _, diag := range folderDiags {
-		fmt.Fprintf(out, "warning: %s [%s] %s\n", diag.Path, diag.Code, diag.Message)
+		if _, err := fmt.Fprintf(out, "warning: %s [%s] %s\n", diag.Path, diag.Code, diag.Message); err != nil {
+			return fmt.Errorf("write diagnostic output: %w", err)
+		}
 	}
 
 	pagePathByIDAbs, pagePathByIDRel := syncflow.PlanPagePaths(diffCtx.spaceDir, state.PagePathIndex, pages, folderByID)
@@ -163,7 +165,7 @@ func runDiffFileMode(
 	tmpRoot string,
 ) error {
 	remoteFile := filepath.Join(tmpRoot, "remote.md")
-	if err := os.MkdirAll(filepath.Dir(remoteFile), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(remoteFile), 0o750); err != nil {
 		return fmt.Errorf("prepare diff file: %w", err)
 	}
 
@@ -172,8 +174,10 @@ func runDiffFileMode(
 	page, err := remote.GetPage(ctx, diffCtx.targetPageID)
 	if err != nil {
 		if errors.Is(err, confluence.ErrNotFound) {
-			fmt.Fprintf(out, "warning: %s [missing_remote_page] remote page %s not found\n", relPath, diffCtx.targetPageID)
-			if err := os.WriteFile(remoteFile, []byte{}, 0o644); err != nil {
+			if _, err := fmt.Fprintf(out, "warning: %s [missing_remote_page] remote page %s not found\n", relPath, diffCtx.targetPageID); err != nil {
+				return fmt.Errorf("write diagnostic output: %w", err)
+			}
+			if err := os.WriteFile(remoteFile, []byte{}, 0o600); err != nil {
 				return fmt.Errorf("write diff file: %w", err)
 			}
 			return printNoIndexDiff(out, diffCtx.targetFile, remoteFile)
@@ -195,10 +199,12 @@ func runDiffFileMode(
 	}
 
 	for _, diag := range diagnostics {
-		fmt.Fprintf(out, "warning: %s [%s] %s\n", diag.Path, diag.Code, diag.Message)
+		if _, err := fmt.Fprintf(out, "warning: %s [%s] %s\n", diag.Path, diag.Code, diag.Message); err != nil {
+			return fmt.Errorf("write diagnostic output: %w", err)
+		}
 	}
 
-	if err := os.WriteFile(remoteFile, rendered, 0o644); err != nil {
+	if err := os.WriteFile(remoteFile, rendered, 0o600); err != nil {
 		return fmt.Errorf("write diff file: %w", err)
 	}
 
@@ -218,10 +224,10 @@ func runDiffSpaceMode(
 ) error {
 	localSnapshot := filepath.Join(tmpRoot, "local")
 	remoteSnapshot := filepath.Join(tmpRoot, "remote")
-	if err := os.MkdirAll(localSnapshot, 0o755); err != nil {
+	if err := os.MkdirAll(localSnapshot, 0o750); err != nil {
 		return fmt.Errorf("prepare local snapshot: %w", err)
 	}
-	if err := os.MkdirAll(remoteSnapshot, 0o755); err != nil {
+	if err := os.MkdirAll(remoteSnapshot, 0o750); err != nil {
 		return fmt.Errorf("prepare remote snapshot: %w", err)
 	}
 
@@ -270,16 +276,18 @@ func runDiffSpaceMode(
 		diagnostics = append(diagnostics, pageDiags...)
 
 		dstPath := filepath.Join(remoteSnapshot, filepath.FromSlash(relPath))
-		if err := os.MkdirAll(filepath.Dir(dstPath), 0o755); err != nil {
+		if err := os.MkdirAll(filepath.Dir(dstPath), 0o750); err != nil {
 			return fmt.Errorf("prepare remote snapshot path: %w", err)
 		}
-		if err := os.WriteFile(dstPath, rendered, 0o644); err != nil {
+		if err := os.WriteFile(dstPath, rendered, 0o600); err != nil {
 			return fmt.Errorf("write remote snapshot file: %w", err)
 		}
 	}
 
 	for _, diag := range diagnostics {
-		fmt.Fprintf(out, "warning: %s [%s] %s\n", diag.Path, diag.Code, diag.Message)
+		if _, err := fmt.Fprintf(out, "warning: %s [%s] %s\n", diag.Path, diag.Code, diag.Message); err != nil {
+			return fmt.Errorf("write diagnostic output: %w", err)
+		}
 	}
 
 	return printNoIndexDiff(out, localSnapshot, remoteSnapshot)
@@ -344,7 +352,7 @@ func copyLocalMarkdownSnapshot(spaceDir, snapshotDir string) error {
 			return nil
 		}
 
-		raw, err := os.ReadFile(path)
+		raw, err := os.ReadFile(path) //nolint:gosec // path comes from filepath.WalkDir under spaceDir
 		if err != nil {
 			return err
 		}
@@ -354,10 +362,10 @@ func copyLocalMarkdownSnapshot(spaceDir, snapshotDir string) error {
 			return err
 		}
 		dstPath := filepath.Join(snapshotDir, relPath)
-		if err := os.MkdirAll(filepath.Dir(dstPath), 0o755); err != nil {
+		if err := os.MkdirAll(filepath.Dir(dstPath), 0o750); err != nil {
 			return err
 		}
-		if err := os.WriteFile(dstPath, raw, 0o644); err != nil {
+		if err := os.WriteFile(dstPath, raw, 0o600); err != nil {
 			return err
 		}
 		return nil
@@ -415,7 +423,9 @@ func printNoIndexDiff(out io.Writer, leftPath, rightPath string) error {
 	}
 
 	if err == nil {
-		fmt.Fprintln(out, "diff completed with no differences")
+		if _, writeErr := fmt.Fprintln(out, "diff completed with no differences"); writeErr != nil {
+			return fmt.Errorf("write diff output: %w", writeErr)
+		}
 		return nil
 	}
 

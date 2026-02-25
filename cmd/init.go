@@ -135,25 +135,25 @@ func runInit(cmd *cobra.Command, _ []string) error {
 	if _, err := exec.LookPath("git"); err != nil {
 		return fmt.Errorf("git is required but was not found in PATH: %w", err)
 	}
-	fmt.Fprintln(out, "✓ git found")
+	_, _ = fmt.Fprintln(out, "✓ git found")
 
 	// 2. Initialize git repo if not already inside one.
 	if !isInsideGitRepo() {
-		fmt.Fprintln(out, "Initializing git repository on branch 'main'...")
+		_, _ = fmt.Fprintln(out, "Initializing git repository on branch 'main'...")
 		if out, err := exec.Command("git", "init", "-b", "main").CombinedOutput(); err != nil {
 			return fmt.Errorf("git init failed: %s: %w", strings.TrimSpace(string(out)), err)
 		}
-		fmt.Fprintln(cmd.OutOrStdout(), "✓ git repository initialized")
+		_, _ = fmt.Fprintln(cmd.OutOrStdout(), "✓ git repository initialized")
 		repoCreated = true
 	} else {
-		fmt.Fprintln(out, "✓ existing git repository detected")
+		_, _ = fmt.Fprintln(out, "✓ existing git repository detected")
 	}
 
 	// 3. Create or update .gitignore.
 	if err := ensureGitignore(); err != nil {
 		return fmt.Errorf("failed to update .gitignore: %w", err)
 	}
-	fmt.Fprintln(out, "✓ .gitignore updated")
+	_, _ = fmt.Fprintln(out, "✓ .gitignore updated")
 
 	// 4. Ensure .env exists (prompt if missing).
 	envCreated, err := ensureDotEnv(cmd)
@@ -161,22 +161,22 @@ func runInit(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("failed to create .env: %w", err)
 	}
 	if envCreated {
-		fmt.Fprintln(out, "✓ .env created")
+		_, _ = fmt.Fprintln(out, "✓ .env created")
 	} else {
-		fmt.Fprintln(out, "✓ .env already exists")
+		_, _ = fmt.Fprintln(out, "✓ .env already exists")
 	}
 
 	// 5. Create AGENTS.md if missing.
 	if err := createIfMissing("AGENTS.md", agentsMDTemplate); err != nil {
 		return fmt.Errorf("failed to create AGENTS.md: %w", err)
 	}
-	fmt.Fprintln(out, "✓ AGENTS.md ready")
+	_, _ = fmt.Fprintln(out, "✓ AGENTS.md ready")
 
 	// 6. Create README.md if missing.
 	if err := createIfMissing("README.md", readmeMDTemplate); err != nil {
 		return fmt.Errorf("failed to create README.md: %w", err)
 	}
-	fmt.Fprintln(out, "✓ README.md ready")
+	_, _ = fmt.Fprintln(out, "✓ README.md ready")
 
 	if repoCreated {
 		committed, err := createInitCommit()
@@ -184,13 +184,13 @@ func runInit(cmd *cobra.Command, _ []string) error {
 			return err
 		}
 		if committed {
-			fmt.Fprintln(out, "✓ initial commit created")
+			_, _ = fmt.Fprintln(out, "✓ initial commit created")
 		} else {
-			fmt.Fprintln(out, "✓ initial commit skipped (no staged changes)")
+			_, _ = fmt.Fprintln(out, "✓ initial commit skipped (no staged changes)")
 		}
 	}
 
-	fmt.Fprintln(out, "\nconf workspace initialized successfully.")
+	_, _ = fmt.Fprintln(out, "\nconf workspace initialized successfully.")
 	return nil
 }
 
@@ -221,15 +221,19 @@ func ensureGitignore() error {
 		return nil
 	}
 
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	defer func() {
+		_ = f.Close()
+	}()
 
 	// Ensure we start on a new line.
 	if len(existing) > 0 && !strings.HasSuffix(content, "\n") {
-		fmt.Fprintln(f)
+		if _, err := fmt.Fprintln(f); err != nil {
+			return err
+		}
 	}
 	if len(existing) == 0 {
 		// Write full template for a new file.
@@ -238,7 +242,9 @@ func ensureGitignore() error {
 	}
 	// Append only the missing entries.
 	for _, e := range missing {
-		fmt.Fprintln(f, e)
+		if _, err := fmt.Fprintln(f, e); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -252,7 +258,7 @@ func ensureDotEnv(cmd *cobra.Command) (bool, error) {
 	in := cmd.InOrStdin()
 	out := cmd.OutOrStdout()
 
-	fmt.Fprintln(out, "\nNo .env file found. Please enter your Atlassian credentials.")
+	_, _ = fmt.Fprintln(out, "\nNo .env file found. Please enter your Atlassian credentials.")
 	scanner := bufio.NewScanner(in)
 
 	domain := promptField(scanner, out, "ATLASSIAN_DOMAIN (e.g. https://your-domain.atlassian.net)")
@@ -270,7 +276,7 @@ func ensureDotEnv(cmd *cobra.Command) (bool, error) {
 }
 
 func promptField(scanner *bufio.Scanner, out interface{ Write([]byte) (int, error) }, label string) string {
-	fmt.Fprintf(out, "  %s: ", label)
+	_, _ = fmt.Fprintf(out, "  %s: ", label)
 	if scanner.Scan() {
 		return strings.TrimSpace(scanner.Text())
 	}
@@ -284,11 +290,11 @@ func createIfMissing(path, content string) error {
 	}
 	dir := filepath.Dir(path)
 	if dir != "." {
-		if err := os.MkdirAll(dir, 0o755); err != nil {
+		if err := os.MkdirAll(dir, 0o750); err != nil {
 			return err
 		}
 	}
-	return os.WriteFile(path, []byte(content), 0o644)
+	return os.WriteFile(path, []byte(content), 0o600)
 }
 
 // containsLine reports whether s contains the given line.
@@ -321,7 +327,8 @@ func createInitCommit() (bool, error) {
 	}
 
 	addArgs := append([]string{"add", "--"}, toStage...)
-	if out, err := exec.Command("git", addArgs...).CombinedOutput(); err != nil {
+	gitAdd := exec.Command("git", addArgs...) //nolint:gosec // arguments are fixed git flags and local workspace paths
+	if out, err := gitAdd.CombinedOutput(); err != nil {
 		return false, fmt.Errorf("git add failed: %s", strings.TrimSpace(string(out)))
 	}
 

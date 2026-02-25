@@ -18,7 +18,7 @@ import (
 func TestRunDiff_FileModeShowsContentChanges(t *testing.T) {
 	repo := t.TempDir()
 	spaceDir := filepath.Join(repo, "ENG")
-	if err := os.MkdirAll(spaceDir, 0o755); err != nil {
+	if err := os.MkdirAll(spaceDir, 0o750); err != nil {
 		t.Fatalf("mkdir space: %v", err)
 	}
 
@@ -79,7 +79,7 @@ func TestRunDiff_FileModeShowsContentChanges(t *testing.T) {
 func TestRunDiff_SpaceModeNoDifferences(t *testing.T) {
 	repo := t.TempDir()
 	spaceDir := filepath.Join(repo, "ENG")
-	if err := os.MkdirAll(spaceDir, 0o755); err != nil {
+	if err := os.MkdirAll(spaceDir, 0o750); err != nil {
 		t.Fatalf("mkdir space: %v", err)
 	}
 
@@ -145,7 +145,7 @@ func TestRunDiff_SpaceModeNoDifferences(t *testing.T) {
 func TestRunDiff_ReportsBestEffortWarnings(t *testing.T) {
 	repo := t.TempDir()
 	spaceDir := filepath.Join(repo, "ENG")
-	if err := os.MkdirAll(spaceDir, 0o755); err != nil {
+	if err := os.MkdirAll(spaceDir, 0o750); err != nil {
 		t.Fatalf("mkdir space: %v", err)
 	}
 
@@ -203,7 +203,7 @@ func TestRunDiff_ReportsBestEffortWarnings(t *testing.T) {
 func TestRunDiff_FolderListFailureFallsBackToPageHierarchy(t *testing.T) {
 	repo := t.TempDir()
 	spaceDir := filepath.Join(repo, "ENG")
-	if err := os.MkdirAll(spaceDir, 0o755); err != nil {
+	if err := os.MkdirAll(spaceDir, 0o750); err != nil {
 		t.Fatalf("mkdir space: %v", err)
 	}
 

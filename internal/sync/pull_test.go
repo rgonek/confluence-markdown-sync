@@ -17,7 +17,7 @@ import (
 func TestPull_IncrementalRewriteDeleteAndWatermark(t *testing.T) {
 	tmpDir := t.TempDir()
 	spaceDir := filepath.Join(tmpDir, "ENG")
-	if err := os.MkdirAll(spaceDir, 0o755); err != nil {
+	if err := os.MkdirAll(spaceDir, 0o750); err != nil {
 		t.Fatalf("mkdir space: %v", err)
 	}
 
@@ -42,10 +42,10 @@ func TestPull_IncrementalRewriteDeleteAndWatermark(t *testing.T) {
 	writeDoc("deleted.md", "999", "to be deleted\n")
 
 	legacyAssetPath := filepath.Join(spaceDir, "assets", "999", "att-old-legacy.png")
-	if err := os.MkdirAll(filepath.Dir(legacyAssetPath), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(legacyAssetPath), 0o750); err != nil {
 		t.Fatalf("mkdir legacy assets: %v", err)
 	}
-	if err := os.WriteFile(legacyAssetPath, []byte("legacy"), 0o644); err != nil {
+	if err := os.WriteFile(legacyAssetPath, []byte("legacy"), 0o600); err != nil {
 		t.Fatalf("write legacy asset: %v", err)
 	}
 
@@ -143,7 +143,7 @@ func TestPull_IncrementalRewriteDeleteAndWatermark(t *testing.T) {
 	}
 
 	assetPath := filepath.Join(spaceDir, "assets", "1", "att-1-diagram.png")
-	assetRaw, err := os.ReadFile(assetPath)
+	assetRaw, err := os.ReadFile(assetPath) //nolint:gosec // test path is created in temp workspace
 	if err != nil {
 		t.Fatalf("read downloaded asset: %v", err)
 	}
@@ -261,7 +261,7 @@ func TestPlanPagePaths_UsesFolderHierarchy(t *testing.T) {
 func TestPull_FolderListFailureFallsBackToPageHierarchy(t *testing.T) {
 	tmpDir := t.TempDir()
 	spaceDir := filepath.Join(tmpDir, "ENG")
-	if err := os.MkdirAll(spaceDir, 0o755); err != nil {
+	if err := os.MkdirAll(spaceDir, 0o750); err != nil {
 		t.Fatalf("mkdir space: %v", err)
 	}
 
@@ -326,7 +326,7 @@ func TestPull_FolderListFailureFallsBackToPageHierarchy(t *testing.T) {
 func TestPull_ForceFullPullsAllPagesWithoutIncrementalChanges(t *testing.T) {
 	tmpDir := t.TempDir()
 	spaceDir := filepath.Join(tmpDir, "ENG")
-	if err := os.MkdirAll(spaceDir, 0o755); err != nil {
+	if err := os.MkdirAll(spaceDir, 0o750); err != nil {
 		t.Fatalf("mkdir space: %v", err)
 	}
 
@@ -623,7 +623,9 @@ func sampleChildADF() map[string]any {
 func TestPull_DraftRecovery(t *testing.T) {
 	tmpDir := t.TempDir()
 	spaceDir := filepath.Join(tmpDir, "ENG")
-	_ = os.MkdirAll(spaceDir, 0o755)
+	if err := os.MkdirAll(spaceDir, 0o750); err != nil {
+		t.Fatalf("mkdir space: %v", err)
+	}
 
 	// Local state knows about page 10 (draft)
 	state := fs.SpaceState{
@@ -693,7 +695,9 @@ func TestPull_DraftRecovery(t *testing.T) {
 func TestPull_SkipsMissingAssets(t *testing.T) {
 	tmpDir := t.TempDir()
 	spaceDir := filepath.Join(tmpDir, "ENG")
-	_ = os.MkdirAll(spaceDir, 0o755)
+	if err := os.MkdirAll(spaceDir, 0o750); err != nil {
+		t.Fatalf("mkdir space: %v", err)
+	}
 
 	fake := &fakePullRemote{
 		space: confluence.Space{ID: "space-1", Key: "ENG"},

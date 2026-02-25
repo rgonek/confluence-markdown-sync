@@ -55,7 +55,7 @@ func runValidateTarget(out io.Writer, target config.Target) error {
 		return fmt.Errorf("failed to load config: %w", err)
 	}
 
-	fmt.Fprintf(out, "Building index for space: %s\n", ctx.spaceDir)
+	_, _ = fmt.Fprintf(out, "Building index for space: %s\n", ctx.spaceDir)
 	index, err := syncflow.BuildPageIndex(ctx.spaceDir)
 	if err != nil {
 		return fmt.Errorf("failed to build page index: %w", err)
@@ -73,15 +73,15 @@ func runValidateTarget(out io.Writer, target config.Target) error {
 	for _, file := range ctx.files {
 		rel, _ := filepath.Rel(ctx.spaceDir, file)
 
-		issues := validateFile(file, ctx.spaceDir, linkHook, mediaHook)
+		issues := validateFile(file, linkHook, mediaHook)
 		if len(issues) == 0 {
 			continue
 		}
 
 		hasErrors = true
-		fmt.Fprintf(out, "Validation failed for %s:\n", filepath.ToSlash(rel))
+		_, _ = fmt.Fprintf(out, "Validation failed for %s:\n", filepath.ToSlash(rel))
 		for _, issue := range issues {
-			fmt.Fprintf(out, "  - [%s] %s: %s\n", issue.Code, issue.Field, issue.Message)
+			_, _ = fmt.Fprintf(out, "  - [%s] %s: %s\n", issue.Code, issue.Field, issue.Message)
 		}
 	}
 
@@ -89,7 +89,7 @@ func runValidateTarget(out io.Writer, target config.Target) error {
 		return fmt.Errorf("validation failed: please fix the issues listed above before retrying")
 	}
 
-	fmt.Fprintln(out, "Validation successful")
+	_, _ = fmt.Fprintln(out, "Validation successful")
 	return nil
 }
 
@@ -146,7 +146,7 @@ func resolveValidateTargetContext(target config.Target) (validateTargetContext, 
 	return validateTargetContext{spaceDir: spaceDir, files: files}, nil
 }
 
-func validateFile(path, spaceDir string, linkHook mdconverter.LinkParseHook, mediaHook mdconverter.MediaParseHook) []fs.ValidationIssue {
+func validateFile(path string, linkHook mdconverter.LinkParseHook, mediaHook mdconverter.MediaParseHook) []fs.ValidationIssue {
 	var issues []fs.ValidationIssue
 
 	// Read full document
@@ -162,39 +162,7 @@ func validateFile(path, spaceDir string, linkHook mdconverter.LinkParseHook, med
 	res := fs.ValidateFrontmatterSchema(doc.Frontmatter)
 	issues = append(issues, res.Issues...)
 
-	// 2. Validate Space Key matches state if available
-	state, err := fs.LoadState(spaceDir)
-	if err == nil {
-		// We could collect space key from many files, but state is source of truth for "scoped" changes
-		// In fact, we should just check if doc.Frontmatter.Space is non-empty.
-		// Detailed cross-file space key validation is complex if we have multiple spaces.
-		// Let's assume if it is valid by schema, we are mostly OK,
-		// but we can check it against state page_path_index if we want to be sure it belongs to this dir.
-		if doc.Frontmatter.Space == "" {
-			issues = append(issues, fs.ValidationIssue{
-				Field:   "space",
-				Code:    "required",
-				Message: "space is required",
-			})
-		}
-
-		// If we have state, we can verify this page ID belongs to this space dir
-		if doc.Frontmatter.ID != "" {
-			found := false
-			for _, id := range state.PagePathIndex {
-				if id == doc.Frontmatter.ID {
-					found = true
-					break
-				}
-			}
-			if !found && len(state.PagePathIndex) > 0 {
-				// Page is not in state index, might be a new file or wrong space.
-				// For now let's just ensure space key is present.
-			}
-		}
-	}
-
-	// 3. Strict Conversion
+	// 2. Strict Conversion
 	_, err = converter.Reverse(context.Background(), []byte(doc.Body), converter.ReverseConfig{
 		LinkHook:  linkHook,
 		MediaHook: mediaHook,

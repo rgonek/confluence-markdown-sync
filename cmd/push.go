@@ -82,7 +82,7 @@ func validateOnConflict(v string) error {
 
 func runPush(cmd *cobra.Command, target config.Target, onConflict string, dryRun bool) (runErr error) {
 	ctx := getCommandContext(cmd)
-	out := cmd.OutOrStdout()
+	out := ensureSynchronizedCmdOutput(cmd)
 	preflight := flagPushPreflight
 
 	if preflight && dryRun {
@@ -185,7 +185,7 @@ func runPush(cmd *cobra.Command, target config.Target, onConflict string, dryRun
 		if runErr == nil {
 			_ = gitClient.DeleteRef(snapshotName)
 		} else {
-			fmt.Fprintf(out, "\nSnapshot retained for recovery: %s\n", snapshotName)
+			_, _ = fmt.Fprintf(out, "\nSnapshot retained for recovery: %s\n", snapshotName)
 		}
 	}()
 
@@ -200,7 +200,7 @@ func runPush(cmd *cobra.Command, target config.Target, onConflict string, dryRun
 		if runErr == nil {
 			_ = gitClient.DeleteBranch(syncBranchName)
 		} else {
-			fmt.Fprintf(out, "Sync branch retained for recovery: %s\n", syncBranchName)
+			_, _ = fmt.Fprintf(out, "Sync branch retained for recovery: %s\n", syncBranchName)
 		}
 	}()
 
@@ -239,9 +239,9 @@ func runPushPreflight(
 		}
 	}
 
-	fmt.Fprintf(out, "preflight for space %s\n", spaceKey)
+	_, _ = fmt.Fprintf(out, "preflight for space %s\n", spaceKey)
 	if len(syncChanges) == 0 {
-		fmt.Fprintln(out, "no in-scope markdown changes")
+		_, _ = fmt.Fprintln(out, "no in-scope markdown changes")
 		return nil
 	}
 
@@ -257,12 +257,12 @@ func runPushPreflight(
 	}
 
 	addCount, modifyCount, deleteCount := summarizePushChanges(syncChanges)
-	fmt.Fprintf(out, "changes: %d (A:%d M:%d D:%d)\n", len(syncChanges), addCount, modifyCount, deleteCount)
+	_, _ = fmt.Fprintf(out, "changes: %d (A:%d M:%d D:%d)\n", len(syncChanges), addCount, modifyCount, deleteCount)
 	for _, change := range syncChanges {
-		fmt.Fprintf(out, "  %s %s\n", change.Type, change.Path)
+		_, _ = fmt.Fprintf(out, "  %s %s\n", change.Type, change.Path)
 	}
 	if len(syncChanges) > 10 || deleteCount > 0 {
-		fmt.Fprintln(out, "safety confirmation would be required")
+		_, _ = fmt.Fprintln(out, "safety confirmation would be required")
 	}
 	return nil
 }
@@ -276,7 +276,7 @@ func runPushDryRun(
 	gitClient *git.Client,
 	spaceScopePath, changeScopePath string,
 ) error {
-	fmt.Fprintln(out, "[DRY-RUN] Simulating push (no git or confluence state will be modified)")
+	_, _ = fmt.Fprintln(out, "[DRY-RUN] Simulating push (no git or confluence state will be modified)")
 
 	baselineRef, err := gitPushBaselineRef(gitClient, spaceKey)
 	if err != nil {
@@ -296,7 +296,7 @@ func runPushDryRun(
 	}
 
 	if len(syncChanges) == 0 {
-		fmt.Fprintln(out, "push completed with no in-scope markdown changes (no-op)")
+		_, _ = fmt.Fprintln(out, "push completed with no in-scope markdown changes (no-op)")
 		return nil
 	}
 
@@ -336,7 +336,7 @@ func runPushDryRun(
 	}
 
 	var progress syncflow.Progress
-	if !flagVerbose {
+	if !flagVerbose && outputSupportsProgress(out) {
 		progress = newConsoleProgress(out, "[DRY-RUN] Syncing to Confluence")
 	}
 
@@ -358,11 +358,11 @@ func runPushDryRun(
 		return err
 	}
 
-	fmt.Fprintf(out, "\n[DRY-RUN] push completed: %d page change(s) would be synced\n", len(result.Commits))
+	_, _ = fmt.Fprintf(out, "\n[DRY-RUN] push completed: %d page change(s) would be synced\n", len(result.Commits))
 	if len(result.Diagnostics) > 0 {
-		fmt.Fprintln(out, "\nDiagnostics:")
+		_, _ = fmt.Fprintln(out, "\nDiagnostics:")
 		for _, diag := range result.Diagnostics {
-			fmt.Fprintf(out, "  [%s] %s: %s\n", diag.Code, diag.Path, diag.Message)
+			_, _ = fmt.Fprintf(out, "  [%s] %s: %s\n", diag.Code, diag.Path, diag.Message)
 		}
 	}
 	return nil
@@ -432,7 +432,7 @@ func runPushInWorktree(
 	}
 
 	if len(syncChanges) == 0 {
-		fmt.Fprintln(out, "push completed with no in-scope markdown changes (no-op)")
+		_, _ = fmt.Fprintln(out, "push completed with no in-scope markdown changes (no-op)")
 		return nil
 	}
 
@@ -458,7 +458,7 @@ func runPushInWorktree(
 	}
 
 	var progress syncflow.Progress
-	if !flagVerbose {
+	if !flagVerbose && outputSupportsProgress(out) {
 		progress = newConsoleProgress(out, "Syncing to Confluence")
 	}
 
@@ -475,13 +475,13 @@ func runPushInWorktree(
 		var conflictErr *syncflow.PushConflictError
 		if errors.As(err, &conflictErr) {
 			if onConflict == OnConflictPullMerge {
-				fmt.Fprintf(out, "conflict detected for %s; policy is %s, attempting automatic pull-merge...\n", conflictErr.Path, onConflict)
+				_, _ = fmt.Fprintf(out, "conflict detected for %s; policy is %s, attempting automatic pull-merge...\n", conflictErr.Path, onConflict)
 				// Clear stashRef before pull-merge since pull will restore workspace
 				*stashRef = ""
 				if pullErr := runPull(cmd, target); pullErr != nil {
 					return fmt.Errorf("automatic pull-merge failed: %w", pullErr)
 				}
-				fmt.Fprintln(out, "automatic pull-merge completed. If there were no content conflicts, you can now retry your push.")
+				_, _ = fmt.Fprintln(out, "automatic pull-merge completed. If there were no content conflicts, you can now retry your push.")
 				return nil
 			}
 			return formatPushConflictError(conflictErr)
@@ -490,14 +490,14 @@ func runPushInWorktree(
 	}
 
 	if len(result.Commits) == 0 {
-		fmt.Fprintln(out, "push completed with no pushable markdown changes (no-op)")
+		_, _ = fmt.Fprintln(out, "push completed with no pushable markdown changes (no-op)")
 		return nil
 	}
 
 	if len(result.Diagnostics) > 0 {
-		fmt.Fprintln(out, "\nDiagnostics:")
+		_, _ = fmt.Fprintln(out, "\nDiagnostics:")
 		for _, diag := range result.Diagnostics {
-			fmt.Fprintf(out, "  [%s] %s: %s\n", diag.Code, diag.Path, diag.Message)
+			_, _ = fmt.Fprintf(out, "  [%s] %s: %s\n", diag.Code, diag.Path, diag.Message)
 		}
 	}
 
@@ -539,7 +539,7 @@ func runPushInWorktree(
 			return fmt.Errorf("git commit failed: %w", err)
 		}
 
-		fmt.Fprintf(out, "pushed %s (page %s, v%d)\n", commitPlan.Path, commitPlan.PageID, commitPlan.Version)
+		_, _ = fmt.Fprintf(out, "pushed %s (page %s, v%d)\n", commitPlan.Path, commitPlan.PageID, commitPlan.Version)
 	}
 
 	// 8. Remove Worktree
@@ -557,17 +557,17 @@ func runPushInWorktree(
 	tagName := fmt.Sprintf("confluence-sync/push/%s/%s", refKey, tsStr)
 	tagMsg := fmt.Sprintf("Confluence push sync for %s at %s", spaceKey, tsStr)
 	if err := gitClient.Tag(tagName, tagMsg); err != nil {
-		fmt.Fprintf(out, "warning: failed to create tag: %v\n", err)
+		_, _ = fmt.Fprintf(out, "warning: failed to create tag: %v\n", err)
 	}
 
 	// 11. Restore Stash (manual pop to show warning on success)
 	if err := gitClient.StashPop(*stashRef); err != nil {
-		fmt.Fprintf(out, "warning: stash restore had conflicts: %v\n", err)
+		_, _ = fmt.Fprintf(out, "warning: stash restore had conflicts: %v\n", err)
 	}
 	// Clear stashRef so the defer in runPush doesn't try to pop again
 	*stashRef = ""
 
-	fmt.Fprintf(out, "push completed: %d page change(s) synced\n", len(result.Commits))
+	_, _ = fmt.Fprintf(out, "push completed: %d page change(s) synced\n", len(result.Commits))
 	return nil
 }
 
@@ -690,17 +690,17 @@ func copyDirTree(src, dst string) error {
 
 		targetPath := filepath.Join(dst, relPath)
 		if d.IsDir() {
-			return os.MkdirAll(targetPath, 0o755)
+			return os.MkdirAll(targetPath, 0o750)
 		}
 
-		raw, err := os.ReadFile(path)
+		raw, err := os.ReadFile(path) //nolint:gosec // path comes from filepath.WalkDir under trusted source dir
 		if err != nil {
 			return err
 		}
-		if err := os.MkdirAll(filepath.Dir(targetPath), 0o755); err != nil {
+		if err := os.MkdirAll(filepath.Dir(targetPath), 0o750); err != nil {
 			return err
 		}
-		return os.WriteFile(targetPath, raw, 0o644)
+		return os.WriteFile(targetPath, raw, 0o600)
 	})
 }
 

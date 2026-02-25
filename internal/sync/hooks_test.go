@@ -141,14 +141,14 @@ func TestReverseMediaHook(t *testing.T) {
 	// Need to create real files for Stat check
 	tmpDir := t.TempDir()
 	spaceDir := filepath.Join(tmpDir, "myspace")
-	err := os.MkdirAll(filepath.Join(spaceDir, "assets"), 0755)
+	err := os.MkdirAll(filepath.Join(spaceDir, "assets"), 0o750)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	// Create dummy asset
 	assetPath := filepath.Join(spaceDir, "assets", "image.png")
-	err = os.WriteFile(assetPath, []byte("fake image"), 0644)
+	err = os.WriteFile(assetPath, []byte("fake image"), 0o600)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -178,7 +178,7 @@ func TestReverseMediaHook(t *testing.T) {
 
 	// Test 2: New asset (not in index)
 	newAssetPath := filepath.Join(spaceDir, "assets", "new.png")
-	err = os.WriteFile(newAssetPath, []byte("new image"), 0644)
+	err = os.WriteFile(newAssetPath, []byte("new image"), 0o600)
 	if err != nil {
 		t.Fatal(err)
 	}

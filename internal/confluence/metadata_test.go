@@ -14,10 +14,14 @@ func TestClient_ContentStatus(t *testing.T) {
 		switch r.Method {
 		case http.MethodGet:
 			w.Header().Set("Content-Type", "application/json")
-			io.WriteString(w, `{"name": "Ready to review", "color": "yellow", "id": 80}`)
+			if _, err := io.WriteString(w, `{"name": "Ready to review", "color": "yellow", "id": 80}`); err != nil {
+				t.Fatalf("write response: %v", err)
+			}
 		case http.MethodPut:
 			w.Header().Set("Content-Type", "application/json")
-			io.WriteString(w, `{"name": "Ready to review"}`)
+			if _, err := io.WriteString(w, `{"name": "Ready to review"}`); err != nil {
+				t.Fatalf("write response: %v", err)
+			}
 		case http.MethodDelete:
 			w.WriteHeader(http.StatusNoContent)
 		default:
@@ -67,10 +71,14 @@ func TestClient_Labels(t *testing.T) {
 		switch r.Method {
 		case http.MethodGet:
 			w.Header().Set("Content-Type", "application/json")
-			io.WriteString(w, `{"results": [{"prefix": "global", "name": "arch"}, {"prefix": "global", "name": "api"}]}`)
+			if _, err := io.WriteString(w, `{"results": [{"prefix": "global", "name": "arch"}, {"prefix": "global", "name": "api"}]}`); err != nil {
+				t.Fatalf("write response: %v", err)
+			}
 		case http.MethodPost:
 			w.Header().Set("Content-Type", "application/json")
-			io.WriteString(w, `{"results": []}`)
+			if _, err := io.WriteString(w, `{"results": []}`); err != nil {
+				t.Fatalf("write response: %v", err)
+			}
 		case http.MethodDelete:
 			if r.URL.Query().Get("name") != "arch" {
 				w.WriteHeader(http.StatusBadRequest)

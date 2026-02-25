@@ -39,7 +39,7 @@ func StatePath(spaceDir string) string {
 // Missing state files return an empty initialized state.
 func LoadState(spaceDir string) (SpaceState, error) {
 	path := StatePath(spaceDir)
-	raw, err := os.ReadFile(path)
+	raw, err := os.ReadFile(path) //nolint:gosec // state path is derived from workspace spaceDir
 	if err != nil {
 		if os.IsNotExist(err) {
 			return NewSpaceState(), nil
@@ -74,10 +74,10 @@ func SaveState(spaceDir string, state SpaceState) error {
 	}
 	raw = append(raw, '\n')
 
-	if err := os.MkdirAll(spaceDir, 0o755); err != nil {
+	if err := os.MkdirAll(spaceDir, 0o755); err != nil { //nolint:gosec // workspace directories intentionally use standard permissions
 		return err
 	}
-	return os.WriteFile(StatePath(spaceDir), raw, 0o644)
+	return os.WriteFile(StatePath(spaceDir), raw, 0o644) //nolint:gosec // state file is expected to be readable for local tooling
 }
 
 // FindAllStateFiles scans root for all .confluence-state.json files.

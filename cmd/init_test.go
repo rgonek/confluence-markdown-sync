@@ -49,7 +49,7 @@ func TestRunInit_DoesNotCreateCommitInsideExistingRepo(t *testing.T) {
 	repo := t.TempDir()
 	setupGitRepo(t, repo)
 
-	if err := os.WriteFile(filepath.Join(repo, "baseline.txt"), []byte("baseline\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(repo, "baseline.txt"), []byte("baseline\n"), 0o600); err != nil {
 		t.Fatalf("write baseline file: %v", err)
 	}
 	if err := os.WriteFile(filepath.Join(repo, ".env"), []byte("ATLASSIAN_DOMAIN=https://example.atlassian.net\n"), 0o600); err != nil {

@@ -31,17 +31,21 @@ func TestResolveLinksInFile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer os.RemoveAll(tmpDir)
+	t.Cleanup(func() {
+		if err := os.RemoveAll(tmpDir); err != nil {
+			t.Errorf("cleanup temp dir: %v", err)
+		}
+	})
 
 	sourcePath := filepath.Join(tmpDir, "source.md")
 	targetPath := filepath.Join(tmpDir, "target.md")
 
 	content := `Check this [link](https://example.atlassian.net/wiki/pages/viewpage.action?pageId=456) and [another](https://example.atlassian.net/wiki/pages/viewpage.action?pageId=456#Section).
 Not a [confluence link](https://google.com).`
-	if err := os.WriteFile(sourcePath, []byte(content), 0644); err != nil {
+	if err := os.WriteFile(sourcePath, []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(targetPath, []byte("target"), 0644); err != nil {
+	if err := os.WriteFile(targetPath, []byte("target"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -61,7 +65,7 @@ Not a [confluence link](https://google.com).`
 		t.Errorf("expected 2 links converted, got %d", count)
 	}
 
-	newContent, err := os.ReadFile(sourcePath)
+	newContent, err := os.ReadFile(sourcePath) //nolint:gosec // test file path is controlled in temp dir
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -78,19 +82,31 @@ func TestBuildGlobalPageIndex(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer os.RemoveAll(tmpDir)
+	t.Cleanup(func() {
+		if err := os.RemoveAll(tmpDir); err != nil {
+			t.Errorf("cleanup temp dir: %v", err)
+		}
+	})
 
 	// Create two spaces
 	space1 := filepath.Join(tmpDir, "space1")
 	space2 := filepath.Join(tmpDir, "space2")
-	os.MkdirAll(space1, 0755)
-	os.MkdirAll(space2, 0755)
+	if err := os.MkdirAll(space1, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(space2, 0o750); err != nil {
+		t.Fatal(err)
+	}
 
 	// Create state files
 	state1 := `{"page_path_index": {"page1.md": "101"}}`
 	state2 := `{"page_path_index": {"page2.md": "201"}}`
-	os.WriteFile(filepath.Join(space1, ".confluence-state.json"), []byte(state1), 0644)
-	os.WriteFile(filepath.Join(space2, ".confluence-state.json"), []byte(state2), 0644)
+	if err := os.WriteFile(filepath.Join(space1, ".confluence-state.json"), []byte(state1), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(space2, ".confluence-state.json"), []byte(state2), 0o600); err != nil {
+		t.Fatal(err)
+	}
 
 	index, err := BuildGlobalPageIndex(tmpDir)
 	if err != nil {

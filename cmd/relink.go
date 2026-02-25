@@ -93,7 +93,7 @@ func runTargetedRelink(cmd *cobra.Command, repoRoot, target string, index sync.G
 		}
 	}
 
-	fmt.Fprintf(cmd.OutOrStdout(), "Relinking references to space %s (%s)...\n", targetSpaceKey, targetSpaceDir)
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Relinking references to space %s (%s)...\n", targetSpaceKey, targetSpaceDir)
 
 	// 3. Scan all OTHER spaces
 	for dir, state := range states {
@@ -127,7 +127,7 @@ func runTargetedRelink(cmd *cobra.Command, repoRoot, target string, index sync.G
 			return err
 		}
 
-		fmt.Fprintf(cmd.OutOrStdout(), "Updated %d links in %d files in space %s.\n", result.LinksConverted, result.FilesChanged, currentSpaceKey)
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Updated %d links in %d files in space %s.\n", result.LinksConverted, result.FilesChanged, currentSpaceKey)
 	}
 
 	return nil
@@ -160,7 +160,7 @@ func runGlobalRelink(cmd *cobra.Command, repoRoot string, index sync.GlobalPageI
 			return err
 		}
 
-		fmt.Fprintf(cmd.OutOrStdout(), "Updated %d links in %d files in space %s.\n", result.LinksConverted, result.FilesChanged, spaceKey)
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Updated %d links in %d files in space %s.\n", result.LinksConverted, result.FilesChanged, spaceKey)
 	}
 	return nil
 }

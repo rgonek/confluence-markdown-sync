@@ -26,9 +26,13 @@ test-e2e: build
 fmt:
 	$(GO) fmt ./...
 
-## lint: vet the code (no external linter required)
+## lint: run golangci-lint (falls back to go vet)
 lint:
-	$(GO) vet ./...
+	@if command -v golangci-lint >/dev/null 2>&1; then \
+		golangci-lint run ./...; \
+	else \
+		$(GO) vet ./...; \
+	fi
 
 ## clean: remove build artifacts
 clean:

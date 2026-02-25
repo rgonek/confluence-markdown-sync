@@ -29,7 +29,7 @@ func TestRoundTripGolden(t *testing.T) {
 
 		name := strings.TrimSuffix(filepath.Base(fixturePath), ".md")
 		t.Run(name, func(t *testing.T) {
-			inputMarkdown, err := os.ReadFile(fixturePath)
+			inputMarkdown, err := os.ReadFile(fixturePath) //nolint:gosec // fixture path originates from testdata glob
 			if err != nil {
 				t.Fatalf("read fixture %s: %v", fixturePath, err)
 			}
@@ -45,7 +45,7 @@ func TestRoundTripGolden(t *testing.T) {
 			}
 
 			expectedPath := filepath.Join("testdata", "roundtrip", name+".golden.md")
-			expectedMarkdown, err := os.ReadFile(expectedPath)
+			expectedMarkdown, err := os.ReadFile(expectedPath) //nolint:gosec // expected path is derived from fixture name in testdata
 			if err != nil {
 				t.Fatalf("read golden %s: %v", expectedPath, err)
 			}

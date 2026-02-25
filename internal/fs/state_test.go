@@ -78,7 +78,7 @@ func TestLoadState_InvalidWatermarkFails(t *testing.T) {
 
 	path := StatePath(spaceDir)
 	raw := []byte(`{"last_pull_high_watermark":"not-rfc3339"}`)
-	if err := os.WriteFile(path, raw, 0o644); err != nil {
+	if err := os.WriteFile(path, raw, 0o644); err != nil { //nolint:gosec // test fixture writes non-sensitive temp file
 		t.Fatalf("WriteFile() unexpected error: %v", err)
 	}
 

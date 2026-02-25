@@ -56,7 +56,9 @@ func runAgentsInit(cmd *cobra.Command, target config.Target, templateType string
 
 	path := filepath.Join(spaceDir, "AGENTS.md")
 	if _, err := os.Stat(path); err == nil {
-		fmt.Fprintf(out, "AGENTS.md already exists in %s. Skipping.\n", spaceDir)
+		if _, err := fmt.Fprintf(out, "AGENTS.md already exists in %s. Skipping.\n", spaceDir); err != nil {
+			return fmt.Errorf("write output: %w", err)
+		}
 		return nil
 	}
 
@@ -78,11 +80,13 @@ func runAgentsInit(cmd *cobra.Command, target config.Target, templateType string
 		return fmt.Errorf("invalid template type %q; supported: technical-documentation, hr-info, project-management, product-requirements, customer-support, general", templateType)
 	}
 
-	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		return fmt.Errorf("failed to write AGENTS.md: %w", err)
 	}
 
-	fmt.Fprintf(out, "✓ AGENTS.md (%s) created in %s\n", templateType, spaceDir)
+	if _, err := fmt.Fprintf(out, "✓ AGENTS.md (%s) created in %s\n", templateType, spaceDir); err != nil {
+		return fmt.Errorf("write output: %w", err)
+	}
 	return nil
 }
 
