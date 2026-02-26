@@ -88,6 +88,9 @@ func runPush(cmd *cobra.Command, target config.Target, onConflict string, dryRun
 	out := ensureSynchronizedCmdOutput(cmd)
 	_, restoreLogger := beginCommandRun("push")
 	defer restoreLogger()
+	if err := ensureWorkspaceSyncReady("push"); err != nil {
+		return err
+	}
 
 	preflight := flagPushPreflight
 	startedAt := time.Now()
@@ -207,7 +210,7 @@ func runPush(cmd *cobra.Command, target config.Target, onConflict string, dryRun
 	// 1. Capture Snapshot
 	stashRef, err := gitClient.StashScopeIfDirty(spaceScopePath, spaceKey, ts)
 	if err != nil {
-		return fmt.Errorf("stash failed: %w", err)
+		return translateWorkspaceGitError(fmt.Errorf("stash failed: %w", err), "push")
 	}
 	defer func() {
 		if stashRef != "" {

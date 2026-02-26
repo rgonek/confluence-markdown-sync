@@ -90,6 +90,10 @@ func runValidateCommand(cmd *cobra.Command, target config.Target) (runErr error)
 }
 
 func runValidateTargetWithContext(ctx context.Context, out io.Writer, target config.Target) error {
+	if err := ensureWorkspaceSyncReady("validate"); err != nil {
+		return err
+	}
+
 	targetCtx, err := resolveValidateTargetContext(target)
 	if err != nil {
 		return err

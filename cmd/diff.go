@@ -79,6 +79,9 @@ func runDiff(cmd *cobra.Command, target config.Target) (runErr error) {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	if err := ensureWorkspaceSyncReady("diff"); err != nil {
+		return err
+	}
 	out := cmd.OutOrStdout()
 
 	initialCtx, err := resolveInitialPullContext(target)
