@@ -105,7 +105,7 @@ func runValidateTargetWithContext(ctx context.Context, out io.Writer, target con
 	}
 
 	_, _ = fmt.Fprintf(out, "Building index for space: %s\n", targetCtx.spaceDir)
-	index, err := syncflow.BuildPageIndex(targetCtx.spaceDir)
+	index, err := syncflow.BuildPageIndexWithPending(targetCtx.spaceDir, targetCtx.files)
 	if err != nil {
 		return fmt.Errorf("failed to build page index: %w", err)
 	}

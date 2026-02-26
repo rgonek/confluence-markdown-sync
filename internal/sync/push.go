@@ -229,6 +229,28 @@ func Push(ctx context.Context, remote PushRemote, opts PushOptions) (PushResult,
 	changes := normalizePushChanges(opts.Changes)
 	commits := make([]PushCommitPlan, 0, len(changes))
 	diagnostics := make([]PushDiagnostic, 0)
+	if err := seedPendingPageIDsForPushChanges(opts.SpaceDir, changes, pageIDByPath); err != nil {
+		return PushResult{}, fmt.Errorf("seed pending page ids: %w", err)
+	}
+	if err := runPushUpsertPreflight(ctx, opts, changes, pageIDByPath, attachmentIDByPath); err != nil {
+		return PushResult{}, err
+	}
+	precreatedPages, err := precreatePendingPushPages(
+		ctx,
+		remote,
+		space,
+		opts,
+		state,
+		changes,
+		pageIDByPath,
+		pageTitleByPath,
+		folderIDByPath,
+		&diagnostics,
+	)
+	if err != nil {
+		return PushResult{}, err
+	}
+	pendingPrecreatedPages := clonePageMap(precreatedPages)
 
 	if opts.Progress != nil {
 		opts.Progress.SetDescription("Pushing changes")
@@ -248,12 +270,18 @@ func Push(ctx context.Context, remote PushRemote, opts PushOptions) (PushResult,
 		case PushChangeDelete:
 			commit, err := pushDeletePage(ctx, remote, opts, state, remotePageByID, relPath, &diagnostics)
 			if err != nil {
+				if !opts.DryRun {
+					cleanupPendingPrecreatedPages(ctx, remote, pendingPrecreatedPages, &diagnostics)
+				}
 				return PushResult{State: state, Commits: commits, Diagnostics: diagnostics}, err
 			}
 			if commit.Path != "" {
 				commits = append(commits, commit)
 			}
 		case PushChangeAdd, PushChangeModify:
+			if _, hasPending := pendingPrecreatedPages[relPath]; hasPending {
+				delete(pendingPrecreatedPages, relPath)
+			}
 			commit, err := pushUpsertPage(
 				ctx,
 				remote,
@@ -267,9 +295,13 @@ func Push(ctx context.Context, remote PushRemote, opts PushOptions) (PushResult,
 				folderIDByPath,
 				remotePageByID,
 				relPath,
+				precreatedPages,
 				&diagnostics,
 			)
 			if err != nil {
+				if !opts.DryRun {
+					cleanupPendingPrecreatedPages(ctx, remote, pendingPrecreatedPages, &diagnostics)
+				}
 				return PushResult{State: state, Commits: commits, Diagnostics: diagnostics}, err
 			}
 			if commit.Path != "" {
@@ -412,6 +444,7 @@ func pushUpsertPage(
 	folderIDByPath map[string]string,
 	remotePageByID map[string]confluence.Page,
 	relPath string,
+	precreatedPages map[string]confluence.Page,
 	diagnostics *[]PushDiagnostic,
 ) (PushCommitPlan, error) {
 	absPath := filepath.Join(opts.SpaceDir, filepath.FromSlash(relPath))
@@ -421,12 +454,14 @@ func pushUpsertPage(
 	}
 
 	pageID := strings.TrimSpace(doc.Frontmatter.ID)
+	normalizedRelPath := normalizeRelPath(relPath)
+	precreatedPage, hasPrecreated := precreatedPages[normalizedRelPath]
 	targetState := normalizePageLifecycleState(doc.Frontmatter.State)
 	dirPath := normalizeRelPath(filepath.ToSlash(filepath.Dir(filepath.FromSlash(relPath))))
 	title := resolveLocalTitle(doc, relPath)
-	pageTitleByPath[normalizeRelPath(relPath)] = title
+	pageTitleByPath[normalizedRelPath] = title
 
-	if pageID == "" {
+	if pageID == "" && !hasPrecreated {
 		if conflictingPath, conflictingID := findTrackedTitleConflict(relPath, title, state.PagePathIndex, pageTitleByPath); conflictingPath != "" {
 			return PushCommitPlan{}, fmt.Errorf(
 				"new page %q duplicates tracked page %q (id=%s) with title %q; update the existing file instead of creating a duplicate",
@@ -558,7 +593,11 @@ func pushUpsertPage(
 	linkHook := NewReverseLinkHookWithGlobalIndex(opts.SpaceDir, pageIDByPath, opts.GlobalPageIndex, opts.Domain)
 	strictAttachmentIndex, referencedAssetPaths, err := BuildStrictAttachmentIndex(opts.SpaceDir, absPath, doc.Body, attachmentIDByPath)
 	if err != nil {
-		return PushCommitPlan{}, fmt.Errorf("resolve assets for %s: %w", relPath, err)
+		preflightErr := fmt.Errorf("resolve assets for %s: %w", relPath, err)
+		if hasPrecreated {
+			return failWithRollback(preflightErr)
+		}
+		return PushCommitPlan{}, preflightErr
 	}
 	mediaHook := NewReverseMediaHook(opts.SpaceDir, strictAttachmentIndex)
 
@@ -567,44 +606,65 @@ func pushUpsertPage(
 		MediaHook: mediaHook,
 		Strict:    true,
 	}, absPath); err != nil {
-		return PushCommitPlan{}, fmt.Errorf("strict conversion failed for %s: %w", relPath, err)
+		preflightErr := fmt.Errorf("strict conversion failed for %s: %w", relPath, err)
+		if hasPrecreated {
+			return failWithRollback(preflightErr)
+		}
+		return PushCommitPlan{}, preflightErr
 	}
 
 	// Phase 2: perform remote mutations after preflight succeeds.
 	if !isExistingPage {
-		if dirPath != "" && dirPath != "." {
-			folderIDByPath, err = ensureFolderHierarchy(ctx, remote, space.ID, dirPath, folderIDByPath, diagnostics)
-			if err != nil {
-				return failWithRollback(fmt.Errorf("ensure folder hierarchy for %s: %w", relPath, err))
+		if hasPrecreated {
+			pageID = strings.TrimSpace(precreatedPage.ID)
+			if pageID == "" {
+				return failWithRollback(fmt.Errorf("pre-created placeholder page for %s returned empty page ID", relPath))
 			}
+
+			rollback.trackCreatedPage(pageID)
+			localVersion = precreatedPage.Version
+			remotePage = precreatedPage
+			remotePageByID[pageID] = precreatedPage
+			pageIDByPath[normalizedRelPath] = pageID
+
+			doc.Frontmatter.ID = pageID
+			doc.Frontmatter.Space = opts.SpaceKey
+			doc.Frontmatter.Version = precreatedPage.Version
+		} else {
+			if dirPath != "" && dirPath != "." {
+				folderIDByPath, err = ensureFolderHierarchy(ctx, remote, space.ID, dirPath, folderIDByPath, diagnostics)
+				if err != nil {
+					return failWithRollback(fmt.Errorf("ensure folder hierarchy for %s: %w", relPath, err))
+				}
+			}
+
+			resolvedParentID := resolveParentIDFromHierarchy(relPath, "", fallbackParentID, pageIDByPath, folderIDByPath)
+			created, createErr := remote.CreatePage(ctx, confluence.PageUpsertInput{
+				SpaceID:      space.ID,
+				ParentPageID: resolvedParentID,
+				Title:        title,
+				Status:       targetState,
+				BodyADF:      []byte(`{"version":1,"type":"doc","content":[]}`),
+			})
+			if createErr != nil {
+				return failWithRollback(fmt.Errorf("create placeholder page for %s: %w", relPath, createErr))
+			}
+
+			pageID = strings.TrimSpace(created.ID)
+			if pageID == "" {
+				return failWithRollback(fmt.Errorf("create placeholder page for %s returned empty page ID", relPath))
+			}
+
+			rollback.trackCreatedPage(pageID)
+			localVersion = created.Version
+			remotePage = created
+			remotePageByID[pageID] = created
+			pageIDByPath[normalizedRelPath] = pageID
+
+			doc.Frontmatter.ID = pageID
+			doc.Frontmatter.Space = opts.SpaceKey
+			doc.Frontmatter.Version = created.Version
 		}
-
-		resolvedParentID := resolveParentIDFromHierarchy(relPath, "", fallbackParentID, pageIDByPath, folderIDByPath)
-		created, createErr := remote.CreatePage(ctx, confluence.PageUpsertInput{
-			SpaceID:      space.ID,
-			ParentPageID: resolvedParentID,
-			Title:        title,
-			Status:       targetState,
-			BodyADF:      []byte(`{"version":1,"type":"doc","content":[]}`),
-		})
-		if createErr != nil {
-			return failWithRollback(fmt.Errorf("create placeholder page for %s: %w", relPath, createErr))
-		}
-
-		pageID = strings.TrimSpace(created.ID)
-		if pageID == "" {
-			return failWithRollback(fmt.Errorf("create placeholder page for %s returned empty page ID", relPath))
-		}
-
-		rollback.trackCreatedPage(pageID)
-		localVersion = created.Version
-		remotePage = created
-		remotePageByID[pageID] = created
-		pageIDByPath[normalizeRelPath(relPath)] = pageID
-
-		doc.Frontmatter.ID = pageID
-		doc.Frontmatter.Space = opts.SpaceKey
-		doc.Frontmatter.Version = created.Version
 	}
 
 	touchedAssets := make([]string, 0)
@@ -1218,6 +1278,211 @@ func normalizePushChanges(changes []PushFileChange) []PushFileChange {
 	return out
 }
 
+func seedPendingPageIDsForPushChanges(spaceDir string, changes []PushFileChange, pageIDByPath PageIndex) error {
+	for _, change := range changes {
+		switch change.Type {
+		case PushChangeAdd, PushChangeModify:
+			// continue
+		default:
+			continue
+		}
+
+		relPath := normalizeRelPath(change.Path)
+		if relPath == "" {
+			continue
+		}
+		if strings.TrimSpace(pageIDByPath[relPath]) != "" {
+			continue
+		}
+
+		absPath := filepath.Join(spaceDir, filepath.FromSlash(relPath))
+		fm, err := fs.ReadFrontmatter(absPath)
+		if err != nil {
+			return fmt.Errorf("read frontmatter %s: %w", relPath, err)
+		}
+		if strings.TrimSpace(fm.ID) != "" {
+			pageIDByPath[relPath] = strings.TrimSpace(fm.ID)
+			continue
+		}
+
+		pageIDByPath[relPath] = pendingPageID(relPath)
+	}
+	return nil
+}
+
+func runPushUpsertPreflight(
+	ctx context.Context,
+	opts PushOptions,
+	changes []PushFileChange,
+	pageIDByPath PageIndex,
+	attachmentIDByPath map[string]string,
+) error {
+	for _, change := range changes {
+		switch change.Type {
+		case PushChangeAdd, PushChangeModify:
+			// continue
+		default:
+			continue
+		}
+
+		relPath := normalizeRelPath(change.Path)
+		if relPath == "" {
+			continue
+		}
+
+		absPath := filepath.Join(opts.SpaceDir, filepath.FromSlash(relPath))
+		doc, err := fs.ReadMarkdownDocument(absPath)
+		if err != nil {
+			return fmt.Errorf("read markdown %s: %w", relPath, err)
+		}
+
+		linkHook := NewReverseLinkHookWithGlobalIndex(opts.SpaceDir, pageIDByPath, opts.GlobalPageIndex, opts.Domain)
+		strictAttachmentIndex, _, err := BuildStrictAttachmentIndex(opts.SpaceDir, absPath, doc.Body, attachmentIDByPath)
+		if err != nil {
+			return fmt.Errorf("resolve assets for %s: %w", relPath, err)
+		}
+		mediaHook := NewReverseMediaHook(opts.SpaceDir, strictAttachmentIndex)
+
+		if _, err := converter.Reverse(ctx, []byte(doc.Body), converter.ReverseConfig{
+			LinkHook:  linkHook,
+			MediaHook: mediaHook,
+			Strict:    true,
+		}, absPath); err != nil {
+			return fmt.Errorf("strict conversion failed for %s: %w", relPath, err)
+		}
+	}
+
+	return nil
+}
+
+func precreatePendingPushPages(
+	ctx context.Context,
+	remote PushRemote,
+	space confluence.Space,
+	opts PushOptions,
+	state fs.SpaceState,
+	changes []PushFileChange,
+	pageIDByPath PageIndex,
+	pageTitleByPath map[string]string,
+	folderIDByPath map[string]string,
+	diagnostics *[]PushDiagnostic,
+) (map[string]confluence.Page, error) {
+	precreated := map[string]confluence.Page{}
+
+	for _, change := range changes {
+		switch change.Type {
+		case PushChangeAdd, PushChangeModify:
+			// continue
+		default:
+			continue
+		}
+
+		relPath := normalizeRelPath(change.Path)
+		if relPath == "" {
+			continue
+		}
+
+		if !isPendingPageID(pageIDByPath[relPath]) {
+			continue
+		}
+
+		absPath := filepath.Join(opts.SpaceDir, filepath.FromSlash(relPath))
+		doc, err := fs.ReadMarkdownDocument(absPath)
+		if err != nil {
+			return nil, fmt.Errorf("read markdown %s: %w", relPath, err)
+		}
+
+		title := resolveLocalTitle(doc, relPath)
+		pageTitleByPath[normalizeRelPath(relPath)] = title
+		if conflictingPath, conflictingID := findTrackedTitleConflict(relPath, title, state.PagePathIndex, pageTitleByPath); conflictingPath != "" {
+			return nil, fmt.Errorf(
+				"new page %q duplicates tracked page %q (id=%s) with title %q; update the existing file instead of creating a duplicate",
+				relPath,
+				conflictingPath,
+				conflictingID,
+				title,
+			)
+		}
+
+		if !strings.EqualFold(strings.TrimSpace(doc.Frontmatter.Space), strings.TrimSpace(opts.SpaceKey)) {
+			return nil, fmt.Errorf("%s belongs to space %q, expected %q", relPath, doc.Frontmatter.Space, opts.SpaceKey)
+		}
+
+		dirPath := normalizeRelPath(filepath.ToSlash(filepath.Dir(filepath.FromSlash(relPath))))
+		if dirPath != "" && dirPath != "." {
+			folderIDByPath, err = ensureFolderHierarchy(ctx, remote, space.ID, dirPath, folderIDByPath, diagnostics)
+			if err != nil {
+				return nil, fmt.Errorf("ensure folder hierarchy for %s: %w", relPath, err)
+			}
+		}
+
+		fallbackParentID := strings.TrimSpace(doc.Frontmatter.ConfluenceParentPageID)
+		resolvedParentID := resolveParentIDFromHierarchy(relPath, "", fallbackParentID, pageIDByPath, folderIDByPath)
+		created, err := remote.CreatePage(ctx, confluence.PageUpsertInput{
+			SpaceID:      space.ID,
+			ParentPageID: resolvedParentID,
+			Title:        title,
+			Status:       normalizePageLifecycleState(doc.Frontmatter.State),
+			BodyADF:      []byte(`{"version":1,"type":"doc","content":[]}`),
+		})
+		if err != nil {
+			return nil, fmt.Errorf("create placeholder page for %s: %w", relPath, err)
+		}
+
+		createdID := strings.TrimSpace(created.ID)
+		if createdID == "" {
+			return nil, fmt.Errorf("create placeholder page for %s returned empty page ID", relPath)
+		}
+
+		pageIDByPath[relPath] = createdID
+		precreated[relPath] = created
+	}
+
+	return precreated, nil
+}
+
+func cleanupPendingPrecreatedPages(
+	ctx context.Context,
+	remote PushRemote,
+	precreatedPages map[string]confluence.Page,
+	diagnostics *[]PushDiagnostic,
+) {
+	for _, relPath := range sortedStringKeys(precreatedPages) {
+		pageID := strings.TrimSpace(precreatedPages[relPath].ID)
+		if pageID == "" {
+			continue
+		}
+
+		if err := remote.DeletePage(ctx, pageID, true); err != nil && !errors.Is(err, confluence.ErrNotFound) {
+			appendPushDiagnostic(
+				diagnostics,
+				relPath,
+				"ROLLBACK_PRECREATED_PAGE_FAILED",
+				fmt.Sprintf("failed to delete pre-created placeholder page %s: %v", pageID, err),
+			)
+			continue
+		}
+
+		appendPushDiagnostic(
+			diagnostics,
+			relPath,
+			"ROLLBACK_PRECREATED_PAGE_DELETED",
+			fmt.Sprintf("deleted pre-created placeholder page %s", pageID),
+		)
+	}
+}
+
+func clonePageMap(in map[string]confluence.Page) map[string]confluence.Page {
+	if in == nil {
+		return map[string]confluence.Page{}
+	}
+	out := make(map[string]confluence.Page, len(in))
+	for key, page := range in {
+		out[key] = page
+	}
+	return out
+}
+
 func isIndexFile(path string) bool {
 	base := filepath.Base(filepath.FromSlash(path))
 	if !strings.HasSuffix(base, ".md") {
@@ -1256,6 +1521,20 @@ func pendingAttachmentID(assetPath string) string {
 		normalized = "asset"
 	}
 	return "pending-attachment-" + normalized
+}
+
+func pendingPageID(path string) string {
+	normalized := strings.TrimSpace(strings.ToLower(filepath.ToSlash(path)))
+	normalized = strings.ReplaceAll(normalized, "/", "-")
+	normalized = strings.ReplaceAll(normalized, " ", "-")
+	if normalized == "" {
+		normalized = "page"
+	}
+	return "pending-page-" + normalized
+}
+
+func isPendingPageID(pageID string) bool {
+	return strings.HasPrefix(strings.TrimSpace(strings.ToLower(pageID)), "pending-page-")
 }
 
 func CollectReferencedAssetPaths(spaceDir, sourcePath, body string) ([]string, error) {

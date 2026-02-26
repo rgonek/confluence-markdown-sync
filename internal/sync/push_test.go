@@ -562,6 +562,65 @@ func TestPush_PreflightStrictResolvesCrossSpaceLinkWithGlobalIndex(t *testing.T)
 	}
 }
 
+func TestPush_ResolvesLinksBetweenSimultaneousNewPages(t *testing.T) {
+	spaceDir := t.TempDir()
+
+	if err := fs.WriteMarkdownDocument(filepath.Join(spaceDir, "Fancy-Extensions.md"), fs.MarkdownDocument{
+		Frontmatter: fs.Frontmatter{
+			Title: "Fancy Extensions",
+			Space: "ENG",
+		},
+		Body: "[New page](New-Page.md)\n",
+	}); err != nil {
+		t.Fatalf("write Fancy-Extensions.md: %v", err)
+	}
+
+	if err := fs.WriteMarkdownDocument(filepath.Join(spaceDir, "New-Page.md"), fs.MarkdownDocument{
+		Frontmatter: fs.Frontmatter{
+			Title: "New Page",
+			Space: "ENG",
+		},
+		Body: "new page body\n",
+	}); err != nil {
+		t.Fatalf("write New-Page.md: %v", err)
+	}
+
+	remote := newRollbackPushRemote()
+	result, err := Push(context.Background(), remote, PushOptions{
+		SpaceKey:       "ENG",
+		SpaceDir:       spaceDir,
+		Domain:         "https://example.atlassian.net",
+		State:          fs.SpaceState{SpaceKey: "ENG"},
+		ConflictPolicy: PushConflictPolicyCancel,
+		Changes: []PushFileChange{
+			{Type: PushChangeAdd, Path: "Fancy-Extensions.md"},
+			{Type: PushChangeAdd, Path: "New-Page.md"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Push() unexpected error: %v", err)
+	}
+
+	fancyID := strings.TrimSpace(result.State.PagePathIndex["Fancy-Extensions.md"])
+	newPageID := strings.TrimSpace(result.State.PagePathIndex["New-Page.md"])
+	if fancyID == "" || newPageID == "" {
+		t.Fatalf("expected IDs for both new pages, got state index: %+v", result.State.PagePathIndex)
+	}
+
+	updateInput, ok := remote.updateInputsByPageID[fancyID]
+	if !ok {
+		t.Fatalf("expected update payload for Fancy-Extensions page ID %s", fancyID)
+	}
+
+	body := string(updateInput.BodyADF)
+	if !strings.Contains(body, "pageId="+newPageID) {
+		t.Fatalf("expected Fancy-Extensions link to resolve to new page ID %s, body=%s", newPageID, body)
+	}
+	if strings.Contains(body, "pending-page-") {
+		t.Fatalf("expected final ADF to avoid pending page IDs, body=%s", body)
+	}
+}
+
 func TestPush_NewPageFailsWhenTrackedPageWithSameTitleExistsInSameDirectory(t *testing.T) {
 	spaceDir := t.TempDir()
 
@@ -1094,16 +1153,18 @@ type rollbackPushRemote struct {
 	archiveTaskWaitErr       error
 	failUpdate               bool
 	failAddLabels            bool
+	updateInputsByPageID     map[string]confluence.PageUpsertInput
 }
 
 func newRollbackPushRemote() *rollbackPushRemote {
 	return &rollbackPushRemote{
-		space:            confluence.Space{ID: "space-1", Key: "ENG", Name: "Engineering"},
-		pagesByID:        map[string]confluence.Page{},
-		contentStatuses:  map[string]string{},
-		labelsByPage:     map[string][]string{},
-		nextPageID:       1,
-		nextAttachmentID: 1,
+		space:                confluence.Space{ID: "space-1", Key: "ENG", Name: "Engineering"},
+		pagesByID:            map[string]confluence.Page{},
+		contentStatuses:      map[string]string{},
+		labelsByPage:         map[string][]string{},
+		updateInputsByPageID: map[string]confluence.PageUpsertInput{},
+		nextPageID:           1,
+		nextAttachmentID:     1,
 		archiveTaskStatus: confluence.ArchiveTaskStatus{
 			State: confluence.ArchiveTaskStateSucceeded,
 		},
@@ -1189,6 +1250,7 @@ func (f *rollbackPushRemote) CreatePage(_ context.Context, input confluence.Page
 
 func (f *rollbackPushRemote) UpdatePage(_ context.Context, pageID string, input confluence.PageUpsertInput) (confluence.Page, error) {
 	f.updatePageCalls++
+	f.updateInputsByPageID[pageID] = input
 	if f.failUpdate {
 		return confluence.Page{}, errors.New("simulated update failure")
 	}

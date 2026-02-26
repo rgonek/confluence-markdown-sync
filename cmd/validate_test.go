@@ -307,6 +307,38 @@ func TestRunValidateTarget_AllowsCrossSpaceEncodedRelativeLink(t *testing.T) {
 	}
 }
 
+func TestRunValidateTarget_AllowsLinkToSimultaneousNewPageInSpaceScope(t *testing.T) {
+	repo := t.TempDir()
+	setupGitRepo(t, repo)
+	setupEnv(t)
+
+	spaceDir := filepath.Join(repo, "Engineering (ENG)")
+	if err := os.MkdirAll(spaceDir, 0o750); err != nil {
+		t.Fatalf("mkdir space dir: %v", err)
+	}
+
+	writeMarkdown(t, filepath.Join(spaceDir, "Fancy-Extensions.md"), fs.MarkdownDocument{
+		Frontmatter: fs.Frontmatter{Title: "Fancy Extensions", Space: "ENG"},
+		Body:        "[New page](New-Page.md)\n",
+	})
+	writeMarkdown(t, filepath.Join(spaceDir, "New-Page.md"), fs.MarkdownDocument{
+		Frontmatter: fs.Frontmatter{Title: "New Page", Space: "ENG"},
+		Body:        "hello\n",
+	})
+	if err := fs.SaveState(spaceDir, fs.SpaceState{SpaceKey: "ENG"}); err != nil {
+		t.Fatalf("save state: %v", err)
+	}
+
+	runGitForTest(t, repo, "add", ".")
+	runGitForTest(t, repo, "commit", "-m", "baseline")
+
+	chdirRepo(t, repo)
+	out := &bytes.Buffer{}
+	if err := runValidateTarget(out, config.Target{Mode: config.TargetModeSpace, Value: "Engineering (ENG)"}); err != nil {
+		t.Fatalf("expected validate success, got: %v\nOutput:\n%s", err, out.String())
+	}
+}
+
 func TestRunValidateTargetWithContext_ReturnsCancellation(t *testing.T) {
 	repo := t.TempDir()
 	setupGitRepo(t, repo)
