@@ -23,7 +23,7 @@ func requireSafetyConfirmation(in io.Reader, out io.Writer, action string, chang
 		reasonParts = append(reasonParts, fmt.Sprintf("%d files", changedCount))
 	}
 	if hasDeletes {
-		reasonParts = append(reasonParts, "deletions")
+		reasonParts = append(reasonParts, "delete operations (including unstaged deletions)")
 	}
 	reason := strings.Join(reasonParts, " and ")
 
@@ -36,7 +36,7 @@ func requireSafetyConfirmation(in io.Reader, out io.Writer, action string, chang
 
 	deleteNote := ""
 	if hasDeletes {
-		deleteNote = " and includes delete operations"
+		deleteNote = " and includes delete operations (including unstaged deletions)"
 	}
 	title := fmt.Sprintf("%s will affect %d markdown file(s)%s. Continue?", action, changedCount, deleteNote)
 

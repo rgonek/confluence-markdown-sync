@@ -314,34 +314,48 @@ func pushDeletePage(
 			return PushCommitPlan{}, fmt.Errorf("hard-delete page %s: %w", pageID, err)
 		}
 	} else {
+		archiveAlreadyApplied := false
 		archiveResult, err := remote.ArchivePages(ctx, []string{pageID})
-		if err != nil && !errors.Is(err, confluence.ErrNotFound) {
-			return PushCommitPlan{}, fmt.Errorf("archive page %s: %w", pageID, err)
+		if err != nil {
+			switch {
+			case errors.Is(err, confluence.ErrNotFound), errors.Is(err, confluence.ErrArchived):
+				archiveAlreadyApplied = true
+				appendPushDiagnostic(
+					diagnostics,
+					relPath,
+					"ARCHIVE_ALREADY_APPLIED",
+					fmt.Sprintf("page %s was already archived or missing remotely", pageID),
+				)
+			default:
+				return PushCommitPlan{}, fmt.Errorf("archive page %s: %w", pageID, err)
+			}
 		}
 
-		taskID := strings.TrimSpace(archiveResult.TaskID)
-		if taskID == "" {
-			message := fmt.Sprintf("archive request for page %s did not return a long-task ID", pageID)
-			appendPushDiagnostic(diagnostics, relPath, "ARCHIVE_TASK_FAILED", message)
-			return PushCommitPlan{}, fmt.Errorf("archive page %s: missing long-task ID", pageID)
-		}
-
-		status, waitErr := remote.WaitForArchiveTask(ctx, taskID, confluence.ArchiveTaskWaitOptions{
-			Timeout:      opts.ArchiveTimeout,
-			PollInterval: opts.ArchivePollInterval,
-		})
-		if waitErr != nil {
-			code := "ARCHIVE_TASK_FAILED"
-			if errors.Is(waitErr, confluence.ErrArchiveTaskTimeout) {
-				code = "ARCHIVE_TASK_TIMEOUT"
+		if !archiveAlreadyApplied {
+			taskID := strings.TrimSpace(archiveResult.TaskID)
+			if taskID == "" {
+				message := fmt.Sprintf("archive request for page %s did not return a long-task ID", pageID)
+				appendPushDiagnostic(diagnostics, relPath, "ARCHIVE_TASK_FAILED", message)
+				return PushCommitPlan{}, fmt.Errorf("archive page %s: missing long-task ID", pageID)
 			}
 
-			message := fmt.Sprintf("archive task %s did not complete for page %s: %v", taskID, pageID, waitErr)
-			if strings.TrimSpace(status.RawStatus) != "" {
-				message = fmt.Sprintf("archive task %s did not complete for page %s (status=%s): %v", taskID, pageID, status.RawStatus, waitErr)
+			status, waitErr := remote.WaitForArchiveTask(ctx, taskID, confluence.ArchiveTaskWaitOptions{
+				Timeout:      opts.ArchiveTimeout,
+				PollInterval: opts.ArchivePollInterval,
+			})
+			if waitErr != nil {
+				code := "ARCHIVE_TASK_FAILED"
+				if errors.Is(waitErr, confluence.ErrArchiveTaskTimeout) {
+					code = "ARCHIVE_TASK_TIMEOUT"
+				}
+
+				message := fmt.Sprintf("archive task %s did not complete for page %s: %v", taskID, pageID, waitErr)
+				if strings.TrimSpace(status.RawStatus) != "" {
+					message = fmt.Sprintf("archive task %s did not complete for page %s (status=%s): %v", taskID, pageID, status.RawStatus, waitErr)
+				}
+				appendPushDiagnostic(diagnostics, relPath, code, message)
+				return PushCommitPlan{}, fmt.Errorf("wait for archive task %s for page %s: %w", taskID, pageID, waitErr)
 			}
-			appendPushDiagnostic(diagnostics, relPath, code, message)
-			return PushCommitPlan{}, fmt.Errorf("wait for archive task %s for page %s: %w", taskID, pageID, waitErr)
 		}
 	}
 
@@ -349,7 +363,7 @@ func pushDeletePage(
 	for _, assetPath := range stalePaths {
 		attachmentID := state.AttachmentIndex[assetPath]
 		if strings.TrimSpace(attachmentID) != "" {
-			if err := remote.DeleteAttachment(ctx, attachmentID, pageID); err != nil && !errors.Is(err, confluence.ErrNotFound) {
+			if err := remote.DeleteAttachment(ctx, attachmentID, pageID); err != nil && !errors.Is(err, confluence.ErrNotFound) && !errors.Is(err, confluence.ErrArchived) {
 				return PushCommitPlan{}, fmt.Errorf("delete attachment %s: %w", attachmentID, err)
 			}
 		}
@@ -463,12 +477,26 @@ func pushUpsertPage(
 		// to avoid eventual consistency issues with space-wide listing.
 		fetched, fetchErr := remote.GetPage(ctx, pageID)
 		if fetchErr != nil {
+			if errors.Is(fetchErr, confluence.ErrArchived) {
+				return PushCommitPlan{}, fmt.Errorf(
+					"page %q (id=%s) is archived remotely and cannot be updated; run 'conf pull' to reconcile or remove the id to publish as a new page",
+					relPath,
+					pageID,
+				)
+			}
 			if errors.Is(fetchErr, confluence.ErrNotFound) {
 				return PushCommitPlan{}, fmt.Errorf("remote page %s for %s was not found", pageID, relPath)
 			}
 			return PushCommitPlan{}, fmt.Errorf("fetch page %s: %w", pageID, fetchErr)
 		}
 		remotePage = fetched
+		if normalizePageLifecycleState(remotePage.Status) == "archived" {
+			return PushCommitPlan{}, fmt.Errorf(
+				"page %q (id=%s) is archived remotely and cannot be updated; run 'conf pull' to reconcile or remove the id to publish as a new page",
+				relPath,
+				pageID,
+			)
+		}
 		remotePageByID[pageID] = fetched
 		rollback.trackContentSnapshot(pageID, snapshotPageContent(fetched))
 
@@ -606,7 +634,7 @@ func pushUpsertPage(
 		if _, keep := referencedIDs[attachmentID]; keep {
 			continue
 		}
-		if err := remote.DeleteAttachment(ctx, attachmentID, pageID); err != nil && !errors.Is(err, confluence.ErrNotFound) {
+		if err := remote.DeleteAttachment(ctx, attachmentID, pageID); err != nil && !errors.Is(err, confluence.ErrNotFound) && !errors.Is(err, confluence.ErrArchived) {
 			return failWithRollback(fmt.Errorf("delete stale attachment %s: %w", attachmentID, err))
 		}
 		delete(state.AttachmentIndex, stalePath)

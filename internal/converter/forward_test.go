@@ -46,3 +46,28 @@ func TestForwardWithHook(t *testing.T) {
 		t.Errorf("Expected markdown %q, got %q", expected, res.Markdown)
 	}
 }
+
+func TestNormalizeForwardMarkdown_UnescapesInlineLinks(t *testing.T) {
+	input := "Intro \\[Page A\\]\\(./Page-A.md#overview\\) and \\[External\\]\\(https://example.com/docs\\).\n"
+	want := "Intro [Page A](./Page-A.md#overview) and [External](https://example.com/docs).\n"
+
+	if got := normalizeForwardMarkdown(input); got != want {
+		t.Fatalf("normalizeForwardMarkdown() = %q, want %q", got, want)
+	}
+}
+
+func TestNormalizeForwardMarkdown_LeavesNonLinksEscaped(t *testing.T) {
+	input := "Use \\[brackets\\] for plain text.\n"
+
+	if got := normalizeForwardMarkdown(input); got != input {
+		t.Fatalf("normalizeForwardMarkdown() unexpectedly changed input: %q", got)
+	}
+}
+
+func TestNormalizeForwardMarkdown_LeavesUnknownDestinationEscaped(t *testing.T) {
+	input := "Keep \\[label\\]\\(not-a-link\\) as plain text.\n"
+
+	if got := normalizeForwardMarkdown(input); got != input {
+		t.Fatalf("normalizeForwardMarkdown() unexpectedly changed input: %q", got)
+	}
+}
