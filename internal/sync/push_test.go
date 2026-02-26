@@ -72,7 +72,7 @@ func TestEnsureADFMediaCollection(t *testing.T) {
 	}
 }
 
-func TestResolveParentIDFromHierarchy_PrefersFolderOverPage(t *testing.T) {
+func TestResolveParentIDFromHierarchy_PrefersIndexPageOverFolder(t *testing.T) {
 	pageIndex := PageIndex{
 		"Root/Root.md": "page-root",
 	}
@@ -80,8 +80,8 @@ func TestResolveParentIDFromHierarchy_PrefersFolderOverPage(t *testing.T) {
 		"Root": "folder-123",
 	}
 
-	if got := resolveParentIDFromHierarchy("Root/Child.md", "page-child", "", pageIndex, folderIndex); got != "folder-123" {
-		t.Fatalf("parent for Root/Child.md = %q, want folder-123 (folder takes precedence)", got)
+	if got := resolveParentIDFromHierarchy("Root/Child.md", "page-child", "", pageIndex, folderIndex); got != "page-root" {
+		t.Fatalf("parent for Root/Child.md = %q, want page-root (index page takes precedence)", got)
 	}
 }
 
@@ -102,6 +102,12 @@ type fakeFolderPushRemote struct {
 	foldersByID map[string]confluence.Folder
 	pages       []confluence.Page
 	pagesByID   map[string]confluence.Page
+	moves       []fakePageMove
+}
+
+type fakePageMove struct {
+	pageID   string
+	targetID string
 }
 
 func (f *fakeFolderPushRemote) GetSpace(_ context.Context, spaceKey string) (confluence.Space, error) {
@@ -189,6 +195,7 @@ func (f *fakeFolderPushRemote) CreateFolder(_ context.Context, input confluence.
 }
 
 func (f *fakeFolderPushRemote) MovePage(_ context.Context, pageID string, targetID string) error {
+	f.moves = append(f.moves, fakePageMove{pageID: pageID, targetID: targetID})
 	return nil
 }
 
@@ -203,6 +210,8 @@ func TestEnsureFolderHierarchy_CreatesMissingFolders(t *testing.T) {
 		remote,
 		"space-1",
 		"Engineering/Backend",
+		"",
+		nil,
 		folderIndex,
 		nil,
 	)
@@ -231,6 +240,8 @@ func TestEnsureFolderHierarchy_SkipsExistingFolders(t *testing.T) {
 		remote,
 		"space-1",
 		"Engineering/Backend",
+		"",
+		nil,
 		folderIndex,
 		nil,
 	)
@@ -255,6 +266,8 @@ func TestEnsureFolderHierarchy_EmitsDiagnostics(t *testing.T) {
 		remote,
 		"space-1",
 		"NewFolder",
+		"",
+		nil,
 		folderIndex,
 		&diagnostics,
 	)
