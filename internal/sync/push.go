@@ -280,9 +280,7 @@ func Push(ctx context.Context, remote PushRemote, opts PushOptions) (PushResult,
 				commits = append(commits, commit)
 			}
 		case PushChangeAdd, PushChangeModify:
-			if _, hasPending := pendingPrecreatedPages[relPath]; hasPending {
-				delete(pendingPrecreatedPages, relPath)
-			}
+			delete(pendingPrecreatedPages, relPath)
 			commit, err := pushUpsertPage(
 				ctx,
 				remote,

@@ -33,6 +33,9 @@ test-output/
 
 # Local Confluence sync state
 .confluence-state.json
+conf
+.claude/
+
 
 # Git worktrees
 .worktrees/
