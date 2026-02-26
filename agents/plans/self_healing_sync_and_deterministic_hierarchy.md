@@ -4,20 +4,21 @@
 **Proposed Date**: 2026-02-26  
 **Target Version**: 0.2.x  
 **Owner**: Agentic Core
-**Execution Status**: In Progress (4/6 sections implemented)
+**Execution Status**: In Progress (5/6 sections implemented)
 
 ## Implementation Progress
 - [x] 1. State File Self-Healing
 - [x] 2. Deterministic Hierarchy (Page vs. Folder)
 - [x] 3. Complete Removal of Space Key from Frontmatter
 - [x] 4. Deletion Warnings for Dirty Worktrees
-- [ ] 5. Sync Inspection (`conf check-sync`)
+- [x] 5. Sync Inspection (`conf check-sync`)
 - [ ] 6. Workspace Recovery (`conf repair-sync`)
 
 ## Change Log
 - 2026-02-26 (Step 1): Removed `space` from frontmatter write-path and schema requirements. Push/validate now ignore `space` frontmatter mismatches, and file-target space resolution now uses state/directory context instead of requiring `space:`.
 - 2026-02-26 (Step 2): Added conflict-marker detection in state loading and automatic pull-time state healing (remote page + local ID rebuild). Added explicit dirty-worktree deletion warnings when pull detects remote deletions that overlap local markdown edits.
 - 2026-02-26 (Step 3): Made hierarchy parenting deterministic by preferring nearest index pages (`X/X.md`) over folders, updated folder precreation to use index-parent awareness, and added index-driven folder collapse/reparent behavior diagnostics during push.
+- 2026-02-26 (Step 4): Added `conf check-sync` (alias: `conf status`) to inspect local not-pushed markdown changes, remote not-pulled page drift, pending additions/deletions, and max tracked version drift without mutating workspace or remote.
 
 ---
 
