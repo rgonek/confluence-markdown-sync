@@ -598,7 +598,7 @@ func pushUpsertPage(
 		assetOwnerPageID = strings.TrimSpace(precreatedPage.ID)
 	}
 	if assetOwnerPageID != "" {
-		migratedBody, migratedPaths, migrateErr := migrateReferencedAssetsToPageHierarchy(
+		migratedBody, migratedPaths, migratedMoves, migrateErr := migrateReferencedAssetsToPageHierarchy(
 			opts.SpaceDir,
 			absPath,
 			assetOwnerPageID,
@@ -615,6 +615,14 @@ func pushUpsertPage(
 		}
 		doc.Body = migratedBody
 		touchedAssets = append(touchedAssets, migratedPaths...)
+		for _, move := range migratedMoves {
+			appendPushDiagnostic(
+				diagnostics,
+				move.To,
+				"ATTACHMENT_PATH_NORMALIZED",
+				fmt.Sprintf("moved %s to %s and updated markdown reference", move.From, move.To),
+			)
+		}
 	}
 
 	// Phase 1: preflight planning and strict conversion validation.
@@ -1619,6 +1627,11 @@ type markdownDestinationRewrite struct {
 	AddImagePrefix         bool
 }
 
+type assetPathMove struct {
+	From string
+	To   string
+}
+
 func CollectReferencedAssetPaths(spaceDir, sourcePath, body string) ([]string, error) {
 	references, err := collectLocalAssetReferences(spaceDir, sourcePath, body)
 	if err != nil {
@@ -1862,18 +1875,18 @@ func migrateReferencedAssetsToPageHierarchy(
 	spaceDir, sourcePath, pageID, body string,
 	attachmentIDByPath map[string]string,
 	stateAttachmentIndex map[string]string,
-) (string, []string, error) {
+) (string, []string, []assetPathMove, error) {
 	pageID = fs.SanitizePathSegment(strings.TrimSpace(pageID))
 	if pageID == "" {
-		return body, nil, nil
+		return body, nil, nil, nil
 	}
 
 	references, err := collectLocalAssetReferences(spaceDir, sourcePath, body)
 	if err != nil {
-		return "", nil, err
+		return "", nil, nil, err
 	}
 	if len(references) == 0 {
-		return body, nil, nil
+		return body, nil, nil, nil
 	}
 
 	reservedTargets := map[string]string{}
@@ -1885,7 +1898,7 @@ func migrateReferencedAssetsToPageHierarchy(
 	for _, reference := range references {
 		targetAbsPath, targetRelPath, resolveErr := resolvePageAssetTargetPath(spaceDir, pageID, reference.AbsPath, reservedTargets)
 		if resolveErr != nil {
-			return "", nil, resolveErr
+			return "", nil, nil, resolveErr
 		}
 
 		if targetRelPath == reference.RelPath {
@@ -1899,7 +1912,7 @@ func migrateReferencedAssetsToPageHierarchy(
 
 		relativeDestination, relErr := relativeEncodedDestination(sourcePath, targetAbsPath)
 		if relErr != nil {
-			return "", nil, fmt.Errorf("resolve relative path from %s to %s: %w", sourcePath, targetAbsPath, relErr)
+			return "", nil, nil, fmt.Errorf("resolve relative path from %s to %s: %w", sourcePath, targetAbsPath, relErr)
 		}
 
 		rewrites = append(rewrites, markdownDestinationRewrite{
@@ -1916,20 +1929,20 @@ func migrateReferencedAssetsToPageHierarchy(
 		}
 
 		if err := os.MkdirAll(filepath.Dir(targetAbsPath), 0o750); err != nil {
-			return "", nil, fmt.Errorf("prepare asset directory %s: %w", filepath.Dir(targetAbsPath), err)
+			return "", nil, nil, fmt.Errorf("prepare asset directory %s: %w", filepath.Dir(targetAbsPath), err)
 		}
 
 		if err := os.Rename(sourceAbsPath, targetAbsPath); err != nil {
-			return "", nil, fmt.Errorf("move asset %s to %s: %w", sourceAbsPath, targetAbsPath, err)
+			return "", nil, nil, fmt.Errorf("move asset %s to %s: %w", sourceAbsPath, targetAbsPath, err)
 		}
 	}
 
 	for oldPath, newPath := range pathMoves {
 		if err := relocateAttachmentIndexPath(attachmentIDByPath, oldPath, newPath); err != nil {
-			return "", nil, err
+			return "", nil, nil, err
 		}
 		if err := relocateAttachmentIndexPath(stateAttachmentIndex, oldPath, newPath); err != nil {
-			return "", nil, err
+			return "", nil, nil, err
 		}
 	}
 
@@ -1938,7 +1951,12 @@ func migrateReferencedAssetsToPageHierarchy(
 		updatedBody = applyMarkdownDestinationRewrites(body, rewrites)
 	}
 
-	return updatedBody, sortedStringKeys(touchedPaths), nil
+	moves := make([]assetPathMove, 0, len(pathMoves))
+	for _, oldPath := range sortedStringKeys(pathMoves) {
+		moves = append(moves, assetPathMove{From: oldPath, To: pathMoves[oldPath]})
+	}
+
+	return updatedBody, sortedStringKeys(touchedPaths), moves, nil
 }
 
 func resolvePageAssetTargetPath(spaceDir, pageID, sourceAbsPath string, reservedTargets map[string]string) (string, string, error) {
