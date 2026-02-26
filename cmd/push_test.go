@@ -1195,6 +1195,98 @@ func TestRunPush_DoesNotWarnForSyncedUntrackedFilesInStash(t *testing.T) {
 	}
 }
 
+func TestRunPush_FileTargetRestoresUnsyncedScopedTrackedChangesFromStash(t *testing.T) {
+	runParallelCommandTest(t)
+
+	repo := t.TempDir()
+	spaceDir := preparePushRepoWithBaseline(t, repo)
+
+	secondaryPath := filepath.Join(spaceDir, "secondary.md")
+	writeMarkdown(t, secondaryPath, fs.MarkdownDocument{
+		Frontmatter: fs.Frontmatter{
+			Title:                  "Secondary",
+			ID:                     "2",
+			Space:                  "ENG",
+			Version:                1,
+			ConfluenceLastModified: "2026-02-01T10:00:00Z",
+		},
+		Body: "Baseline secondary content\n",
+	})
+
+	state, err := fs.LoadState(spaceDir)
+	if err != nil {
+		t.Fatalf("load state: %v", err)
+	}
+	state.PagePathIndex["secondary.md"] = "2"
+	if err := fs.SaveState(spaceDir, state); err != nil {
+		t.Fatalf("save state: %v", err)
+	}
+
+	runGitForTest(t, repo, "add", ".")
+	runGitForTest(t, repo, "commit", "-m", "add secondary page")
+
+	rootPath := filepath.Join(spaceDir, "root.md")
+	writeMarkdown(t, rootPath, fs.MarkdownDocument{
+		Frontmatter: fs.Frontmatter{
+			Title:                  "Root",
+			ID:                     "1",
+			Space:                  "ENG",
+			Version:                1,
+			ConfluenceLastModified: "2026-02-01T10:00:00Z",
+		},
+		Body: "Updated root content\n",
+	})
+
+	writeMarkdown(t, secondaryPath, fs.MarkdownDocument{
+		Frontmatter: fs.Frontmatter{
+			Title:                  "Secondary",
+			ID:                     "2",
+			Space:                  "ENG",
+			Version:                1,
+			ConfluenceLastModified: "2026-02-01T10:00:00Z",
+		},
+		Body: "Locally modified secondary content\n",
+	})
+
+	fake := newCmdFakePushRemote(1)
+	oldPushFactory := newPushRemote
+	oldPullFactory := newPullRemote
+	newPushRemote = func(_ *config.Config) (syncflow.PushRemote, error) { return fake, nil }
+	newPullRemote = func(_ *config.Config) (syncflow.PullRemote, error) { return fake, nil }
+	t.Cleanup(func() {
+		newPushRemote = oldPushFactory
+		newPullRemote = oldPullFactory
+	})
+
+	setupEnv(t)
+	chdirRepo(t, spaceDir)
+
+	cmd := &cobra.Command{}
+	out := &bytes.Buffer{}
+	cmd.SetOut(out)
+
+	if err := runPush(cmd, config.Target{Mode: config.TargetModeFile, Value: rootPath}, OnConflictCancel, false); err != nil {
+		t.Fatalf("runPush() failed: %v", err)
+	}
+
+	if strings.Contains(out.String(), "stash restore had conflicts") {
+		t.Fatalf("expected stash restore without conflict warning, got:\n%s", out.String())
+	}
+
+	secondaryDoc, err := fs.ReadMarkdownDocument(secondaryPath)
+	if err != nil {
+		t.Fatalf("read secondary markdown: %v", err)
+	}
+	if !strings.Contains(secondaryDoc.Body, "Locally modified secondary content") {
+		t.Fatalf("secondary markdown body lost local change: %q", secondaryDoc.Body)
+	}
+
+	stashList := runGitForTest(t, repo, "stash", "list")
+	if strings.TrimSpace(stashList) != "" {
+		t.Fatalf("expected stash to be empty, got:\n%s", stashList)
+	}
+}
+
 type failingPushRemote struct {
 	*cmdFakePushRemote
 }
