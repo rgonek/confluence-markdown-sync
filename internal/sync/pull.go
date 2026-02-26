@@ -823,6 +823,22 @@ func resolveFolderHierarchyFromPages(ctx context.Context, remote PullRemote, pag
 	return folderByID, diagnostics, nil
 }
 
+// ResolveFolderPathIndex rebuilds folder_path_index from remote hierarchy.
+func ResolveFolderPathIndex(ctx context.Context, remote PullRemote, pages []confluence.Page) (map[string]string, []PullDiagnostic, error) {
+	folderByID, diagnostics, err := resolveFolderHierarchyFromPages(ctx, remote, pages)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	pageByID := make(map[string]confluence.Page, len(pages))
+	for _, page := range pages {
+		pageByID[strings.TrimSpace(page.ID)] = page
+	}
+
+	folderPathIndex := buildFolderPathIndex(folderByID, pageByID)
+	return folderPathIndex, diagnostics, nil
+}
+
 func listAllChanges(ctx context.Context, remote PullRemote, opts confluence.ChangeListOptions, progress Progress) ([]confluence.Change, error) {
 	result := []confluence.Change{}
 	start := opts.Start

@@ -1,6 +1,7 @@
 package fs
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -84,5 +85,33 @@ func TestLoadState_InvalidWatermarkFails(t *testing.T) {
 
 	if _, err := LoadState(spaceDir); err == nil {
 		t.Fatal("LoadState() expected error for invalid watermark, got nil")
+	}
+}
+
+func TestLoadState_GitConflictMarkersReturnsTypedError(t *testing.T) {
+	spaceDir := filepath.Join(t.TempDir(), "ENG")
+	if err := os.MkdirAll(spaceDir, 0o750); err != nil {
+		t.Fatalf("MkdirAll() unexpected error: %v", err)
+	}
+
+	raw := []byte(`<<<<<<< HEAD
+{"space_key":"ENG","page_path_index":{"a.md":"1"}}
+=======
+{"space_key":"ENG","page_path_index":{"b.md":"2"}}
+>>>>>>> sync/ENG/20260226T120000Z
+`)
+	if err := os.WriteFile(StatePath(spaceDir), raw, 0o644); err != nil { //nolint:gosec // test fixture writes non-sensitive temp file
+		t.Fatalf("WriteFile() unexpected error: %v", err)
+	}
+
+	_, err := LoadState(spaceDir)
+	if err == nil {
+		t.Fatal("LoadState() expected conflict marker error, got nil")
+	}
+	if !errors.Is(err, ErrStateConflictMarkers) {
+		t.Fatalf("LoadState() error = %v, want ErrStateConflictMarkers", err)
+	}
+	if !IsStateConflictError(err) {
+		t.Fatalf("IsStateConflictError(%v) = false, want true", err)
 	}
 }

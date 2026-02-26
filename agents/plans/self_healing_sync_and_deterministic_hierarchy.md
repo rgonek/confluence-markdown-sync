@@ -4,18 +4,19 @@
 **Proposed Date**: 2026-02-26  
 **Target Version**: 0.2.x  
 **Owner**: Agentic Core
-**Execution Status**: In Progress (1/6 sections implemented)
+**Execution Status**: In Progress (3/6 sections implemented)
 
 ## Implementation Progress
-- [ ] 1. State File Self-Healing
+- [x] 1. State File Self-Healing
 - [ ] 2. Deterministic Hierarchy (Page vs. Folder)
 - [x] 3. Complete Removal of Space Key from Frontmatter
-- [ ] 4. Deletion Warnings for Dirty Worktrees
+- [x] 4. Deletion Warnings for Dirty Worktrees
 - [ ] 5. Sync Inspection (`conf check-sync`)
 - [ ] 6. Workspace Recovery (`conf repair-sync`)
 
 ## Change Log
 - 2026-02-26 (Step 1): Removed `space` from frontmatter write-path and schema requirements. Push/validate now ignore `space` frontmatter mismatches, and file-target space resolution now uses state/directory context instead of requiring `space:`.
+- 2026-02-26 (Step 2): Added conflict-marker detection in state loading and automatic pull-time state healing (remote page + local ID rebuild). Added explicit dirty-worktree deletion warnings when pull detects remote deletions that overlap local markdown edits.
 
 ---
 
@@ -107,13 +108,13 @@ When a page is renamed or deleted remotely, the local `pull` command tries to de
 
 ---
 
-## 5. Sync Inspection (`conf check-sync`)
+## 5. Sync Inspection (`conf status`)
 
 ### 5.1 Problem: Lack of Visibility
 Users cannot quickly see a high-level summary of the sync state (local vs. remote) without running a full `diff` or `push --dry-run`.
 
 ### 5.2 Solution: New Inspection Command
-- **Command**: `conf check-sync [TARGET]`
+- **Command**: `conf status [TARGET]`
 - **Output**:
   - List of locally modified files (not yet pushed).
   - List of remotely modified files (not yet pulled).
@@ -122,18 +123,18 @@ Users cannot quickly see a high-level summary of the sync state (local vs. remot
 
 ### 5.3 Reproduction Steps
 1. Modify one file locally and one page remotely.
-2. Run `conf check-sync`.
+2. Run `conf status`.
 3. **Verification**: Tool should accurately list both the local change and the remote change.
 
 ---
 
-## 6. Workspace Recovery (`conf repair-sync`)
+## 6. Workspace Recovery (`conf clean`)
 
 ### 6.1 Problem: Hanging Sync State
 If a `push` or `pull` crashes or is force-interrupted, the user might be left on an ephemeral `sync/` branch with a "dirty" working directory or hidden snapshot refs.
 
 ### 6.2 Solution: Recovery Utility
-- **Command**: `conf repair-sync`
+- **Command**: `conf clean`
 - **Actions**:
   1. Identify the current branch. If it's a `sync/` branch, offer to return to the original branch (e.g., `master`).
   2. Clean up any stale worktrees in `.confluence-worktrees/`.
@@ -142,5 +143,5 @@ If a `push` or `pull` crashes or is force-interrupted, the user might be left on
 
 ### 6.3 Reproduction Steps
 1. Start a `conf push` and terminate the process abruptly mid-execution.
-2. Run `conf repair-sync`.
+2. Run `conf clean`.
 3. **Verification**: Tool should detect the hanging sync branch and offer to restore the workspace to a clean state.
