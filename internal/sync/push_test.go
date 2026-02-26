@@ -507,6 +507,61 @@ func TestPush_PreflightStrictFailureSkipsRemoteMutations(t *testing.T) {
 	}
 }
 
+func TestPush_PreflightStrictResolvesCrossSpaceLinkWithGlobalIndex(t *testing.T) {
+	repo := t.TempDir()
+	engDir := filepath.Join(repo, "Engineering (ENG)")
+	tdDir := filepath.Join(repo, "Technical Docs (TD)")
+	if err := os.MkdirAll(engDir, 0o750); err != nil {
+		t.Fatalf("mkdir eng dir: %v", err)
+	}
+	if err := os.MkdirAll(tdDir, 0o750); err != nil {
+		t.Fatalf("mkdir td dir: %v", err)
+	}
+
+	mdPath := filepath.Join(engDir, "new.md")
+	if err := fs.WriteMarkdownDocument(mdPath, fs.MarkdownDocument{
+		Frontmatter: fs.Frontmatter{
+			Title: "New",
+			Space: "ENG",
+		},
+		Body: "[Cross Space](../Technical%20Docs%20(TD)/target.md)\n",
+	}); err != nil {
+		t.Fatalf("write markdown: %v", err)
+	}
+
+	targetPath := filepath.Join(tdDir, "target.md")
+	if err := fs.WriteMarkdownDocument(targetPath, fs.MarkdownDocument{
+		Frontmatter: fs.Frontmatter{
+			Title:   "Target",
+			ID:      "200",
+			Space:   "TD",
+			Version: 1,
+		},
+		Body: "target\n",
+	}); err != nil {
+		t.Fatalf("write cross-space markdown: %v", err)
+	}
+
+	remote := newRollbackPushRemote()
+	result, err := Push(context.Background(), remote, PushOptions{
+		SpaceKey:            "ENG",
+		SpaceDir:            engDir,
+		Domain:              "https://example.atlassian.net",
+		State:               fs.SpaceState{SpaceKey: "ENG"},
+		GlobalPageIndex:     GlobalPageIndex{"200": targetPath},
+		ConflictPolicy:      PushConflictPolicyCancel,
+		Changes:             []PushFileChange{{Type: PushChangeAdd, Path: "new.md"}},
+		ArchiveTimeout:      confluence.DefaultArchiveTaskTimeout,
+		ArchivePollInterval: confluence.DefaultArchiveTaskPollInterval,
+	})
+	if err != nil {
+		t.Fatalf("Push() unexpected error: %v", err)
+	}
+	if len(result.Commits) != 1 {
+		t.Fatalf("commit count = %d, want 1", len(result.Commits))
+	}
+}
+
 func TestPush_RollbackDeletesCreatedPageAndAttachmentsOnUpdateFailure(t *testing.T) {
 	spaceDir := t.TempDir()
 	mdPath := filepath.Join(spaceDir, "new.md")

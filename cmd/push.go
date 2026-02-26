@@ -495,6 +495,11 @@ func runPushInWorktree(
 		return fmt.Errorf("load state: %w", err)
 	}
 
+	globalPageIndex, err := syncflow.BuildGlobalPageIndex(worktreeDir)
+	if err != nil {
+		return fmt.Errorf("build global page index: %w", err)
+	}
+
 	var progress syncflow.Progress
 	if !flagVerbose && outputSupportsProgress(out) {
 		progress = newConsoleProgress(out, "Syncing to Confluence")
@@ -505,6 +510,7 @@ func runPushInWorktree(
 		SpaceDir:            wtSpaceDir,
 		Domain:              cfg.Domain,
 		State:               state,
+		GlobalPageIndex:     globalPageIndex,
 		Changes:             syncChanges,
 		ConflictPolicy:      toSyncConflictPolicy(onConflict),
 		ArchiveTimeout:      normalizedArchiveTaskTimeout(),

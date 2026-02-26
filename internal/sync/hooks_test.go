@@ -193,6 +193,63 @@ func TestReverseLinkHook(t *testing.T) {
 	}
 }
 
+func TestReverseLinkHook_DecodesURLEncodedPath(t *testing.T) {
+	tmpDir := t.TempDir()
+	spaceDir := filepath.Join(tmpDir, "Engineering (ENG)")
+	if err := os.MkdirAll(spaceDir, 0o750); err != nil {
+		t.Fatalf("mkdir space dir: %v", err)
+	}
+
+	hook := NewReverseLinkHook(spaceDir, PageIndex{"Target Page.md": "12345"}, "https://example.atlassian.net")
+	out, err := hook(context.Background(), mdconv.LinkParseInput{
+		SourcePath:  filepath.Join(spaceDir, "index.md"),
+		Destination: "Target%20Page.md",
+	})
+	if err != nil {
+		t.Fatalf("hook returned error: %v", err)
+	}
+	if !out.Handled {
+		t.Fatal("expected encoded destination to be handled")
+	}
+	if got, want := out.Destination, "https://example.atlassian.net/wiki/pages/viewpage.action?pageId=12345"; got != want {
+		t.Fatalf("destination = %q, want %q", got, want)
+	}
+}
+
+func TestReverseLinkHookWithGlobalIndex_ResolvesCrossSpaceLink(t *testing.T) {
+	tmpDir := t.TempDir()
+	engDir := filepath.Join(tmpDir, "Engineering (ENG)")
+	tdDir := filepath.Join(tmpDir, "Technical Docs (TD)")
+	if err := os.MkdirAll(engDir, 0o750); err != nil {
+		t.Fatalf("mkdir eng dir: %v", err)
+	}
+	if err := os.MkdirAll(tdDir, 0o750); err != nil {
+		t.Fatalf("mkdir td dir: %v", err)
+	}
+
+	targetPath := filepath.Join(tdDir, "Target Page.md")
+	hook := NewReverseLinkHookWithGlobalIndex(
+		engDir,
+		PageIndex{"index.md": "1"},
+		GlobalPageIndex{"77": targetPath},
+		"https://example.atlassian.net",
+	)
+
+	out, err := hook(context.Background(), mdconv.LinkParseInput{
+		SourcePath:  filepath.Join(engDir, "index.md"),
+		Destination: "../Technical%20Docs%20(TD)/Target%20Page.md#section-a",
+	})
+	if err != nil {
+		t.Fatalf("hook returned error: %v", err)
+	}
+	if !out.Handled {
+		t.Fatal("expected cross-space destination to be handled")
+	}
+	if got, want := out.Destination, "https://example.atlassian.net/wiki/pages/viewpage.action?pageId=77#section-a"; got != want {
+		t.Fatalf("destination = %q, want %q", got, want)
+	}
+}
+
 func TestReverseMediaHook(t *testing.T) {
 	// Need to create real files for Stat check
 	tmpDir := t.TempDir()

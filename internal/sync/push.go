@@ -77,6 +77,7 @@ type PushOptions struct {
 	SpaceDir            string
 	Domain              string
 	State               fs.SpaceState
+	GlobalPageIndex     GlobalPageIndex
 	Changes             []PushFileChange
 	ConflictPolicy      PushConflictPolicy
 	HardDelete          bool
@@ -534,7 +535,7 @@ func pushUpsertPage(
 	}
 
 	// Phase 1: preflight planning and strict conversion validation.
-	linkHook := NewReverseLinkHook(opts.SpaceDir, pageIDByPath, opts.Domain)
+	linkHook := NewReverseLinkHookWithGlobalIndex(opts.SpaceDir, pageIDByPath, opts.GlobalPageIndex, opts.Domain)
 	strictAttachmentIndex, referencedAssetPaths, err := BuildStrictAttachmentIndex(opts.SpaceDir, absPath, doc.Body, attachmentIDByPath)
 	if err != nil {
 		return PushCommitPlan{}, fmt.Errorf("resolve assets for %s: %w", relPath, err)
