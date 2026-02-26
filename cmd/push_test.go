@@ -1410,6 +1410,10 @@ func (f *cmdFakePushRemote) GetLabels(_ context.Context, pageID string) ([]strin
 	return nil, nil
 }
 
+func (f *cmdFakePushRemote) ListAttachments(_ context.Context, pageID string) ([]confluence.Attachment, error) {
+	return nil, nil
+}
+
 func (f *cmdFakePushRemote) AddLabels(_ context.Context, pageID string, labels []string) error {
 	return nil
 }

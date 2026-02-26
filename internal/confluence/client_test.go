@@ -594,6 +594,60 @@ func TestDownloadAttachment_ResolvesUUID(t *testing.T) {
 
 }
 
+func TestListAttachments_PaginatesAndMapsFields(t *testing.T) {
+	callCount := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		callCount++
+		w.Header().Set("Content-Type", "application/json")
+
+		switch callCount {
+		case 1:
+			if r.URL.Path != "/wiki/api/v2/pages/123/attachments" {
+				t.Fatalf("first call path = %s", r.URL.Path)
+			}
+			if _, err := io.WriteString(w, `{
+				"results":[{"id":"att-1","title":"diagram.png","mediaType":"image/png"}],
+				"_links":{"next":"/wiki/api/v2/pages/123/attachments?cursor=next-token"}
+			}`); err != nil {
+				t.Fatalf("write response: %v", err)
+			}
+		case 2:
+			if !strings.Contains(r.URL.RawQuery, "cursor=next-token") {
+				t.Fatalf("second call query = %s", r.URL.RawQuery)
+			}
+			if _, err := io.WriteString(w, `{"results":[{"id":"att-2","filename":"spec.pdf","mediaType":"application/pdf"}]}`); err != nil {
+				t.Fatalf("write response: %v", err)
+			}
+		default:
+			t.Fatalf("unexpected call %d", callCount)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	client, err := NewClient(ClientConfig{
+		BaseURL:  server.URL,
+		Email:    "u",
+		APIToken: "t",
+	})
+	if err != nil {
+		t.Fatalf("NewClient() failed: %v", err)
+	}
+
+	attachments, err := client.ListAttachments(context.Background(), "123")
+	if err != nil {
+		t.Fatalf("ListAttachments() error: %v", err)
+	}
+	if len(attachments) != 2 {
+		t.Fatalf("attachment count = %d, want 2", len(attachments))
+	}
+	if attachments[0].ID != "att-1" || attachments[0].Filename != "diagram.png" {
+		t.Fatalf("first attachment = %+v", attachments[0])
+	}
+	if attachments[1].ID != "att-2" || attachments[1].Filename != "spec.pdf" {
+		t.Fatalf("second attachment = %+v", attachments[1])
+	}
+}
+
 func TestResolveAttachmentIDByFileID_Pagination(t *testing.T) {
 	uuid := "e2cabb2e-4df7-49bb-84e0-c76ae83f6f9b"
 	callCount := 0

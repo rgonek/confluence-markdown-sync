@@ -494,19 +494,20 @@ func TestListAllChanges_UsesContinuationOffsets(t *testing.T) {
 }
 
 type fakePullRemote struct {
-	space           confluence.Space
-	pages           []confluence.Page
-	folderByID      map[string]confluence.Folder
-	folderErr       error
-	changes         []confluence.Change
-	listChangesFunc func(opts confluence.ChangeListOptions) (confluence.ChangeListResult, error)
-	pagesByID       map[string]confluence.Page
-	attachments     map[string][]byte
-	labels          map[string][]string
-	users           map[string]confluence.User
-	contentStatuses map[string]string
-	lastChangeSince time.Time
-	getPageHook     func(pageID string)
+	space             confluence.Space
+	pages             []confluence.Page
+	folderByID        map[string]confluence.Folder
+	folderErr         error
+	changes           []confluence.Change
+	listChangesFunc   func(opts confluence.ChangeListOptions) (confluence.ChangeListResult, error)
+	pagesByID         map[string]confluence.Page
+	attachments       map[string][]byte
+	attachmentsByPage map[string][]confluence.Attachment
+	labels            map[string][]string
+	users             map[string]confluence.User
+	contentStatuses   map[string]string
+	lastChangeSince   time.Time
+	getPageHook       func(pageID string)
 }
 
 func (f *fakePullRemote) GetUser(_ context.Context, accountID string) (confluence.User, error) {
@@ -570,6 +571,14 @@ func (f *fakePullRemote) GetLabels(_ context.Context, pageID string) ([]string, 
 		return nil, nil
 	}
 	return f.labels[pageID], nil
+}
+
+func (f *fakePullRemote) ListAttachments(_ context.Context, pageID string) ([]confluence.Attachment, error) {
+	if f.attachmentsByPage == nil {
+		return nil, nil
+	}
+	attachments := append([]confluence.Attachment(nil), f.attachmentsByPage[pageID]...)
+	return attachments, nil
 }
 
 func (f *fakePullRemote) DownloadAttachment(_ context.Context, attachmentID string, pageID string, out io.Writer) error {
@@ -874,5 +883,87 @@ func TestPull_SkipsMissingAssets(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "att-1") || !strings.Contains(err.Error(), "page 1") {
 		t.Fatalf("error message should mention attachment and page, got: %v", err)
+	}
+}
+
+func TestPull_ResolvesUnknownMediaIDByFilename(t *testing.T) {
+	tmpDir := t.TempDir()
+	spaceDir := filepath.Join(tmpDir, "ENG")
+	if err := os.MkdirAll(spaceDir, 0o750); err != nil {
+		t.Fatalf("mkdir space: %v", err)
+	}
+
+	adf := map[string]any{
+		"version": 1,
+		"type":    "doc",
+		"content": []any{
+			map[string]any{
+				"type": "mediaSingle",
+				"content": []any{
+					map[string]any{
+						"type": "media",
+						"attrs": map[string]any{
+							"id":       "UNKNOWN_MEDIA_ID",
+							"pageId":   "1",
+							"fileName": "diagram.png",
+						},
+					},
+				},
+			},
+		},
+	}
+
+	fake := &fakePullRemote{
+		space: confluence.Space{ID: "space-1", Key: "ENG"},
+		pages: []confluence.Page{{ID: "1", SpaceID: "space-1", Title: "Page 1"}},
+		pagesByID: map[string]confluence.Page{
+			"1": {
+				ID:      "1",
+				Title:   "Page 1",
+				BodyADF: rawJSON(t, adf),
+			},
+		},
+		attachments: map[string][]byte{
+			"att-real": []byte("asset-bytes"),
+		},
+		attachmentsByPage: map[string][]confluence.Attachment{
+			"1": {
+				{ID: "att-real", PageID: "1", Filename: "diagram.png"},
+			},
+		},
+	}
+
+	result, err := Pull(context.Background(), fake, PullOptions{
+		SpaceKey: "ENG",
+		SpaceDir: spaceDir,
+	})
+	if err != nil {
+		t.Fatalf("Pull() unexpected error: %v", err)
+	}
+
+	assetPath := filepath.Join(spaceDir, "assets", "1", "att-real-diagram.png")
+	raw, err := os.ReadFile(assetPath) //nolint:gosec // path is controlled in test temp dir
+	if err != nil {
+		t.Fatalf("read resolved asset: %v", err)
+	}
+	if string(raw) != "asset-bytes" {
+		t.Fatalf("asset bytes = %q, want %q", string(raw), "asset-bytes")
+	}
+
+	foundResolvedDiagnostic := false
+	foundSkippedDiagnostic := false
+	for _, diag := range result.Diagnostics {
+		if diag.Code == "UNKNOWN_MEDIA_ID_RESOLVED" {
+			foundResolvedDiagnostic = true
+		}
+		if diag.Code == "ATTACHMENT_DOWNLOAD_SKIPPED" {
+			foundSkippedDiagnostic = true
+		}
+	}
+	if !foundResolvedDiagnostic {
+		t.Fatalf("expected UNKNOWN_MEDIA_ID_RESOLVED diagnostic, got %+v", result.Diagnostics)
+	}
+	if foundSkippedDiagnostic {
+		t.Fatalf("did not expect ATTACHMENT_DOWNLOAD_SKIPPED diagnostic, got %+v", result.Diagnostics)
 	}
 }

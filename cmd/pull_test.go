@@ -836,15 +836,16 @@ func buildBulkPullRemote(t *testing.T, pageCount int) *cmdFakePullRemote {
 }
 
 type cmdFakePullRemote struct {
-	space       confluence.Space
-	pages       []confluence.Page
-	folderByID  map[string]confluence.Folder
-	folderErr   error
-	getPageErr  error
-	changes     []confluence.Change
-	listChanges func(opts confluence.ChangeListOptions) (confluence.ChangeListResult, error)
-	pagesByID   map[string]confluence.Page
-	attachments map[string][]byte
+	space             confluence.Space
+	pages             []confluence.Page
+	folderByID        map[string]confluence.Folder
+	folderErr         error
+	getPageErr        error
+	changes           []confluence.Change
+	listChanges       func(opts confluence.ChangeListOptions) (confluence.ChangeListResult, error)
+	pagesByID         map[string]confluence.Page
+	attachments       map[string][]byte
+	attachmentsByPage map[string][]confluence.Attachment
 }
 
 func (f *cmdFakePullRemote) GetUser(_ context.Context, accountID string) (confluence.User, error) {
@@ -894,6 +895,14 @@ func (f *cmdFakePullRemote) GetContentStatus(_ context.Context, pageID string) (
 
 func (f *cmdFakePullRemote) GetLabels(_ context.Context, pageID string) ([]string, error) {
 	return nil, nil
+}
+
+func (f *cmdFakePullRemote) ListAttachments(_ context.Context, pageID string) ([]confluence.Attachment, error) {
+	if f.attachmentsByPage == nil {
+		return nil, nil
+	}
+	attachments := append([]confluence.Attachment(nil), f.attachmentsByPage[pageID]...)
+	return attachments, nil
 }
 
 func (f *cmdFakePullRemote) DownloadAttachment(_ context.Context, attachmentID string, pageID string, out io.Writer) error {

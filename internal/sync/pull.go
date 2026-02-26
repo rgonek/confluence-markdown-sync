@@ -22,7 +22,7 @@ import (
 
 const (
 	// DefaultPullOverlapWindow is the default overlap window for incremental pull fetches.
-	DefaultPullOverlapWindow = 2 * time.Minute
+	DefaultPullOverlapWindow = 5 * time.Minute
 	pullPageBatchSize        = 100
 	pullChangeBatchSize      = 100
 	maxPaginationIterations  = 500
@@ -38,6 +38,7 @@ type PullRemote interface {
 	GetPage(ctx context.Context, pageID string) (confluence.Page, error)
 	GetContentStatus(ctx context.Context, pageID string) (string, error)
 	GetLabels(ctx context.Context, pageID string) ([]string, error)
+	ListAttachments(ctx context.Context, pageID string) ([]confluence.Attachment, error)
 	DownloadAttachment(ctx context.Context, attachmentID string, pageID string, out io.Writer) error
 }
 
@@ -357,15 +358,41 @@ func Pull(ctx context.Context, remote PullRemote, opts PullOptions) (PullResult,
 		if diag != nil {
 			diagnostics = append(diagnostics, *diag)
 		}
-		for _, removedPath := range removeStaleAttachmentsForPage(attachmentIndex, page.ID, refs) {
-			staleAttachmentPaths[removedPath] = struct{}{}
-			// Sync reverse index
-			for id, p := range pathByAttachmentID {
-				if p == removedPath {
-					delete(pathByAttachmentID, id)
-					break
+
+		refs, resolvedUnknownCount, unresolvedUnknownCount, resolveErr := resolveUnknownAttachmentRefsByFilename(ctx, remote, page.ID, refs, attachmentIndex)
+		if resolveErr != nil {
+			diagnostics = append(diagnostics, PullDiagnostic{
+				Path:    page.ID,
+				Code:    "UNKNOWN_MEDIA_ID_LOOKUP_FAILED",
+				Message: fmt.Sprintf("failed to resolve UNKNOWN_MEDIA_ID references for page %s: %v", page.ID, resolveErr),
+			})
+		}
+
+		if resolvedUnknownCount > 0 {
+			diagnostics = append(diagnostics, PullDiagnostic{
+				Path:    page.ID,
+				Code:    "UNKNOWN_MEDIA_ID_RESOLVED",
+				Message: fmt.Sprintf("resolved %d UNKNOWN_MEDIA_ID reference(s) by filename for page %s", resolvedUnknownCount, page.ID),
+			})
+		}
+
+		if unresolvedUnknownCount == 0 {
+			for _, removedPath := range removeStaleAttachmentsForPage(attachmentIndex, page.ID, refs) {
+				staleAttachmentPaths[removedPath] = struct{}{}
+				// Sync reverse index
+				for id, p := range pathByAttachmentID {
+					if p == removedPath {
+						delete(pathByAttachmentID, id)
+						break
+					}
 				}
 			}
+		} else {
+			diagnostics = append(diagnostics, PullDiagnostic{
+				Path:    page.ID,
+				Code:    "UNKNOWN_MEDIA_ID_UNRESOLVED",
+				Message: fmt.Sprintf("%d UNKNOWN_MEDIA_ID reference(s) remain unresolved for page %s; stale attachment pruning skipped for safety", unresolvedUnknownCount, page.ID),
+			})
 		}
 
 		refIDs := make([]string, 0, len(refs))
@@ -376,6 +403,9 @@ func Pull(ctx context.Context, remote PullRemote, opts PullOptions) (PullResult,
 
 		for _, attachmentID := range refIDs {
 			ref := refs[attachmentID]
+			if isUnknownMediaID(ref.AttachmentID) {
+				continue
+			}
 			relAssetPath := buildAttachmentPath(ref)
 
 			// Optimized: check if this attachment ID was already at a different path
@@ -1097,6 +1127,7 @@ func collectAttachmentRefs(adfJSON []byte, defaultPageID string) (map[string]att
 	}
 
 	out := map[string]attachmentRef{}
+	unknownRefSeq := 0
 	walkADFNode(raw, func(node map[string]any) {
 		nodeType, _ := node["type"].(string)
 		if nodeType != "media" && nodeType != "mediaInline" && nodeType != "image" && nodeType != "file" {
@@ -1135,7 +1166,13 @@ func collectAttachmentRefs(adfJSON []byte, defaultPageID string) (map[string]att
 			filename = "attachment"
 		}
 
-		out[attachmentID] = attachmentRef{
+		refKey := attachmentID
+		if isUnknownMediaID(attachmentID) {
+			refKey = fmt.Sprintf("unknown-media-%s-%d", normalizeAttachmentFilename(filename), unknownRefSeq)
+			unknownRefSeq++
+		}
+
+		out[refKey] = attachmentRef{
 			PageID:       pageID,
 			AttachmentID: attachmentID,
 			Filename:     filename,
@@ -1175,6 +1212,182 @@ func firstString(attrs map[string]any, keys ...string) string {
 		}
 	}
 	return ""
+}
+
+func isUnknownMediaID(attachmentID string) bool {
+	return strings.EqualFold(strings.TrimSpace(attachmentID), "UNKNOWN_MEDIA_ID")
+}
+
+func resolveUnknownAttachmentRefsByFilename(
+	ctx context.Context,
+	remote PullRemote,
+	pageID string,
+	refs map[string]attachmentRef,
+	attachmentIndex map[string]string,
+) (map[string]attachmentRef, int, int, error) {
+	if len(refs) == 0 {
+		return refs, 0, 0, nil
+	}
+
+	resolved := 0
+	refs = cloneAttachmentRefs(refs)
+
+	localFilenameIndex := buildLocalAttachmentFilenameIndex(attachmentIndex, pageID)
+	unresolvedKeys := make([]string, 0)
+	for _, key := range sortedStringKeys(refs) {
+		ref := refs[key]
+		if !isUnknownMediaID(ref.AttachmentID) {
+			continue
+		}
+
+		if resolvedID, ok := resolveAttachmentIDByFilename(localFilenameIndex, ref.Filename); ok {
+			delete(refs, key)
+			ref.AttachmentID = resolvedID
+			refs[resolvedID] = ref
+			resolved++
+			continue
+		}
+
+		unresolvedKeys = append(unresolvedKeys, key)
+	}
+
+	if len(unresolvedKeys) == 0 {
+		return refs, resolved, 0, nil
+	}
+
+	remoteAttachments, err := remote.ListAttachments(ctx, pageID)
+	if err != nil {
+		return refs, resolved, len(unresolvedKeys), err
+	}
+	remoteFilenameIndex := buildRemoteAttachmentFilenameIndex(remoteAttachments)
+
+	unresolved := 0
+	for _, key := range unresolvedKeys {
+		ref, ok := refs[key]
+		if !ok || !isUnknownMediaID(ref.AttachmentID) {
+			continue
+		}
+
+		resolvedID, ok := resolveAttachmentIDByFilename(remoteFilenameIndex, ref.Filename)
+		if !ok {
+			unresolved++
+			continue
+		}
+
+		delete(refs, key)
+		ref.AttachmentID = resolvedID
+		refs[resolvedID] = ref
+		resolved++
+	}
+
+	return refs, resolved, unresolved, nil
+}
+
+func cloneAttachmentRefs(refs map[string]attachmentRef) map[string]attachmentRef {
+	out := make(map[string]attachmentRef, len(refs))
+	for key, ref := range refs {
+		out[key] = ref
+	}
+	return out
+}
+
+func buildLocalAttachmentFilenameIndex(attachmentIndex map[string]string, pageID string) map[string][]string {
+	pageID = strings.TrimSpace(pageID)
+	byFilename := map[string][]string{}
+
+	for relPath, attachmentID := range attachmentIndex {
+		if strings.TrimSpace(attachmentID) == "" {
+			continue
+		}
+		if pageID != "" && !attachmentBelongsToPage(relPath, pageID) {
+			continue
+		}
+
+		filename := attachmentFilenameFromAssetPath(relPath, attachmentID)
+		filenameKey := normalizeAttachmentFilename(filename)
+		if filenameKey == "" {
+			continue
+		}
+		byFilename[filenameKey] = appendUniqueString(byFilename[filenameKey], strings.TrimSpace(attachmentID))
+	}
+
+	return byFilename
+}
+
+func buildRemoteAttachmentFilenameIndex(attachments []confluence.Attachment) map[string][]string {
+	byFilename := map[string][]string{}
+	for _, attachment := range attachments {
+		attachmentID := strings.TrimSpace(attachment.ID)
+		if attachmentID == "" {
+			continue
+		}
+
+		filenameKey := normalizeAttachmentFilename(attachment.Filename)
+		if filenameKey == "" {
+			continue
+		}
+		byFilename[filenameKey] = appendUniqueString(byFilename[filenameKey], attachmentID)
+	}
+	return byFilename
+}
+
+func resolveAttachmentIDByFilename(byFilename map[string][]string, filename string) (string, bool) {
+	filenameKey := normalizeAttachmentFilename(filename)
+	if filenameKey == "" {
+		return "", false
+	}
+
+	matches := byFilename[filenameKey]
+	if len(matches) != 1 {
+		return "", false
+	}
+
+	attachmentID := strings.TrimSpace(matches[0])
+	if attachmentID == "" {
+		return "", false
+	}
+	return attachmentID, true
+}
+
+func attachmentFilenameFromAssetPath(relPath, attachmentID string) string {
+	base := filepath.Base(relPath)
+	prefix := fs.SanitizePathSegment(strings.TrimSpace(attachmentID))
+	if prefix == "" {
+		return base
+	}
+	prefix += "-"
+	if strings.HasPrefix(base, prefix) {
+		filename := strings.TrimPrefix(base, prefix)
+		if strings.TrimSpace(filename) != "" {
+			return filename
+		}
+	}
+	return base
+}
+
+func normalizeAttachmentFilename(filename string) string {
+	filename = strings.TrimSpace(filepath.Base(filename))
+	if filename == "" {
+		return ""
+	}
+	filename = fs.SanitizePathSegment(filename)
+	if filename == "" {
+		return ""
+	}
+	return strings.ToLower(filename)
+}
+
+func appendUniqueString(values []string, candidate string) []string {
+	candidate = strings.TrimSpace(candidate)
+	if candidate == "" {
+		return values
+	}
+	for _, existing := range values {
+		if existing == candidate {
+			return values
+		}
+	}
+	return append(values, candidate)
 }
 
 func buildAttachmentPath(ref attachmentRef) string {
