@@ -562,6 +562,53 @@ func TestPush_PreflightStrictResolvesCrossSpaceLinkWithGlobalIndex(t *testing.T)
 	}
 }
 
+func TestPush_NewPageFailsWhenTrackedPageWithSameTitleExistsInSameDirectory(t *testing.T) {
+	spaceDir := t.TempDir()
+
+	existingPath := filepath.Join(spaceDir, "Conflict-Test-Page.md")
+	if err := fs.WriteMarkdownDocument(existingPath, fs.MarkdownDocument{
+		Frontmatter: fs.Frontmatter{
+			Title:   "Conflict Test Page",
+			ID:      "1",
+			Space:   "ENG",
+			Version: 1,
+		},
+		Body: "existing\n",
+	}); err != nil {
+		t.Fatalf("write existing markdown: %v", err)
+	}
+
+	newPath := filepath.Join(spaceDir, "Conflict-Test.md")
+	if err := fs.WriteMarkdownDocument(newPath, fs.MarkdownDocument{
+		Frontmatter: fs.Frontmatter{
+			Title: "Conflict Test Page",
+			Space: "ENG",
+		},
+		Body: "new\n",
+	}); err != nil {
+		t.Fatalf("write new markdown: %v", err)
+	}
+
+	remote := newRollbackPushRemote()
+	_, err := Push(context.Background(), remote, PushOptions{
+		SpaceKey:       "ENG",
+		SpaceDir:       spaceDir,
+		Domain:         "https://example.atlassian.net",
+		State:          fs.SpaceState{SpaceKey: "ENG", PagePathIndex: map[string]string{"Conflict-Test-Page.md": "1"}},
+		ConflictPolicy: PushConflictPolicyCancel,
+		Changes: []PushFileChange{{
+			Type: PushChangeAdd,
+			Path: "Conflict-Test.md",
+		}},
+	})
+	if err == nil {
+		t.Fatal("expected duplicate title validation error")
+	}
+	if !strings.Contains(err.Error(), "duplicates tracked page") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 func TestPush_RollbackDeletesCreatedPageAndAttachmentsOnUpdateFailure(t *testing.T) {
 	spaceDir := t.TempDir()
 	mdPath := filepath.Join(spaceDir, "new.md")
