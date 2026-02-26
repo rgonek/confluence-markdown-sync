@@ -9,6 +9,7 @@ import (
 )
 
 func TestResolveCleanTargetBranchHelper(t *testing.T) {
+	runParallelCommandTest(t)
 	tempDir := t.TempDir()
 
 	oldWd, _ := os.Getwd()
@@ -48,6 +49,7 @@ func TestResolveCleanTargetBranchHelper(t *testing.T) {
 }
 
 func TestResolveCleanTargetBranch_Fallback(t *testing.T) {
+	runParallelCommandTest(t)
 	tempDir := t.TempDir()
 
 	oldWd, _ := os.Getwd()

@@ -11,6 +11,7 @@ import (
 )
 
 func TestCleanCmd(t *testing.T) {
+	runParallelCommandTest(t)
 	tempDir := t.TempDir()
 
 	err := os.MkdirAll(filepath.Join(tempDir, ".git"), 0755)

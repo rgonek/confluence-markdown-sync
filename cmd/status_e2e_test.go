@@ -15,6 +15,7 @@ import (
 )
 
 func TestCollectLocalStatusChanges_Success(t *testing.T) {
+	runParallelCommandTest(t)
 	tempDir := t.TempDir()
 
 	oldWd, _ := os.Getwd()
@@ -63,6 +64,7 @@ func TestCollectLocalStatusChanges_Success(t *testing.T) {
 }
 
 func TestBuildStatusReport_Success(t *testing.T) {
+	runParallelCommandTest(t)
 	tempDir := t.TempDir()
 
 	oldWd, _ := os.Getwd()
