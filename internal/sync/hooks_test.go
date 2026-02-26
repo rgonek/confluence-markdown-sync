@@ -364,7 +364,7 @@ func TestReverseMediaHook(t *testing.T) {
 		t.Errorf("Expected ErrUnresolved for missing attachment mapping, got %v", err)
 	}
 
-	// Test 4: Non-assets path should fail even if mapped
+	// Test 4: In-space non-assets path resolves when mapped.
 	nonAssetPath := filepath.Join(spaceDir, "image-outside.png")
 	err = os.WriteFile(nonAssetPath, []byte("outside"), 0o600)
 	if err != nil {
@@ -373,9 +373,15 @@ func TestReverseMediaHook(t *testing.T) {
 	attachmentIndex[filepath.ToSlash("image-outside.png")] = "att-999"
 	in.Destination = "image-outside.png"
 
-	_, err = hook(ctx, in)
-	if err != mdconv.ErrUnresolved {
-		t.Errorf("Expected ErrUnresolved for non-assets reference, got %v", err)
+	out, err = hook(ctx, in)
+	if err != nil {
+		t.Errorf("Unexpected error: %v", err)
+	}
+	if !out.Handled {
+		t.Error("Expected Handled=true for in-space non-assets reference")
+	}
+	if out.ID != "att-999" {
+		t.Errorf("Expected ID att-999, got %q", out.ID)
 	}
 
 	// Test 5: Missing asset (should fail)

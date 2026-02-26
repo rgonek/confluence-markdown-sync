@@ -368,10 +368,18 @@ func validateFile(ctx context.Context, path, spaceDir string, linkHook mdconvert
 		})
 		return issues
 	}
+	preparedBody, err := syncflow.PrepareMarkdownForAttachmentConversion(spaceDir, path, doc.Body)
+	if err != nil {
+		issues = append(issues, fs.ValidationIssue{
+			Code:    "conversion_error",
+			Message: err.Error(),
+		})
+		return issues
+	}
 	mediaHook := syncflow.NewReverseMediaHook(spaceDir, strictAttachmentIndex)
 
 	// 2. Strict Conversion
-	_, err = converter.Reverse(ctx, []byte(doc.Body), converter.ReverseConfig{
+	_, err = converter.Reverse(ctx, []byte(preparedBody), converter.ReverseConfig{
 		LinkHook:  linkHook,
 		MediaHook: mediaHook,
 		Strict:    true,

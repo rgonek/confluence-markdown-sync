@@ -292,8 +292,8 @@ func TestRunPush_KeepsStateFileUntracked(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load state: %v", err)
 	}
-	if got := strings.TrimSpace(state.AttachmentIndex["assets/new.png"]); got == "" {
-		t.Fatalf("expected attachment index to be updated for assets/new.png")
+	if got := strings.TrimSpace(state.AttachmentIndex["assets/1/new.png"]); got == "" {
+		t.Fatalf("expected attachment index to be updated for assets/1/new.png")
 	}
 
 	trackedAfter := strings.TrimSpace(runGitForTest(t, repo, "ls-files", "**/.confluence-state.json"))

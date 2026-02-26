@@ -438,7 +438,7 @@ func TestBuildStrictAttachmentIndex_AssignsPendingIDsForLocalAssets(t *testing.T
 	}
 }
 
-func TestCollectReferencedAssetPaths_FailsForNonAssetsReference(t *testing.T) {
+func TestCollectReferencedAssetPaths_AllowsNonAssetsReferenceWithinSpace(t *testing.T) {
 	spaceDir := t.TempDir()
 	sourcePath := filepath.Join(spaceDir, "root.md")
 	nonAssetPath := filepath.Join(spaceDir, "images", "outside.png")
@@ -450,15 +450,53 @@ func TestCollectReferencedAssetPaths_FailsForNonAssetsReference(t *testing.T) {
 		t.Fatalf("write image: %v", err)
 	}
 
-	_, err := CollectReferencedAssetPaths(spaceDir, sourcePath, "![asset](images/outside.png)\n")
+	refs, err := CollectReferencedAssetPaths(spaceDir, sourcePath, "![asset](images/outside.png)\n")
+	if err != nil {
+		t.Fatalf("CollectReferencedAssetPaths() error: %v", err)
+	}
+	if len(refs) != 1 || refs[0] != "images/outside.png" {
+		t.Fatalf("referenced assets = %v, want [images/outside.png]", refs)
+	}
+}
+
+func TestCollectReferencedAssetPaths_IncludesLocalFileLinks(t *testing.T) {
+	spaceDir := t.TempDir()
+	sourcePath := filepath.Join(spaceDir, "root.md")
+	docPath := filepath.Join(spaceDir, "assets", "manual.pdf")
+
+	if err := os.MkdirAll(filepath.Dir(docPath), 0o750); err != nil {
+		t.Fatalf("mkdir assets dir: %v", err)
+	}
+	if err := os.WriteFile(docPath, []byte("pdf"), 0o600); err != nil {
+		t.Fatalf("write pdf: %v", err)
+	}
+
+	refs, err := CollectReferencedAssetPaths(spaceDir, sourcePath, "[Manual](assets/manual.pdf)\n")
+	if err != nil {
+		t.Fatalf("CollectReferencedAssetPaths() error: %v", err)
+	}
+	if len(refs) != 1 || refs[0] != "assets/manual.pdf" {
+		t.Fatalf("referenced assets = %v, want [assets/manual.pdf]", refs)
+	}
+}
+
+func TestCollectReferencedAssetPaths_FailsForOutsideSpaceReference(t *testing.T) {
+	rootDir := t.TempDir()
+	spaceDir := filepath.Join(rootDir, "Engineering (ENG)")
+	if err := os.MkdirAll(spaceDir, 0o750); err != nil {
+		t.Fatalf("mkdir space dir: %v", err)
+	}
+
+	sourcePath := filepath.Join(spaceDir, "root.md")
+	_, err := CollectReferencedAssetPaths(spaceDir, sourcePath, "![asset](../outside.png)\n")
 	if err == nil {
-		t.Fatal("expected non-assets media reference to fail")
+		t.Fatal("expected outside-space media reference to fail")
+	}
+	if !strings.Contains(err.Error(), "outside the space directory") {
+		t.Fatalf("expected actionable outside-space message, got: %v", err)
 	}
 	if !strings.Contains(err.Error(), "assets/") {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if !strings.Contains(err.Error(), "Move-Item") {
-		t.Fatalf("expected remediation command hint in error, got: %v", err)
+		t.Fatalf("expected assets destination hint, got: %v", err)
 	}
 }
 
@@ -520,6 +558,148 @@ func TestPush_KeepOrphanAssetsPreservesUnreferencedAttachment(t *testing.T) {
 	}
 	if !hasPreservedDiagnostic {
 		t.Fatalf("expected ATTACHMENT_PRESERVED diagnostic, got %+v", result.Diagnostics)
+	}
+}
+
+func TestPush_MigratesLocalRelativeAssetIntoPageHierarchy(t *testing.T) {
+	spaceDir := t.TempDir()
+	mdPath := filepath.Join(spaceDir, "root.md")
+	legacyAssetPath := filepath.Join(spaceDir, "diagram.png")
+
+	if err := os.WriteFile(legacyAssetPath, []byte("png"), 0o600); err != nil {
+		t.Fatalf("write asset: %v", err)
+	}
+
+	if err := fs.WriteMarkdownDocument(mdPath, fs.MarkdownDocument{
+		Frontmatter: fs.Frontmatter{
+			Title:   "Root",
+			ID:      "1",
+			Space:   "ENG",
+			Version: 1,
+		},
+		Body: "![diagram](./diagram.png)\n",
+	}); err != nil {
+		t.Fatalf("write markdown: %v", err)
+	}
+
+	remote := newRollbackPushRemote()
+	remote.pagesByID["1"] = confluence.Page{
+		ID:      "1",
+		SpaceID: "space-1",
+		Title:   "Root",
+		Status:  "current",
+		Version: 1,
+		BodyADF: []byte(`{"version":1,"type":"doc","content":[]}`),
+	}
+	remote.pages = append(remote.pages, remote.pagesByID["1"])
+
+	result, err := Push(context.Background(), remote, PushOptions{
+		SpaceKey:       "ENG",
+		SpaceDir:       spaceDir,
+		Domain:         "https://example.atlassian.net",
+		ConflictPolicy: PushConflictPolicyCancel,
+		State:          fs.SpaceState{SpaceKey: "ENG", PagePathIndex: map[string]string{"root.md": "1"}},
+		Changes:        []PushFileChange{{Type: PushChangeModify, Path: "root.md"}},
+	})
+	if err != nil {
+		t.Fatalf("Push() unexpected error: %v", err)
+	}
+
+	targetAssetRelPath := "assets/1/diagram.png"
+	targetAssetAbsPath := filepath.Join(spaceDir, filepath.FromSlash(targetAssetRelPath))
+	if _, statErr := os.Stat(targetAssetAbsPath); statErr != nil {
+		t.Fatalf("expected migrated asset %s to exist: %v", targetAssetRelPath, statErr)
+	}
+	if _, statErr := os.Stat(legacyAssetPath); !os.IsNotExist(statErr) {
+		t.Fatalf("expected original asset path to be removed, stat=%v", statErr)
+	}
+
+	updatedDoc, err := fs.ReadMarkdownDocument(mdPath)
+	if err != nil {
+		t.Fatalf("read markdown: %v", err)
+	}
+	if !strings.Contains(updatedDoc.Body, "assets/1/diagram.png") {
+		t.Fatalf("expected markdown body to reference migrated asset path, body=%q", updatedDoc.Body)
+	}
+
+	if got := strings.TrimSpace(result.State.AttachmentIndex[targetAssetRelPath]); got == "" {
+		t.Fatalf("expected state attachment index to include %s", targetAssetRelPath)
+	}
+}
+
+func TestPush_UploadsLocalFileLinksAsAttachments(t *testing.T) {
+	spaceDir := t.TempDir()
+	mdPath := filepath.Join(spaceDir, "root.md")
+	assetPath := filepath.Join(spaceDir, "assets", "manual.pdf")
+
+	if err := os.MkdirAll(filepath.Dir(assetPath), 0o750); err != nil {
+		t.Fatalf("mkdir assets: %v", err)
+	}
+	if err := os.WriteFile(assetPath, []byte("pdf"), 0o600); err != nil {
+		t.Fatalf("write asset: %v", err)
+	}
+
+	if err := fs.WriteMarkdownDocument(mdPath, fs.MarkdownDocument{
+		Frontmatter: fs.Frontmatter{
+			Title:   "Root",
+			ID:      "1",
+			Space:   "ENG",
+			Version: 1,
+		},
+		Body: "[Manual](assets/manual.pdf)\n",
+	}); err != nil {
+		t.Fatalf("write markdown: %v", err)
+	}
+
+	remote := newRollbackPushRemote()
+	remote.pagesByID["1"] = confluence.Page{
+		ID:      "1",
+		SpaceID: "space-1",
+		Title:   "Root",
+		Status:  "current",
+		Version: 1,
+		BodyADF: []byte(`{"version":1,"type":"doc","content":[]}`),
+	}
+	remote.pages = append(remote.pages, remote.pagesByID["1"])
+
+	result, err := Push(context.Background(), remote, PushOptions{
+		SpaceKey:       "ENG",
+		SpaceDir:       spaceDir,
+		Domain:         "https://example.atlassian.net",
+		ConflictPolicy: PushConflictPolicyCancel,
+		State:          fs.SpaceState{SpaceKey: "ENG", PagePathIndex: map[string]string{"root.md": "1"}},
+		Changes:        []PushFileChange{{Type: PushChangeModify, Path: "root.md"}},
+	})
+	if err != nil {
+		t.Fatalf("Push() unexpected error: %v", err)
+	}
+
+	if remote.uploadAttachmentCalls != 1 {
+		t.Fatalf("upload attachment calls = %d, want 1", remote.uploadAttachmentCalls)
+	}
+
+	payload, ok := remote.updateInputsByPageID["1"]
+	if !ok {
+		t.Fatalf("expected update payload for page 1")
+	}
+	body := string(payload.BodyADF)
+	if !strings.Contains(body, `"type":"media"`) {
+		t.Fatalf("expected update ADF to include media node for linked file, body=%s", body)
+	}
+	if !strings.Contains(body, `"id":"att-1"`) {
+		t.Fatalf("expected linked file to resolve to uploaded attachment id, body=%s", body)
+	}
+
+	updatedDoc, err := fs.ReadMarkdownDocument(mdPath)
+	if err != nil {
+		t.Fatalf("read markdown: %v", err)
+	}
+	if !strings.Contains(updatedDoc.Body, "[Manual](assets/1/manual.pdf)") {
+		t.Fatalf("expected markdown link to be normalized into per-page assets directory, body=%q", updatedDoc.Body)
+	}
+
+	if got := strings.TrimSpace(result.State.AttachmentIndex["assets/1/manual.pdf"]); got != "att-1" {
+		t.Fatalf("attachment index value = %q, want att-1", got)
 	}
 }
 
