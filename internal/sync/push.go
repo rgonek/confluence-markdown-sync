@@ -10,8 +10,8 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -21,8 +21,6 @@ import (
 )
 
 const pushPageBatchSize = 100
-
-var markdownImageRefPattern = regexp.MustCompile(`!\[[^\]]*\]\(([^)]+)\)`)
 
 // PushRemote defines remote operations required by push orchestration.
 type PushRemote interface {
@@ -594,6 +592,31 @@ func pushUpsertPage(
 		}
 	}
 
+	touchedAssets := make([]string, 0)
+	assetOwnerPageID := strings.TrimSpace(pageID)
+	if assetOwnerPageID == "" && hasPrecreated {
+		assetOwnerPageID = strings.TrimSpace(precreatedPage.ID)
+	}
+	if assetOwnerPageID != "" {
+		migratedBody, migratedPaths, migrateErr := migrateReferencedAssetsToPageHierarchy(
+			opts.SpaceDir,
+			absPath,
+			assetOwnerPageID,
+			doc.Body,
+			attachmentIDByPath,
+			state.AttachmentIndex,
+		)
+		if migrateErr != nil {
+			preflightErr := fmt.Errorf("normalize assets for %s: %w", relPath, migrateErr)
+			if hasPrecreated {
+				return failWithRollback(preflightErr)
+			}
+			return PushCommitPlan{}, preflightErr
+		}
+		doc.Body = migratedBody
+		touchedAssets = append(touchedAssets, migratedPaths...)
+	}
+
 	// Phase 1: preflight planning and strict conversion validation.
 	linkHook := NewReverseLinkHookWithGlobalIndex(opts.SpaceDir, pageIDByPath, opts.GlobalPageIndex, opts.Domain)
 	strictAttachmentIndex, referencedAssetPaths, err := BuildStrictAttachmentIndex(opts.SpaceDir, absPath, doc.Body, attachmentIDByPath)
@@ -604,9 +627,17 @@ func pushUpsertPage(
 		}
 		return PushCommitPlan{}, preflightErr
 	}
+	preparedBody, err := PrepareMarkdownForAttachmentConversion(opts.SpaceDir, absPath, doc.Body)
+	if err != nil {
+		preflightErr := fmt.Errorf("prepare attachment conversion for %s: %w", relPath, err)
+		if hasPrecreated {
+			return failWithRollback(preflightErr)
+		}
+		return PushCommitPlan{}, preflightErr
+	}
 	mediaHook := NewReverseMediaHook(opts.SpaceDir, strictAttachmentIndex)
 
-	if _, err := converter.Reverse(ctx, []byte(doc.Body), converter.ReverseConfig{
+	if _, err := converter.Reverse(ctx, []byte(preparedBody), converter.ReverseConfig{
 		LinkHook:  linkHook,
 		MediaHook: mediaHook,
 		Strict:    true,
@@ -672,7 +703,6 @@ func pushUpsertPage(
 		}
 	}
 
-	touchedAssets := make([]string, 0)
 	referencedIDs := map[string]struct{}{}
 	for _, assetRelPath := range referencedAssetPaths {
 		if existingID := strings.TrimSpace(attachmentIDByPath[assetRelPath]); existingID != "" {
@@ -744,7 +774,7 @@ func pushUpsertPage(
 	}
 
 	mediaHook = NewReverseMediaHook(opts.SpaceDir, attachmentIDByPath)
-	reverse, err := converter.Reverse(ctx, []byte(doc.Body), converter.ReverseConfig{
+	reverse, err := converter.Reverse(ctx, []byte(preparedBody), converter.ReverseConfig{
 		LinkHook:  linkHook,
 		MediaHook: mediaHook,
 		Strict:    true,
@@ -1361,9 +1391,13 @@ func runPushUpsertPreflight(
 		if err != nil {
 			return fmt.Errorf("resolve assets for %s: %w", relPath, err)
 		}
+		preparedBody, err := PrepareMarkdownForAttachmentConversion(opts.SpaceDir, absPath, doc.Body)
+		if err != nil {
+			return fmt.Errorf("prepare attachment conversion for %s: %w", relPath, err)
+		}
 		mediaHook := NewReverseMediaHook(opts.SpaceDir, strictAttachmentIndex)
 
-		if _, err := converter.Reverse(ctx, []byte(doc.Body), converter.ReverseConfig{
+		if _, err := converter.Reverse(ctx, []byte(preparedBody), converter.ReverseConfig{
 			LinkHook:  linkHook,
 			MediaHook: mediaHook,
 			Strict:    true,
@@ -1557,38 +1591,108 @@ func isPendingPageID(pageID string) bool {
 	return strings.HasPrefix(strings.TrimSpace(strings.ToLower(pageID)), "pending-page-")
 }
 
+type markdownReferenceKind string
+
+const (
+	markdownReferenceKindLink  markdownReferenceKind = "link"
+	markdownReferenceKindImage markdownReferenceKind = "image"
+)
+
+type markdownDestinationOccurrence struct {
+	kind             markdownReferenceKind
+	tokenStart       int
+	tokenEnd         int
+	destinationStart int
+	destinationEnd   int
+	raw              string
+}
+
+type localAssetReference struct {
+	Occurrence markdownDestinationOccurrence
+	AbsPath    string
+	RelPath    string
+}
+
+type markdownDestinationRewrite struct {
+	Occurrence             markdownDestinationOccurrence
+	ReplacementDestination string
+	AddImagePrefix         bool
+}
+
 func CollectReferencedAssetPaths(spaceDir, sourcePath, body string) ([]string, error) {
-	matches := markdownImageRefPattern.FindAllStringSubmatch(body, -1)
-	if len(matches) == 0 {
-		return nil, nil
+	references, err := collectLocalAssetReferences(spaceDir, sourcePath, body)
+	if err != nil {
+		return nil, err
 	}
 
 	paths := map[string]struct{}{}
-	for _, match := range matches {
-		if len(match) < 2 {
+	for _, reference := range references {
+		paths[reference.RelPath] = struct{}{}
+	}
+
+	return sortedStringKeys(paths), nil
+}
+
+// PrepareMarkdownForAttachmentConversion rewrites local file links ([]()) to
+// media syntax (![]()) for strict reverse conversion.
+func PrepareMarkdownForAttachmentConversion(spaceDir, sourcePath, body string) (string, error) {
+	references, err := collectLocalAssetReferences(spaceDir, sourcePath, body)
+	if err != nil {
+		return "", err
+	}
+
+	rewrites := make([]markdownDestinationRewrite, 0)
+	for _, reference := range references {
+		if reference.Occurrence.kind != markdownReferenceKindLink {
 			continue
 		}
-		destination := normalizeMarkdownDestination(match[1])
+		rewrites = append(rewrites, markdownDestinationRewrite{
+			Occurrence:     reference.Occurrence,
+			AddImagePrefix: true,
+		})
+	}
+
+	if len(rewrites) == 0 {
+		return body, nil
+	}
+
+	return applyMarkdownDestinationRewrites(body, rewrites), nil
+}
+
+func collectLocalAssetReferences(spaceDir, sourcePath, body string) ([]localAssetReference, error) {
+	occurrences := collectMarkdownDestinationOccurrences([]byte(body))
+	if len(occurrences) == 0 {
+		return nil, nil
+	}
+
+	references := make([]localAssetReference, 0, len(occurrences))
+	for _, occurrence := range occurrences {
+		destination := normalizeMarkdownDestination(occurrence.raw)
 		if destination == "" || isExternalDestination(destination) {
 			continue
 		}
 
-		if idx := strings.Index(destination, "#"); idx >= 0 {
-			destination = destination[:idx]
-		}
-		if idx := strings.Index(destination, "?"); idx >= 0 {
-			destination = destination[:idx]
-		}
+		destination = sanitizeDestinationForLookup(destination)
 		if destination == "" {
+			continue
+		}
+		destination = decodeMarkdownPath(destination)
+
+		if occurrence.kind == markdownReferenceKindLink && isMarkdownFilePath(destination) {
 			continue
 		}
 
 		assetAbsPath := filepath.Clean(filepath.Join(filepath.Dir(sourcePath), filepath.FromSlash(destination)))
 		if !isSubpathOrSame(spaceDir, assetAbsPath) {
-			return nil, fmt.Errorf("asset path escapes space root: %s", destination)
+			return nil, outsideSpaceAssetError(spaceDir, sourcePath, destination)
 		}
-		if _, err := os.Stat(assetAbsPath); err != nil {
+
+		info, statErr := os.Stat(assetAbsPath)
+		if statErr != nil {
 			return nil, fmt.Errorf("asset %s not found", destination)
+		}
+		if info.IsDir() {
+			return nil, fmt.Errorf("asset %s is a directory, expected a file", destination)
 		}
 
 		relPath, err := filepath.Rel(spaceDir, assetAbsPath)
@@ -1596,19 +1700,364 @@ func CollectReferencedAssetPaths(spaceDir, sourcePath, body string) ([]string, e
 			return nil, err
 		}
 		relPath = normalizeRelPath(relPath)
-		if !strings.HasPrefix(relPath, "assets/") {
-			suggestedRelPath := filepath.ToSlash(filepath.Join("assets", filepath.Base(assetAbsPath)))
-			return nil, fmt.Errorf(
-				"asset reference must remain under assets/: %s (move it under assets/ and update the markdown link, e.g. Move-Item %q %q)",
-				destination,
-				destination,
-				suggestedRelPath,
-			)
+		if relPath == "" || relPath == "." || strings.HasPrefix(relPath, "../") {
+			return nil, outsideSpaceAssetError(spaceDir, sourcePath, destination)
 		}
-		paths[relPath] = struct{}{}
+
+		references = append(references, localAssetReference{
+			Occurrence: occurrence,
+			AbsPath:    assetAbsPath,
+			RelPath:    relPath,
+		})
 	}
 
-	return sortedStringKeys(paths), nil
+	return references, nil
+}
+
+func collectMarkdownDestinationOccurrences(content []byte) []markdownDestinationOccurrence {
+	occurrences := make([]markdownDestinationOccurrence, 0)
+
+	inFence := false
+	var fenceChar byte
+	fenceLen := 0
+	inlineCodeDelimiterLen := 0
+	lineStart := true
+
+	for i := 0; i < len(content); {
+		if lineStart {
+			if toggled, newFence, newFenceChar, newFenceLen, next := maybeToggleFenceState(content, i, inFence, fenceChar, fenceLen); toggled {
+				inFence = newFence
+				fenceChar = newFenceChar
+				fenceLen = newFenceLen
+				i = next
+				lineStart = true
+				continue
+			}
+		}
+
+		if inFence {
+			if content[i] == '\n' {
+				lineStart = true
+			} else {
+				lineStart = false
+			}
+			i++
+			continue
+		}
+
+		if content[i] == '`' {
+			run := countRepeatedByte(content, i, '`')
+			switch inlineCodeDelimiterLen {
+			case 0:
+				inlineCodeDelimiterLen = run
+			case run:
+				inlineCodeDelimiterLen = 0
+			}
+			i += run
+			lineStart = false
+			continue
+		}
+
+		if inlineCodeDelimiterLen > 0 {
+			if content[i] == '\n' {
+				lineStart = true
+			} else {
+				lineStart = false
+			}
+			i++
+			continue
+		}
+
+		if content[i] == '!' && i+1 < len(content) && content[i+1] == '[' {
+			if occurrence, next, ok := parseInlineLinkOccurrence(content, i+1); ok {
+				occurrences = append(occurrences, markdownDestinationOccurrence{
+					kind:             markdownReferenceKindImage,
+					tokenStart:       i + 1,
+					tokenEnd:         next,
+					destinationStart: occurrence.start,
+					destinationEnd:   occurrence.end,
+					raw:              occurrence.raw,
+				})
+				i = next
+				lineStart = false
+				continue
+			}
+		}
+
+		if content[i] == '[' && (i == 0 || content[i-1] != '!') {
+			if occurrence, next, ok := parseInlineLinkOccurrence(content, i); ok {
+				occurrences = append(occurrences, markdownDestinationOccurrence{
+					kind:             markdownReferenceKindLink,
+					tokenStart:       i,
+					tokenEnd:         next,
+					destinationStart: occurrence.start,
+					destinationEnd:   occurrence.end,
+					raw:              occurrence.raw,
+				})
+				i = next
+				lineStart = false
+				continue
+			}
+		}
+
+		if content[i] == '\n' {
+			lineStart = true
+		} else {
+			lineStart = false
+		}
+		i++
+	}
+
+	return occurrences
+}
+
+func applyMarkdownDestinationRewrites(body string, rewrites []markdownDestinationRewrite) string {
+	if len(rewrites) == 0 {
+		return body
+	}
+
+	sort.Slice(rewrites, func(i, j int) bool {
+		if rewrites[i].Occurrence.tokenStart == rewrites[j].Occurrence.tokenStart {
+			return rewrites[i].Occurrence.destinationStart < rewrites[j].Occurrence.destinationStart
+		}
+		return rewrites[i].Occurrence.tokenStart < rewrites[j].Occurrence.tokenStart
+	})
+
+	content := []byte(body)
+	var builder strings.Builder
+	builder.Grow(len(content) + len(rewrites))
+
+	last := 0
+	for _, rewrite := range rewrites {
+		tokenStart := rewrite.Occurrence.tokenStart
+		tokenEnd := rewrite.Occurrence.tokenEnd
+		destinationStart := rewrite.Occurrence.destinationStart
+		destinationEnd := rewrite.Occurrence.destinationEnd
+
+		if tokenStart < last || tokenEnd > len(content) || destinationStart < tokenStart || destinationEnd > tokenEnd || destinationStart > destinationEnd {
+			continue
+		}
+
+		builder.Write(content[last:tokenStart])
+		if rewrite.AddImagePrefix {
+			builder.WriteByte('!')
+		}
+		builder.Write(content[tokenStart:destinationStart])
+
+		replacementToken := string(content[destinationStart:destinationEnd])
+		if strings.TrimSpace(rewrite.ReplacementDestination) != "" {
+			replacementToken = formatRelinkDestinationToken(rewrite.Occurrence.raw, rewrite.ReplacementDestination)
+		}
+		builder.WriteString(replacementToken)
+		builder.Write(content[destinationEnd:tokenEnd])
+
+		last = tokenEnd
+	}
+
+	builder.Write(content[last:])
+	return builder.String()
+}
+
+func migrateReferencedAssetsToPageHierarchy(
+	spaceDir, sourcePath, pageID, body string,
+	attachmentIDByPath map[string]string,
+	stateAttachmentIndex map[string]string,
+) (string, []string, error) {
+	pageID = fs.SanitizePathSegment(strings.TrimSpace(pageID))
+	if pageID == "" {
+		return body, nil, nil
+	}
+
+	references, err := collectLocalAssetReferences(spaceDir, sourcePath, body)
+	if err != nil {
+		return "", nil, err
+	}
+	if len(references) == 0 {
+		return body, nil, nil
+	}
+
+	reservedTargets := map[string]string{}
+	movesBySource := map[string]string{}
+	pathMoves := map[string]string{}
+	touchedPaths := map[string]struct{}{}
+	rewrites := make([]markdownDestinationRewrite, 0, len(references))
+
+	for _, reference := range references {
+		targetAbsPath, targetRelPath, resolveErr := resolvePageAssetTargetPath(spaceDir, pageID, reference.AbsPath, reservedTargets)
+		if resolveErr != nil {
+			return "", nil, resolveErr
+		}
+
+		if targetRelPath == reference.RelPath {
+			continue
+		}
+
+		touchedPaths[reference.RelPath] = struct{}{}
+		touchedPaths[targetRelPath] = struct{}{}
+		movesBySource[reference.AbsPath] = targetAbsPath
+		pathMoves[reference.RelPath] = targetRelPath
+
+		relativeDestination, relErr := relativeEncodedDestination(sourcePath, targetAbsPath)
+		if relErr != nil {
+			return "", nil, fmt.Errorf("resolve relative path from %s to %s: %w", sourcePath, targetAbsPath, relErr)
+		}
+
+		rewrites = append(rewrites, markdownDestinationRewrite{
+			Occurrence:             reference.Occurrence,
+			ReplacementDestination: relativeDestination,
+		})
+	}
+
+	for sourceAbsPath, targetAbsPath := range movesBySource {
+		sourceAbsPath = filepath.Clean(sourceAbsPath)
+		targetAbsPath = filepath.Clean(targetAbsPath)
+		if sourceAbsPath == targetAbsPath {
+			continue
+		}
+
+		if err := os.MkdirAll(filepath.Dir(targetAbsPath), 0o750); err != nil {
+			return "", nil, fmt.Errorf("prepare asset directory %s: %w", filepath.Dir(targetAbsPath), err)
+		}
+
+		if err := os.Rename(sourceAbsPath, targetAbsPath); err != nil {
+			return "", nil, fmt.Errorf("move asset %s to %s: %w", sourceAbsPath, targetAbsPath, err)
+		}
+	}
+
+	for oldPath, newPath := range pathMoves {
+		if err := relocateAttachmentIndexPath(attachmentIDByPath, oldPath, newPath); err != nil {
+			return "", nil, err
+		}
+		if err := relocateAttachmentIndexPath(stateAttachmentIndex, oldPath, newPath); err != nil {
+			return "", nil, err
+		}
+	}
+
+	updatedBody := body
+	if len(rewrites) > 0 {
+		updatedBody = applyMarkdownDestinationRewrites(body, rewrites)
+	}
+
+	return updatedBody, sortedStringKeys(touchedPaths), nil
+}
+
+func resolvePageAssetTargetPath(spaceDir, pageID, sourceAbsPath string, reservedTargets map[string]string) (string, string, error) {
+	filename := strings.TrimSpace(filepath.Base(sourceAbsPath))
+	if filename == "" || filename == "." {
+		filename = "attachment"
+	}
+
+	targetDir := filepath.Join(spaceDir, "assets", pageID)
+	ext := filepath.Ext(filename)
+	stem := strings.TrimSuffix(filename, ext)
+	if stem == "" {
+		stem = "attachment"
+	}
+
+	for index := 1; ; index++ {
+		candidateName := filename
+		if index > 1 {
+			candidateName = stem + "-" + strconv.Itoa(index) + ext
+		}
+
+		candidateAbsPath := filepath.Join(targetDir, candidateName)
+		candidateRelPath, err := filepath.Rel(spaceDir, candidateAbsPath)
+		if err != nil {
+			return "", "", err
+		}
+		candidateRelPath = normalizeRelPath(candidateRelPath)
+		if candidateRelPath == "" || strings.HasPrefix(candidateRelPath, "../") {
+			return "", "", fmt.Errorf("invalid target asset path %s", candidateAbsPath)
+		}
+
+		candidateKey := strings.ToLower(filepath.Clean(candidateAbsPath))
+		sourceKey := strings.ToLower(filepath.Clean(sourceAbsPath))
+		if reservedSource, exists := reservedTargets[candidateKey]; exists && strings.ToLower(filepath.Clean(reservedSource)) != sourceKey {
+			continue
+		}
+
+		if strings.EqualFold(filepath.Clean(candidateAbsPath), filepath.Clean(sourceAbsPath)) {
+			reservedTargets[candidateKey] = sourceAbsPath
+			return candidateAbsPath, candidateRelPath, nil
+		}
+
+		if _, statErr := os.Stat(candidateAbsPath); statErr == nil {
+			continue
+		} else if !errors.Is(statErr, os.ErrNotExist) {
+			return "", "", statErr
+		}
+
+		reservedTargets[candidateKey] = sourceAbsPath
+		return candidateAbsPath, candidateRelPath, nil
+	}
+}
+
+func relativeEncodedDestination(sourcePath, targetAbsPath string) (string, error) {
+	relPath, err := filepath.Rel(filepath.Dir(sourcePath), targetAbsPath)
+	if err != nil {
+		return "", err
+	}
+	return encodeMarkdownPath(filepath.ToSlash(relPath)), nil
+}
+
+func relocateAttachmentIndexPath(index map[string]string, oldRelPath, newRelPath string) error {
+	if index == nil {
+		return nil
+	}
+
+	oldRelPath = normalizeRelPath(oldRelPath)
+	newRelPath = normalizeRelPath(newRelPath)
+	if oldRelPath == "" || newRelPath == "" || oldRelPath == newRelPath {
+		return nil
+	}
+
+	oldID := strings.TrimSpace(index[oldRelPath])
+	if oldID == "" {
+		return nil
+	}
+
+	if existingID := strings.TrimSpace(index[newRelPath]); existingID != "" && existingID != oldID {
+		return fmt.Errorf("cannot remap attachment path %s to %s: destination is already mapped to %s", oldRelPath, newRelPath, existingID)
+	}
+
+	index[newRelPath] = oldID
+	delete(index, oldRelPath)
+	return nil
+}
+
+func sanitizeDestinationForLookup(destination string) string {
+	if idx := strings.Index(destination, "#"); idx >= 0 {
+		destination = destination[:idx]
+	}
+	if idx := strings.Index(destination, "?"); idx >= 0 {
+		destination = destination[:idx]
+	}
+	return strings.TrimSpace(destination)
+}
+
+func isMarkdownFilePath(destination string) bool {
+	return strings.EqualFold(filepath.Ext(strings.TrimSpace(destination)), ".md")
+}
+
+func outsideSpaceAssetError(spaceDir, sourcePath, destination string) error {
+	filename := strings.TrimSpace(filepath.Base(destination))
+	if filename == "" || filename == "." {
+		filename = "file"
+	}
+
+	targetAbsPath := filepath.Join(spaceDir, "assets", filename)
+	suggestedDestination, err := relativeEncodedDestination(sourcePath, targetAbsPath)
+	if err != nil {
+		suggestedDestination = filepath.ToSlash(filepath.Join("assets", filename))
+	}
+
+	spaceAssetsPath := filepath.ToSlash(filepath.Join(filepath.Base(spaceDir), "assets")) + "/"
+	return fmt.Errorf(
+		"asset %q is outside the space directory. move it into %q and update the link to %q",
+		filename,
+		spaceAssetsPath,
+		suggestedDestination,
+	)
 }
 
 func normalizeMarkdownDestination(raw string) string {

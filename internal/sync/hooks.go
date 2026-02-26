@@ -404,9 +404,6 @@ func NewReverseMediaHook(spaceDir string, attachmentIndex map[string]string) mdc
 		if relPath == "" || relPath == "." || strings.HasPrefix(relPath, "../") {
 			return mdconv.MediaParseOutput{}, mdconv.ErrUnresolved
 		}
-		if !strings.HasPrefix(relPath, "assets/") {
-			return mdconv.MediaParseOutput{}, mdconv.ErrUnresolved
-		}
 
 		id, ok := attachmentIndex[relPath]
 		if !ok || strings.TrimSpace(id) == "" {
