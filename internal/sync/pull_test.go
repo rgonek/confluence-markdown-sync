@@ -750,6 +750,77 @@ func TestPull_DraftRecovery(t *testing.T) {
 	}
 }
 
+func TestPull_TrashedRecoveryDeletesLocalPage(t *testing.T) {
+	tmpDir := t.TempDir()
+	spaceDir := filepath.Join(tmpDir, "ENG")
+	if err := os.MkdirAll(spaceDir, 0o750); err != nil {
+		t.Fatalf("mkdir space: %v", err)
+	}
+
+	trashedPath := filepath.Join(spaceDir, "trashed.md")
+	if err := fs.WriteMarkdownDocument(trashedPath, fs.MarkdownDocument{
+		Frontmatter: fs.Frontmatter{
+			Title:   "Trashed Page",
+			ID:      "10",
+			Space:   "ENG",
+			Version: 3,
+			State:   "trashed",
+		},
+		Body: "stale local copy\n",
+	}); err != nil {
+		t.Fatalf("write trashed page: %v", err)
+	}
+
+	state := fs.SpaceState{
+		SpaceKey: "ENG",
+		PagePathIndex: map[string]string{
+			"trashed.md": "10",
+		},
+	}
+
+	fake := &fakePullRemote{
+		space: confluence.Space{ID: "space-1", Key: "ENG"},
+		pages: []confluence.Page{},
+		pagesByID: map[string]confluence.Page{
+			"10": {
+				ID:      "10",
+				SpaceID: "space-1",
+				Title:   "Trashed Page",
+				Status:  "trashed",
+				BodyADF: []byte(`{"version":1,"type":"doc","content":[]}`),
+			},
+		},
+	}
+
+	result, err := Pull(context.Background(), fake, PullOptions{
+		SpaceKey: "ENG",
+		SpaceDir: spaceDir,
+		State:    state,
+	})
+	if err != nil {
+		t.Fatalf("Pull() unexpected error: %v", err)
+	}
+
+	if _, err := os.Stat(trashedPath); !os.IsNotExist(err) {
+		t.Fatalf("trashed.md should be deleted, stat err=%v", err)
+	}
+
+	if _, exists := result.State.PagePathIndex["trashed.md"]; exists {
+		t.Fatalf("state page_path_index should not include trashed.md")
+	}
+
+	foundDeleted := false
+	for _, relPath := range result.DeletedMarkdown {
+		if relPath == "trashed.md" {
+			foundDeleted = true
+			break
+		}
+	}
+	if !foundDeleted {
+		t.Fatalf("expected trashed.md in deleted markdown list, got %v", result.DeletedMarkdown)
+	}
+}
+
 func TestPull_SkipsMissingAssets(t *testing.T) {
 	tmpDir := t.TempDir()
 	spaceDir := filepath.Join(tmpDir, "ENG")

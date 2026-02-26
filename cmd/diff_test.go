@@ -76,6 +76,12 @@ func TestRunDiff_FileModeShowsContentChanges(t *testing.T) {
 	if !strings.Contains(got, "+new body") {
 		t.Fatalf("diff output missing added remote line:\n%s", got)
 	}
+	if strings.Contains(got, "conf-diff-") {
+		t.Fatalf("diff output should not leak temp directory paths:\n%s", got)
+	}
+	if strings.Contains(strings.ToLower(got), "warning: in the working copy") {
+		t.Fatalf("diff output should not include CRLF working-copy warnings:\n%s", got)
+	}
 }
 
 func TestRunDiff_SpaceModeNoDifferences(t *testing.T) {
@@ -282,6 +288,33 @@ func TestRunDiff_RespectsCanceledContext(t *testing.T) {
 	err := runDiff(cmd, config.Target{Mode: config.TargetModeSpace, Value: "ENG"})
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("expected context canceled error, got: %v", err)
+	}
+}
+
+func TestRecoverMissingPagesForDiff_SkipsTrashedPages(t *testing.T) {
+	fake := &cmdFakePullRemote{
+		pagesByID: map[string]confluence.Page{
+			"10": {
+				ID:      "10",
+				SpaceID: "space-1",
+				Status:  "trashed",
+			},
+		},
+	}
+
+	recovered, err := recoverMissingPagesForDiff(
+		context.Background(),
+		fake,
+		"space-1",
+		map[string]string{"old.md": "10"},
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("recoverMissingPagesForDiff() error: %v", err)
+	}
+
+	if len(recovered) != 0 {
+		t.Fatalf("expected trashed page to be skipped, got %+v", recovered)
 	}
 }
 

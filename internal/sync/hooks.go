@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/rgonek/confluence-markdown-sync/internal/fs"
 	adfconv "github.com/rgonek/jira-adf-converter/converter"
 	mdconv "github.com/rgonek/jira-adf-converter/mdconverter"
 )
@@ -93,40 +94,160 @@ func ExtractPageID(href string) string {
 // NewForwardMediaHook creates a media hook for ADF -> Markdown conversion.
 // It resolves attachment IDs to local asset paths.
 func NewForwardMediaHook(sourcePath string, attachmentPathByID map[string]string) adfconv.MediaRenderHook {
+	pageAssetPaths := buildPageAssetPathIndex(attachmentPathByID)
+
 	return func(ctx context.Context, in adfconv.MediaRenderInput) (adfconv.MediaRenderOutput, error) {
-		if in.Meta.AttachmentID != "" {
-			targetPath, ok := attachmentPathByID[in.Meta.AttachmentID]
-			if ok {
-				// Calculate relative path
-				sourceDir := filepath.Dir(sourcePath)
-				relPath, err := filepath.Rel(sourceDir, targetPath)
-				if err == nil {
-					return adfconv.MediaRenderOutput{
-						Markdown: fmt.Sprintf("![%s](%s)", in.Alt, filepath.ToSlash(relPath)),
-						Handled:  true,
-					}, nil
-				}
-			}
-			return adfconv.MediaRenderOutput{}, adfconv.ErrUnresolved
+		targetPath := ""
+		if mappedPath, ok := resolveAttachmentPathByID(in, attachmentPathByID); ok {
+			targetPath = mappedPath
+		} else if fallbackPath := resolveForwardMediaFallbackPath(in, attachmentPathByID, pageAssetPaths); fallbackPath != "" {
+			targetPath = fallbackPath
 		}
 
-		if in.ID != "" {
-			targetPath, ok := attachmentPathByID[in.ID]
-			if ok {
-				sourceDir := filepath.Dir(sourcePath)
-				relPath, err := filepath.Rel(sourceDir, targetPath)
-				if err == nil {
-					return adfconv.MediaRenderOutput{
-						Markdown: fmt.Sprintf("![%s](%s)", in.Alt, filepath.ToSlash(relPath)),
-						Handled:  true,
-					}, nil
-				}
+		if targetPath != "" {
+			sourceDir := filepath.Dir(sourcePath)
+			relPath, err := filepath.Rel(sourceDir, targetPath)
+			if err == nil {
+				return adfconv.MediaRenderOutput{
+					Markdown: fmt.Sprintf("![%s](%s)", in.Alt, filepath.ToSlash(relPath)),
+					Handled:  true,
+				}, nil
 			}
+		}
+
+		if strings.TrimSpace(in.Meta.AttachmentID) != "" || strings.TrimSpace(in.ID) != "" {
 			return adfconv.MediaRenderOutput{}, adfconv.ErrUnresolved
 		}
 
 		return adfconv.MediaRenderOutput{Handled: false}, nil
 	}
+}
+
+func resolveAttachmentPathByID(in adfconv.MediaRenderInput, attachmentPathByID map[string]string) (string, bool) {
+	attachmentID := strings.TrimSpace(in.Meta.AttachmentID)
+	if attachmentID != "" {
+		targetPath, ok := attachmentPathByID[attachmentID]
+		if ok && strings.TrimSpace(targetPath) != "" {
+			return targetPath, true
+		}
+	}
+
+	mediaID := strings.TrimSpace(in.ID)
+	if mediaID != "" {
+		targetPath, ok := attachmentPathByID[mediaID]
+		if ok && strings.TrimSpace(targetPath) != "" {
+			return targetPath, true
+		}
+	}
+
+	return "", false
+}
+
+func resolveForwardMediaFallbackPath(
+	in adfconv.MediaRenderInput,
+	attachmentPathByID map[string]string,
+	pageAssetPaths map[string][]string,
+) string {
+	pageID := resolveMediaPageID(in)
+	filename := fs.SanitizePathSegment(strings.TrimSpace(in.Meta.Filename))
+
+	if pageID != "" {
+		paths := pageAssetPaths[pageID]
+		if len(paths) > 0 {
+			if filename != "" {
+				matches := make([]string, 0, len(paths))
+				for _, candidate := range paths {
+					if mediaPathMatchesFilename(candidate, filename) {
+						matches = append(matches, candidate)
+					}
+				}
+				if len(matches) == 1 {
+					return matches[0]
+				}
+			}
+
+			if len(paths) == 1 {
+				return paths[0]
+			}
+		}
+	}
+
+	if filename == "" {
+		return ""
+	}
+
+	globalMatches := make([]string, 0)
+	for _, path := range attachmentPathByID {
+		if mediaPathMatchesFilename(path, filename) {
+			globalMatches = append(globalMatches, path)
+		}
+	}
+
+	if len(globalMatches) == 1 {
+		return globalMatches[0]
+	}
+
+	return ""
+}
+
+func resolveMediaPageID(in adfconv.MediaRenderInput) string {
+	if pageID := fs.SanitizePathSegment(strings.TrimSpace(in.Meta.PageID)); pageID != "" {
+		return pageID
+	}
+
+	collection := strings.TrimSpace(stringValue(in.Attrs["collection"]))
+	if strings.HasPrefix(collection, "contentId-") {
+		if pageID := fs.SanitizePathSegment(strings.TrimPrefix(collection, "contentId-")); pageID != "" {
+			return pageID
+		}
+	}
+
+	for _, key := range []string{"pageId", "pageID", "contentId"} {
+		if pageID := fs.SanitizePathSegment(strings.TrimSpace(stringValue(in.Attrs[key]))); pageID != "" {
+			return pageID
+		}
+	}
+
+	return ""
+}
+
+func mediaPathMatchesFilename(path, filename string) bool {
+	base := strings.ToLower(filepath.Base(path))
+	filename = strings.ToLower(strings.TrimSpace(filename))
+	if filename == "" {
+		return false
+	}
+	if base == filename {
+		return true
+	}
+	return strings.HasSuffix(base, "-"+filename)
+}
+
+func buildPageAssetPathIndex(attachmentPathByID map[string]string) map[string][]string {
+	out := map[string][]string{}
+	for _, rawPath := range attachmentPathByID {
+		normalized := normalizeRelPath(rawPath)
+		if normalized == "" {
+			continue
+		}
+		parts := strings.Split(normalized, "/")
+		if len(parts) < 3 || parts[0] != "assets" {
+			continue
+		}
+		pageID := fs.SanitizePathSegment(strings.TrimSpace(parts[1]))
+		if pageID == "" {
+			continue
+		}
+		out[pageID] = append(out[pageID], rawPath)
+	}
+	return out
+}
+
+func stringValue(v any) string {
+	if raw, ok := v.(string); ok {
+		return raw
+	}
+	return ""
 }
 
 // NewReverseLinkHook creates a link hook for Markdown -> ADF conversion.

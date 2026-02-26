@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -528,7 +529,11 @@ func runPushInWorktree(
 				if pullErr := runPull(cmd, target); pullErr != nil {
 					return fmt.Errorf("automatic pull-merge failed: %w", pullErr)
 				}
-				_, _ = fmt.Fprintln(out, "automatic pull-merge completed. If there were no content conflicts, you can now retry your push.")
+				retryCmd := "conf push"
+				if target.IsFile() {
+					retryCmd = fmt.Sprintf("conf push %q", target.Value)
+				}
+				_, _ = fmt.Fprintf(out, "automatic pull-merge completed. If there were no content conflicts, rerun `%s` to resume the push.\n", retryCmd)
 				return nil
 			}
 			return formatPushConflictError(conflictErr)
@@ -610,7 +615,7 @@ func runPushInWorktree(
 			_, _ = fmt.Fprintf(out, "warning: failed to create tag: %v\n", err)
 		}
 
-		if err := gitClient.StashPop(*stashRef); err != nil {
+		if err := restorePushStash(gitClient, *stashRef, spaceScopePath, result.Commits); err != nil {
 			_, _ = fmt.Fprintf(out, "warning: stash restore had conflicts: %v\n", err)
 		}
 		*stashRef = ""
@@ -847,6 +852,207 @@ func restoreUntrackedFromStashParent(client *git.Client, stashRef, scopePath str
 	}
 
 	return nil
+}
+
+func restorePushStash(
+	client *git.Client,
+	stashRef string,
+	spaceScopePath string,
+	commits []syncflow.PushCommitPlan,
+) error {
+	stashRef = strings.TrimSpace(stashRef)
+	if stashRef == "" {
+		return nil
+	}
+
+	stashPaths, err := listStashPaths(client, stashRef, spaceScopePath)
+	if err != nil {
+		if popErr := client.StashPop(stashRef); popErr != nil {
+			return popErr
+		}
+		return nil
+	}
+
+	if len(stashPaths) == 0 {
+		return client.StashDrop(stashRef)
+	}
+
+	syncedPaths := syncedRepoPathsForPushCommits(spaceScopePath, commits)
+	pathsToRestore := make([]string, 0, len(stashPaths))
+	for _, path := range stashPaths {
+		if _, synced := syncedPaths[path]; synced {
+			continue
+		}
+		pathsToRestore = append(pathsToRestore, path)
+	}
+
+	if len(pathsToRestore) == 0 {
+		return client.StashDrop(stashRef)
+	}
+
+	untrackedSet, err := listStashUntrackedPathSet(client, stashRef, spaceScopePath)
+	if err != nil {
+		return fmt.Errorf("identify stashed untracked paths: %w", err)
+	}
+
+	trackedPaths := make([]string, 0, len(pathsToRestore))
+	untrackedPaths := make([]string, 0, len(pathsToRestore))
+	for _, path := range pathsToRestore {
+		if _, isUntracked := untrackedSet[path]; isUntracked {
+			untrackedPaths = append(untrackedPaths, path)
+			continue
+		}
+		trackedPaths = append(trackedPaths, path)
+	}
+
+	sort.Strings(trackedPaths)
+	sort.Strings(untrackedPaths)
+
+	if len(trackedPaths) > 0 {
+		args := append([]string{"stash", "apply", "--index", stashRef, "--"}, trackedPaths...)
+		if _, err := client.Run(args...); err != nil {
+			return fmt.Errorf("restore tracked workspace changes from stash: %w", err)
+		}
+	}
+
+	if err := restoreUntrackedPathsFromStashParent(client, stashRef, untrackedPaths); err != nil {
+		return err
+	}
+
+	return client.StashDrop(stashRef)
+}
+
+func listStashPaths(client *git.Client, stashRef, scopePath string) ([]string, error) {
+	args := []string{"diff", "--name-only", stashRef + "^1", stashRef}
+	scopePath = normalizeRepoRelPath(scopePath)
+	if scopePath != "" {
+		args = append(args, "--", scopePath)
+	}
+
+	raw, err := client.Run(args...)
+	if err != nil {
+		return nil, err
+	}
+
+	pathSet := map[string]struct{}{}
+	for _, line := range strings.Split(strings.ReplaceAll(raw, "\r\n", "\n"), "\n") {
+		path := normalizeRepoRelPath(line)
+		if path == "" {
+			continue
+		}
+		pathSet[path] = struct{}{}
+	}
+
+	untrackedSet, err := listStashUntrackedPathSet(client, stashRef, scopePath)
+	if err != nil {
+		return nil, err
+	}
+	for path := range untrackedSet {
+		pathSet[path] = struct{}{}
+	}
+
+	paths := make([]string, 0, len(pathSet))
+	for path := range pathSet {
+		paths = append(paths, path)
+	}
+	sort.Strings(paths)
+	return paths, nil
+}
+
+func listStashUntrackedPathSet(client *git.Client, stashRef, scopePath string) (map[string]struct{}, error) {
+	out := map[string]struct{}{}
+	stashRef = strings.TrimSpace(stashRef)
+	if stashRef == "" {
+		return out, nil
+	}
+
+	untrackedRef := stashRef + "^3"
+	if _, err := client.Run("rev-parse", "--verify", "--quiet", untrackedRef); err != nil {
+		return out, nil
+	}
+
+	args := []string{"ls-tree", "-r", "--name-only", untrackedRef}
+	scopePath = normalizeRepoRelPath(scopePath)
+	if scopePath != "" {
+		args = append(args, "--", scopePath)
+	}
+
+	raw, err := client.Run(args...)
+	if err != nil {
+		return nil, err
+	}
+
+	for _, line := range strings.Split(strings.ReplaceAll(raw, "\r\n", "\n"), "\n") {
+		path := normalizeRepoRelPath(line)
+		if path == "" {
+			continue
+		}
+		out[path] = struct{}{}
+	}
+
+	return out, nil
+}
+
+func restoreUntrackedPathsFromStashParent(client *git.Client, stashRef string, paths []string) error {
+	if len(paths) == 0 {
+		return nil
+	}
+
+	stashRef = strings.TrimSpace(stashRef)
+	if stashRef == "" {
+		return nil
+	}
+
+	untrackedRef := stashRef + "^3"
+	if _, err := client.Run("rev-parse", "--verify", "--quiet", untrackedRef); err != nil {
+		return nil
+	}
+
+	checkoutArgs := append([]string{"checkout", untrackedRef, "--"}, paths...)
+	if _, err := client.Run(checkoutArgs...); err != nil {
+		return fmt.Errorf("restore untracked files from stash: %w", err)
+	}
+
+	resetArgs := append([]string{"reset", "--"}, paths...)
+	if _, err := client.Run(resetArgs...); err != nil {
+		return fmt.Errorf("unstage restored untracked files: %w", err)
+	}
+
+	return nil
+}
+
+func syncedRepoPathsForPushCommits(spaceScopePath string, commits []syncflow.PushCommitPlan) map[string]struct{} {
+	out := map[string]struct{}{}
+	scopePath := normalizeRepoRelPath(spaceScopePath)
+
+	for _, commit := range commits {
+		for _, relPath := range commit.StagedPaths {
+			relPath = normalizeRepoRelPath(relPath)
+			if relPath == "" {
+				continue
+			}
+
+			repoPath := relPath
+			if scopePath != "" {
+				repoPath = normalizeRepoRelPath(filepath.Join(scopePath, filepath.FromSlash(relPath)))
+			}
+			if repoPath == "" {
+				continue
+			}
+			out[repoPath] = struct{}{}
+		}
+	}
+
+	return out
+}
+
+func normalizeRepoRelPath(path string) string {
+	path = filepath.ToSlash(filepath.Clean(strings.TrimSpace(path)))
+	path = strings.TrimPrefix(path, "./")
+	if path == "." {
+		return ""
+	}
+	return path
 }
 
 func toSyncPushChanges(changes []git.FileStatus, spaceScopePath string) ([]syncflow.PushFileChange, error) {

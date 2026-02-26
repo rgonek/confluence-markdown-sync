@@ -1138,6 +1138,63 @@ func TestRunPush_PreservesOutOfScopeChanges(t *testing.T) {
 	}
 }
 
+func TestRunPush_DoesNotWarnForSyncedUntrackedFilesInStash(t *testing.T) {
+	runParallelCommandTest(t)
+
+	repo := t.TempDir()
+	spaceDir := preparePushRepoWithBaseline(t, repo)
+
+	newPagePath := filepath.Join(spaceDir, "new-page.md")
+	writeMarkdown(t, newPagePath, fs.MarkdownDocument{
+		Frontmatter: fs.Frontmatter{
+			Title: "New Page",
+			Space: "ENG",
+		},
+		Body: "New page content\n",
+	})
+
+	fake := newCmdFakePushRemote(1)
+	oldPushFactory := newPushRemote
+	oldPullFactory := newPullRemote
+	newPushRemote = func(_ *config.Config) (syncflow.PushRemote, error) { return fake, nil }
+	newPullRemote = func(_ *config.Config) (syncflow.PullRemote, error) { return fake, nil }
+	t.Cleanup(func() {
+		newPushRemote = oldPushFactory
+		newPullRemote = oldPullFactory
+	})
+
+	setupEnv(t)
+	chdirRepo(t, spaceDir)
+
+	cmd := &cobra.Command{}
+	out := &bytes.Buffer{}
+	cmd.SetOut(out)
+
+	if err := runPush(cmd, config.Target{Mode: config.TargetModeSpace, Value: ""}, OnConflictCancel, false); err != nil {
+		t.Fatalf("runPush() failed: %v", err)
+	}
+
+	if strings.Contains(out.String(), "stash restore had conflicts") {
+		t.Fatalf("expected stash restore without conflict warning, got:\n%s", out.String())
+	}
+
+	stashList := runGitForTest(t, repo, "stash", "list")
+	if strings.TrimSpace(stashList) != "" {
+		t.Fatalf("expected stash to be empty, got:\n%s", stashList)
+	}
+
+	doc, err := fs.ReadMarkdownDocument(newPagePath)
+	if err != nil {
+		t.Fatalf("read new page markdown: %v", err)
+	}
+	if strings.TrimSpace(doc.Frontmatter.ID) == "" {
+		t.Fatalf("expected pushed new page to have assigned ID")
+	}
+	if doc.Frontmatter.Version <= 0 {
+		t.Fatalf("expected pushed new page version > 0, got %d", doc.Frontmatter.Version)
+	}
+}
+
 type failingPushRemote struct {
 	*cmdFakePushRemote
 }

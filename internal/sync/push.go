@@ -1277,7 +1277,13 @@ func CollectReferencedAssetPaths(spaceDir, sourcePath, body string) ([]string, e
 		}
 		relPath = normalizeRelPath(relPath)
 		if !strings.HasPrefix(relPath, "assets/") {
-			return nil, fmt.Errorf("asset reference must remain under assets/: %s", destination)
+			suggestedRelPath := filepath.ToSlash(filepath.Join("assets", filepath.Base(assetAbsPath)))
+			return nil, fmt.Errorf(
+				"asset reference must remain under assets/: %s (move it under assets/ and update the markdown link, e.g. Move-Item %q %q)",
+				destination,
+				destination,
+				suggestedRelPath,
+			)
 		}
 		paths[relPath] = struct{}{}
 	}

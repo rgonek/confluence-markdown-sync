@@ -763,7 +763,9 @@ func applyPullConflictChoice(choice, repoRoot, stashRef, scopePath string, out i
 		_, _ = fmt.Fprintln(out, successStyle.Render("Remote updates overwritten by local version."))
 		return nil
 	default: // "keep"
-		_, _ = fmt.Fprintf(out, warningStyle.Render("Conflict markers kept. Please resolve them manually and then run 'git stash drop %s'.\n"), stashRef)
+		_, _ = fmt.Fprintln(out, warningStyle.Render("Conflict markers kept."))
+		_, _ = fmt.Fprintln(out, "Resolve each conflict block by choosing the local or remote lines, then save the file(s).")
+		_, _ = fmt.Fprintf(out, "After resolving files, run 'git add <file>' for each resolved file and then run 'git stash drop %s'.\n", stashRef)
 		return nil
 	}
 }
@@ -841,7 +843,7 @@ func estimatePullImpactWithSpace(
 				// If we can't check, assume it's still there to be safe (don't mark as deleted in estimate)
 				continue
 			}
-			if page.SpaceID != space.ID {
+			if page.SpaceID != space.ID || !syncflow.IsSyncableRemotePageStatus(page.Status) {
 				deletedIDs[pageID] = struct{}{}
 				continue
 			}

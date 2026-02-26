@@ -189,12 +189,24 @@ func runDiffFileMode(
 	attachmentPathByID map[string]string,
 	tmpRoot string,
 ) error {
-	remoteFile := filepath.Join(tmpRoot, "remote.md")
+	relPath := diffDisplayRelPath(diffCtx.spaceDir, diffCtx.targetFile)
+	localFile := filepath.Join(tmpRoot, "local", filepath.FromSlash(relPath))
+	remoteFile := filepath.Join(tmpRoot, "remote", filepath.FromSlash(relPath))
+
+	if err := os.MkdirAll(filepath.Dir(localFile), 0o750); err != nil {
+		return fmt.Errorf("prepare local diff file: %w", err)
+	}
 	if err := os.MkdirAll(filepath.Dir(remoteFile), 0o750); err != nil {
 		return fmt.Errorf("prepare diff file: %w", err)
 	}
 
-	relPath := diffDisplayRelPath(diffCtx.spaceDir, diffCtx.targetFile)
+	localRaw, err := os.ReadFile(diffCtx.targetFile) //nolint:gosec // target file path is user-selected markdown inside workspace
+	if err != nil {
+		return fmt.Errorf("read local file for diff: %w", err)
+	}
+	if err := os.WriteFile(localFile, localRaw, 0o600); err != nil {
+		return fmt.Errorf("write local diff file: %w", err)
+	}
 
 	page, err := remote.GetPage(ctx, diffCtx.targetPageID)
 	if err != nil {
@@ -205,7 +217,7 @@ func runDiffFileMode(
 			if err := os.WriteFile(remoteFile, []byte{}, 0o600); err != nil {
 				return fmt.Errorf("write diff file: %w", err)
 			}
-			return printNoIndexDiff(out, diffCtx.targetFile, remoteFile)
+			return printNoIndexDiff(out, localFile, remoteFile)
 		}
 		return fmt.Errorf("fetch page %s: %w", diffCtx.targetPageID, err)
 	}
@@ -233,7 +245,7 @@ func runDiffFileMode(
 		return fmt.Errorf("write diff file: %w", err)
 	}
 
-	return printNoIndexDiff(out, diffCtx.targetFile, remoteFile)
+	return printNoIndexDiff(out, localFile, remoteFile)
 }
 
 func runDiffSpaceMode(
@@ -270,7 +282,7 @@ func runDiffSpaceMode(
 	for _, pageID := range pageIDs {
 		page, err := remote.GetPage(ctx, pageID)
 		if err != nil {
-			if errors.Is(err, confluence.ErrNotFound) {
+			if errors.Is(err, confluence.ErrNotFound) || errors.Is(err, confluence.ErrArchived) {
 				continue
 			}
 			return fmt.Errorf("fetch page %s: %w", pageID, err)
@@ -430,19 +442,24 @@ func buildDiffAttachmentPathByID(spaceDir string, attachmentIndex map[string]str
 }
 
 func printNoIndexDiff(out io.Writer, leftPath, rightPath string) error {
-	cmd := exec.Command(
+	workingDir, leftArg, rightArg := diffCommandPaths(leftPath, rightPath)
+
+	cmd := exec.Command( //nolint:gosec // arguments are fixed git flags plus scoped local temp paths for display-only diff
 		"git",
+		"-c",
+		"core.autocrlf=false",
 		"diff",
 		"--no-index",
-		"--src-prefix=local/",
-		"--dst-prefix=remote/",
 		"--",
-		leftPath,
-		rightPath,
+		leftArg,
+		rightArg,
 	)
+	if strings.TrimSpace(workingDir) != "" {
+		cmd.Dir = workingDir
+	}
 
 	raw, err := cmd.CombinedOutput()
-	text := string(raw)
+	text := sanitizeNoIndexDiffOutput(string(raw))
 	if text != "" {
 		_, _ = io.WriteString(out, text)
 	}
@@ -463,6 +480,73 @@ func printNoIndexDiff(out io.Writer, leftPath, rightPath string) error {
 		return fmt.Errorf("git diff --no-index failed: %w", err)
 	}
 	return fmt.Errorf("git diff --no-index failed: %s", strings.TrimSpace(text))
+}
+
+func diffCommandPaths(leftPath, rightPath string) (workingDir, leftArg, rightArg string) {
+	leftAbs, leftErr := filepath.Abs(leftPath)
+	rightAbs, rightErr := filepath.Abs(rightPath)
+	if leftErr != nil || rightErr != nil {
+		return "", leftPath, rightPath
+	}
+
+	base := leftAbs
+	if leftInfo, err := os.Stat(leftAbs); err == nil && !leftInfo.IsDir() {
+		base = filepath.Dir(leftAbs)
+	}
+
+	for !isPathParentOrSame(base, rightAbs) {
+		next := filepath.Dir(base)
+		if next == base {
+			return "", leftAbs, rightAbs
+		}
+		base = next
+	}
+
+	leftRel, err := filepath.Rel(base, leftAbs)
+	if err != nil {
+		return "", leftAbs, rightAbs
+	}
+	rightRel, err := filepath.Rel(base, rightAbs)
+	if err != nil {
+		return "", leftAbs, rightAbs
+	}
+
+	return base, filepath.ToSlash(leftRel), filepath.ToSlash(rightRel)
+}
+
+func isPathParentOrSame(parent, child string) bool {
+	rel, err := filepath.Rel(parent, child)
+	if err != nil {
+		return false
+	}
+	if rel == "." {
+		return true
+	}
+	rel = filepath.ToSlash(rel)
+	return !strings.HasPrefix(rel, "../") && rel != ".."
+}
+
+func sanitizeNoIndexDiffOutput(text string) string {
+	if strings.TrimSpace(text) == "" {
+		return text
+	}
+
+	normalized := strings.ReplaceAll(text, "\r\n", "\n")
+	lines := strings.Split(normalized, "\n")
+	kept := make([]string, 0, len(lines))
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "warning: in the working copy of") {
+			continue
+		}
+		kept = append(kept, line)
+	}
+
+	result := strings.Join(kept, "\n")
+	if text != "" && !strings.HasSuffix(result, "\n") {
+		result += "\n"
+	}
+	return result
 }
 
 func listAllDiffPages(ctx context.Context, remote syncflow.PullRemote, opts confluence.PageListOptions) ([]confluence.Page, error) {
@@ -505,7 +589,7 @@ func recoverMissingPagesForDiff(ctx context.Context, remote syncflow.PullRemote,
 
 		page, err := remote.GetPage(ctx, id)
 		if err != nil {
-			if errors.Is(err, confluence.ErrNotFound) {
+			if errors.Is(err, confluence.ErrNotFound) || errors.Is(err, confluence.ErrArchived) {
 				continue
 			}
 			var apiErr *confluence.APIError
@@ -515,7 +599,7 @@ func recoverMissingPagesForDiff(ctx context.Context, remote syncflow.PullRemote,
 			return nil, err
 		}
 
-		if page.SpaceID == spaceID {
+		if page.SpaceID == spaceID && syncflow.IsSyncableRemotePageStatus(page.Status) {
 			result = append(result, page)
 			remoteByID[id] = struct{}{}
 		}

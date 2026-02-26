@@ -1308,8 +1308,8 @@ func recoverMissingPages(ctx context.Context, remote recoveryRemote, spaceID str
 			return nil, err
 		}
 
-		// If it belongs to the same space, include it (including drafts)
-		if page.SpaceID == spaceID {
+		// If it belongs to the same space and is syncable, include it.
+		if page.SpaceID == spaceID && IsSyncableRemotePageStatus(page.Status) {
 			result = append(result, page)
 			remoteByID[id] = struct{}{}
 		}
