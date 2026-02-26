@@ -1334,25 +1334,25 @@ func resolveInitialPushContext(target config.Target) (initialPullContext, error)
 		return initialPullContext{}, err
 	}
 
-	doc, err := fs.ReadMarkdownDocument(absPath)
-	if err != nil {
-		return initialPullContext{}, fmt.Errorf("read target file %s: %w", target.Value, err)
+	if _, err := os.Stat(absPath); err != nil {
+		return initialPullContext{}, fmt.Errorf("target file %s: %w", target.Value, err)
 	}
 
-	spaceKey := strings.TrimSpace(doc.Frontmatter.Space)
-	if spaceKey == "" {
-		spaceDir := findSpaceDirFromFile(absPath, "")
-		if state, stateErr := fs.LoadState(spaceDir); stateErr == nil {
-			spaceKey = strings.TrimSpace(state.SpaceKey)
-		}
+	spaceDir := findSpaceDirFromFile(absPath, "")
+	spaceKey := ""
+	if state, stateErr := fs.LoadState(spaceDir); stateErr == nil {
+		spaceKey = strings.TrimSpace(state.SpaceKey)
 	}
 	if spaceKey == "" {
-		return initialPullContext{}, fmt.Errorf("target file %s missing space", target.Value)
+		spaceKey = inferSpaceKeyFromDirName(spaceDir)
+	}
+	if spaceKey == "" {
+		return initialPullContext{}, fmt.Errorf("target file %s missing tracked space context; run pull with a space target first", target.Value)
 	}
 
 	return initialPullContext{
 		spaceKey: spaceKey,
-		spaceDir: findSpaceDirFromFile(absPath, spaceKey),
+		spaceDir: spaceDir,
 		fixedDir: true,
 	}, nil
 }

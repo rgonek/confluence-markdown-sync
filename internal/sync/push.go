@@ -490,20 +490,6 @@ func pushUpsertPage(
 				relPath, trackedPageID, pageID,
 			)
 		}
-
-		expectedSpace := strings.TrimSpace(state.SpaceKey)
-		if expectedSpace == "" {
-			expectedSpace = strings.TrimSpace(opts.SpaceKey)
-		}
-		if expectedSpace != "" && !strings.EqualFold(strings.TrimSpace(doc.Frontmatter.Space), expectedSpace) {
-			return PushCommitPlan{}, fmt.Errorf(
-				"page %q changed immutable space from %s to %s",
-				relPath, expectedSpace, strings.TrimSpace(doc.Frontmatter.Space),
-			)
-		}
-	}
-	if !strings.EqualFold(strings.TrimSpace(doc.Frontmatter.Space), strings.TrimSpace(opts.SpaceKey)) {
-		return PushCommitPlan{}, fmt.Errorf("%s belongs to space %q, expected %q", relPath, doc.Frontmatter.Space, opts.SpaceKey)
 	}
 
 	localVersion := doc.Frontmatter.Version
@@ -672,7 +658,6 @@ func pushUpsertPage(
 			pageIDByPath[normalizedRelPath] = pageID
 
 			doc.Frontmatter.ID = pageID
-			doc.Frontmatter.Space = opts.SpaceKey
 			doc.Frontmatter.Version = precreatedPage.Version
 		} else {
 			if dirPath != "" && dirPath != "." {
@@ -706,7 +691,6 @@ func pushUpsertPage(
 			pageIDByPath[normalizedRelPath] = pageID
 
 			doc.Frontmatter.ID = pageID
-			doc.Frontmatter.Space = opts.SpaceKey
 			doc.Frontmatter.Version = created.Version
 		}
 	}
@@ -1464,10 +1448,6 @@ func precreatePendingPushPages(
 				conflictingID,
 				title,
 			)
-		}
-
-		if !strings.EqualFold(strings.TrimSpace(doc.Frontmatter.Space), strings.TrimSpace(opts.SpaceKey)) {
-			return nil, fmt.Errorf("%s belongs to space %q, expected %q", relPath, doc.Frontmatter.Space, opts.SpaceKey)
 		}
 
 		dirPath := normalizeRelPath(filepath.ToSlash(filepath.Dir(filepath.FromSlash(relPath))))

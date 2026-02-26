@@ -311,7 +311,7 @@ func TestPush_BlocksImmutableIDTampering(t *testing.T) {
 	}
 }
 
-func TestPush_BlocksImmutableSpaceTampering(t *testing.T) {
+func TestPush_IgnoresFrontmatterSpace(t *testing.T) {
 	spaceDir := t.TempDir()
 	mdPath := filepath.Join(spaceDir, "root.md")
 
@@ -327,9 +327,16 @@ func TestPush_BlocksImmutableSpaceTampering(t *testing.T) {
 		t.Fatalf("write markdown: %v", err)
 	}
 
-	remote := &fakeFolderPushRemote{
-		foldersByID: map[string]confluence.Folder{},
+	remote := newRollbackPushRemote()
+	remote.pagesByID["1"] = confluence.Page{
+		ID:      "1",
+		SpaceID: "space-1",
+		Title:   "Root",
+		Status:  "current",
+		Version: 1,
+		BodyADF: []byte(`{"version":1,"type":"doc","content":[]}`),
 	}
+	remote.pages = append(remote.pages, remote.pagesByID["1"])
 
 	_, err := Push(context.Background(), remote, PushOptions{
 		SpaceKey: "ENG",
@@ -341,11 +348,8 @@ func TestPush_BlocksImmutableSpaceTampering(t *testing.T) {
 		},
 		Changes: []PushFileChange{{Type: PushChangeModify, Path: "root.md"}},
 	})
-	if err == nil {
-		t.Fatal("expected immutable space validation error")
-	}
-	if !strings.Contains(err.Error(), "changed immutable space") {
-		t.Fatalf("unexpected error: %v", err)
+	if err != nil {
+		t.Fatalf("expected push success with ignored space key, got: %v", err)
 	}
 }
 

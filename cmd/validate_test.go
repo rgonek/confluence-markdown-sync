@@ -89,7 +89,7 @@ func TestRunValidateTarget_BlocksTamperedIDAgainstState(t *testing.T) {
 	}
 }
 
-func TestRunValidateTarget_BlocksTamperedSpaceAgainstState(t *testing.T) {
+func TestRunValidateTarget_IgnoresSpaceFrontmatter(t *testing.T) {
 	repo := t.TempDir()
 	setupGitRepo(t, repo)
 	setupEnv(t)
@@ -119,11 +119,8 @@ func TestRunValidateTarget_BlocksTamperedSpaceAgainstState(t *testing.T) {
 	chdirRepo(t, repo)
 	out := &bytes.Buffer{}
 	err := runValidateTarget(out, config.Target{Mode: config.TargetModeSpace, Value: "Engineering (ENG)"})
-	if err == nil {
-		t.Fatal("expected validate to fail for tampered space")
-	}
-	if !strings.Contains(out.String(), "[immutable] space") {
-		t.Fatalf("expected immutable space issue, got:\n%s", out.String())
+	if err != nil {
+		t.Fatalf("expected validate success when space differs, got: %v\nOutput:\n%s", err, out.String())
 	}
 }
 

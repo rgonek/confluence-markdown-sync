@@ -361,18 +361,26 @@ func resolveInitialPullContext(target config.Target) (initialPullContext, error)
 			return initialPullContext{}, fmt.Errorf("read target file %s: %w", target.Value, err)
 		}
 
-		spaceKey := strings.TrimSpace(doc.Frontmatter.Space)
-		if spaceKey == "" {
-			return initialPullContext{}, fmt.Errorf("target file %s missing space", target.Value)
-		}
 		pageID := strings.TrimSpace(doc.Frontmatter.ID)
 		if pageID == "" {
 			return initialPullContext{}, fmt.Errorf("target file %s missing id", target.Value)
 		}
 
+		spaceDir := findSpaceDirFromFile(absPath, "")
+		spaceKey := ""
+		if state, stateErr := fs.LoadState(spaceDir); stateErr == nil {
+			spaceKey = strings.TrimSpace(state.SpaceKey)
+		}
+		if spaceKey == "" {
+			spaceKey = inferSpaceKeyFromDirName(spaceDir)
+		}
+		if spaceKey == "" {
+			return initialPullContext{}, fmt.Errorf("target file %s missing tracked space context; run pull with a space target first", target.Value)
+		}
+
 		return initialPullContext{
 			spaceKey:     spaceKey,
-			spaceDir:     findSpaceDirFromFile(absPath, spaceKey),
+			spaceDir:     spaceDir,
 			targetPageID: pageID,
 			fixedDir:     true,
 		}, nil

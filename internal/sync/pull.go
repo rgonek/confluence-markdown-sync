@@ -566,7 +566,6 @@ func Pull(ctx context.Context, remote PullRemote, opts PullOptions) (PullResult,
 			Frontmatter: fs.Frontmatter{
 				Title:     page.Title,
 				ID:        page.ID,
-				Space:     opts.SpaceKey,
 				Version:   page.Version,
 				State:     page.Status,
 				Status:    page.ContentStatus,

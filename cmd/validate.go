@@ -227,12 +227,7 @@ func resolveValidateFileSpaceKey(filePath string) string {
 			return key
 		}
 	}
-
-	fm, err := fs.ReadFrontmatter(filePath)
-	if err != nil {
-		return ""
-	}
-	return strings.TrimSpace(fm.Space)
+	return inferSpaceKeyFromDirName(spaceDir)
 }
 
 func newValidateImmutableFrontmatterResolver(spaceDir, spaceKey string, state fs.SpaceState) *validateImmutableFrontmatterResolver {
