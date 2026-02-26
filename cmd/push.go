@@ -32,6 +32,7 @@ var newPushRemote = func(cfg *config.Config) (syncflow.PushRemote, error) {
 }
 
 var flagPushPreflight bool
+var flagPushKeepOrphanAssets bool
 var flagArchiveTaskTimeout = confluence.DefaultArchiveTaskTimeout
 var flagArchiveTaskPollInterval = confluence.DefaultArchiveTaskPollInterval
 
@@ -63,6 +64,7 @@ It uses an isolated worktree and a temporary branch to ensure safety.`,
 	}
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Simulate the push without modifying Confluence or local Git state")
 	cmd.Flags().BoolVar(&flagPushPreflight, "preflight", false, "Show a concise push plan (changes and validation) without remote writes")
+	cmd.Flags().BoolVar(&flagPushKeepOrphanAssets, "keep-orphan-assets", false, "Keep unreferenced attachments instead of deleting them during push")
 	cmd.Flags().DurationVar(&flagArchiveTaskTimeout, "archive-task-timeout", confluence.DefaultArchiveTaskTimeout, "Max time to wait for Confluence archive long-task completion")
 	cmd.Flags().DurationVar(&flagArchiveTaskPollInterval, "archive-task-poll-interval", confluence.DefaultArchiveTaskPollInterval, "Polling interval while waiting for archive long-task completion")
 	cmd.Flags().BoolVarP(&flagYes, "yes", "y", false, "Auto-approve safety confirmations")
@@ -393,6 +395,7 @@ func runPushDryRun(
 		State:               state,
 		Changes:             syncChanges,
 		ConflictPolicy:      toSyncConflictPolicy(onConflict),
+		KeepOrphanAssets:    flagPushKeepOrphanAssets,
 		DryRun:              true,
 		ArchiveTimeout:      normalizedArchiveTaskTimeout(),
 		ArchivePollInterval: normalizedArchiveTaskPollInterval(),
@@ -522,6 +525,7 @@ func runPushInWorktree(
 		GlobalPageIndex:     globalPageIndex,
 		Changes:             syncChanges,
 		ConflictPolicy:      toSyncConflictPolicy(onConflict),
+		KeepOrphanAssets:    flagPushKeepOrphanAssets,
 		ArchiveTimeout:      normalizedArchiveTaskTimeout(),
 		ArchivePollInterval: normalizedArchiveTaskPollInterval(),
 		Progress:            progress,

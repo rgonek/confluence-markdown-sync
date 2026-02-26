@@ -94,6 +94,7 @@ func init() {
 		newInitCmd(),
 		newPullCmd(),
 		newPushCmd(),
+		newPruneCmd(),
 		newValidateCmd(),
 		newDiffCmd(),
 		newRelinkCmd(),

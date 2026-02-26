@@ -462,6 +462,67 @@ func TestCollectReferencedAssetPaths_FailsForNonAssetsReference(t *testing.T) {
 	}
 }
 
+func TestPush_KeepOrphanAssetsPreservesUnreferencedAttachment(t *testing.T) {
+	spaceDir := t.TempDir()
+	mdPath := filepath.Join(spaceDir, "root.md")
+
+	if err := fs.WriteMarkdownDocument(mdPath, fs.MarkdownDocument{
+		Frontmatter: fs.Frontmatter{
+			Title:   "Root",
+			ID:      "1",
+			Space:   "ENG",
+			Version: 1,
+		},
+		Body: "content\n",
+	}); err != nil {
+		t.Fatalf("write markdown: %v", err)
+	}
+
+	remote := newRollbackPushRemote()
+	remote.pagesByID["1"] = confluence.Page{
+		ID:      "1",
+		SpaceID: "space-1",
+		Title:   "Root",
+		Status:  "current",
+		Version: 1,
+		BodyADF: []byte(`{"version":1,"type":"doc","content":[]}`),
+	}
+	remote.pages = append(remote.pages, remote.pagesByID["1"])
+
+	result, err := Push(context.Background(), remote, PushOptions{
+		SpaceKey:            "ENG",
+		SpaceDir:            spaceDir,
+		Domain:              "https://example.atlassian.net",
+		KeepOrphanAssets:    true,
+		ConflictPolicy:      PushConflictPolicyCancel,
+		State:               fs.SpaceState{SpaceKey: "ENG", PagePathIndex: map[string]string{"root.md": "1"}, AttachmentIndex: map[string]string{"assets/1/orphan.png": "att-1"}},
+		Changes:             []PushFileChange{{Type: PushChangeModify, Path: "root.md"}},
+		ArchiveTimeout:      confluence.DefaultArchiveTaskTimeout,
+		ArchivePollInterval: confluence.DefaultArchiveTaskPollInterval,
+	})
+	if err != nil {
+		t.Fatalf("Push() unexpected error: %v", err)
+	}
+
+	if len(remote.deleteAttachmentCalls) != 0 {
+		t.Fatalf("delete attachment calls = %d, want 0", len(remote.deleteAttachmentCalls))
+	}
+	if got := strings.TrimSpace(result.State.AttachmentIndex["assets/1/orphan.png"]); got != "att-1" {
+		t.Fatalf("attachment index value = %q, want att-1", got)
+	}
+
+	hasPreservedDiagnostic := false
+	for _, diag := range result.Diagnostics {
+		if diag.Code == "ATTACHMENT_PRESERVED" {
+			hasPreservedDiagnostic = true
+			break
+		}
+	}
+	if !hasPreservedDiagnostic {
+		t.Fatalf("expected ATTACHMENT_PRESERVED diagnostic, got %+v", result.Diagnostics)
+	}
+}
+
 func TestPush_PreflightStrictFailureSkipsRemoteMutations(t *testing.T) {
 	spaceDir := t.TempDir()
 	mdPath := filepath.Join(spaceDir, "new.md")

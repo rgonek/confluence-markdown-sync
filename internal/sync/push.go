@@ -81,6 +81,7 @@ type PushOptions struct {
 	Changes             []PushFileChange
 	ConflictPolicy      PushConflictPolicy
 	HardDelete          bool
+	KeepOrphanAssets    bool
 	DryRun              bool
 	ArchiveTimeout      time.Duration
 	ArchivePollInterval time.Duration
@@ -405,6 +406,12 @@ func pushDeletePage(
 			if err := remote.DeleteAttachment(ctx, attachmentID, pageID); err != nil && !errors.Is(err, confluence.ErrNotFound) && !errors.Is(err, confluence.ErrArchived) {
 				return PushCommitPlan{}, fmt.Errorf("delete attachment %s: %w", attachmentID, err)
 			}
+			appendPushDiagnostic(
+				diagnostics,
+				assetPath,
+				"ATTACHMENT_DELETED",
+				fmt.Sprintf("deleted attachment %s during page removal", strings.TrimSpace(attachmentID)),
+			)
 		}
 		delete(state.AttachmentIndex, assetPath)
 	}
@@ -715,9 +722,24 @@ func pushUpsertPage(
 		if _, keep := referencedIDs[attachmentID]; keep {
 			continue
 		}
+		if opts.KeepOrphanAssets {
+			appendPushDiagnostic(
+				diagnostics,
+				stalePath,
+				"ATTACHMENT_PRESERVED",
+				fmt.Sprintf("kept unreferenced attachment %s because --keep-orphan-assets is enabled", attachmentID),
+			)
+			continue
+		}
 		if err := remote.DeleteAttachment(ctx, attachmentID, pageID); err != nil && !errors.Is(err, confluence.ErrNotFound) && !errors.Is(err, confluence.ErrArchived) {
 			return failWithRollback(fmt.Errorf("delete stale attachment %s: %w", attachmentID, err))
 		}
+		appendPushDiagnostic(
+			diagnostics,
+			stalePath,
+			"ATTACHMENT_DELETED",
+			fmt.Sprintf("deleted stale attachment %s", attachmentID),
+		)
 		delete(state.AttachmentIndex, stalePath)
 		delete(attachmentIDByPath, stalePath)
 		touchedAssets = append(touchedAssets, stalePath)
