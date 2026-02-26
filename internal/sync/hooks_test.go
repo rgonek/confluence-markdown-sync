@@ -250,6 +250,49 @@ func TestReverseLinkHookWithGlobalIndex_ResolvesCrossSpaceLink(t *testing.T) {
 	}
 }
 
+func TestReverseLinkHookWithGlobalIndex_ResolvesViaSameFileFallback(t *testing.T) {
+	tmpDir := t.TempDir()
+	engDir := filepath.Join(tmpDir, "Engineering (ENG)")
+	tdDir := filepath.Join(tmpDir, "Technical Docs (TD)")
+	if err := os.MkdirAll(engDir, 0o750); err != nil {
+		t.Fatalf("mkdir eng dir: %v", err)
+	}
+	if err := os.MkdirAll(tdDir, 0o750); err != nil {
+		t.Fatalf("mkdir td dir: %v", err)
+	}
+
+	realTargetPath := filepath.Join(tdDir, "Target Page.md")
+	if err := os.WriteFile(realTargetPath, []byte("target"), 0o600); err != nil {
+		t.Fatalf("write target file: %v", err)
+	}
+
+	aliasPath := filepath.Join(tdDir, "Target Alias.md")
+	if err := os.Link(realTargetPath, aliasPath); err != nil {
+		t.Skipf("hard links are not supported in this environment: %v", err)
+	}
+
+	hook := NewReverseLinkHookWithGlobalIndex(
+		engDir,
+		PageIndex{"index.md": "1"},
+		GlobalPageIndex{"77": aliasPath},
+		"https://example.atlassian.net",
+	)
+
+	out, err := hook(context.Background(), mdconv.LinkParseInput{
+		SourcePath:  filepath.Join(engDir, "index.md"),
+		Destination: "../Technical%20Docs%20(TD)/Target%20Page.md",
+	})
+	if err != nil {
+		t.Fatalf("hook returned error: %v", err)
+	}
+	if !out.Handled {
+		t.Fatal("expected same-file fallback to resolve destination")
+	}
+	if got, want := out.Destination, "https://example.atlassian.net/wiki/pages/viewpage.action?pageId=77"; got != want {
+		t.Fatalf("destination = %q, want %q", got, want)
+	}
+}
+
 func TestReverseMediaHook(t *testing.T) {
 	// Need to create real files for Stat check
 	tmpDir := t.TempDir()

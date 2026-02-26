@@ -305,7 +305,10 @@ func NewReverseLinkHookWithGlobalIndex(spaceDir string, index PageIndex, globalI
 		if !ok {
 			pageID, ok = globalPathIndex[normalizeAbsolutePathKey(destPath)]
 			if !ok {
-				return mdconv.LinkParseOutput{}, mdconv.ErrUnresolved
+				pageID, ok = resolveGlobalPageIDBySameFile(destPath, globalIndex)
+				if !ok {
+					return mdconv.LinkParseOutput{}, mdconv.ErrUnresolved
+				}
 			}
 		}
 
@@ -329,6 +332,40 @@ func decodeMarkdownPath(path string) string {
 		return path
 	}
 	return decoded
+}
+
+func resolveGlobalPageIDBySameFile(destPath string, globalIndex GlobalPageIndex) (string, bool) {
+	destPath = strings.TrimSpace(destPath)
+	if destPath == "" || len(globalIndex) == 0 {
+		return "", false
+	}
+
+	destInfo, err := os.Stat(destPath)
+	if err != nil {
+		return "", false
+	}
+	destKey := normalizeAbsolutePathKey(destPath)
+
+	for pageID, candidatePath := range globalIndex {
+		if strings.TrimSpace(pageID) == "" {
+			continue
+		}
+
+		candidateKey := normalizeAbsolutePathKey(candidatePath)
+		if candidateKey == "" || candidateKey == destKey {
+			continue
+		}
+
+		candidateInfo, err := os.Stat(candidatePath)
+		if err != nil {
+			continue
+		}
+		if os.SameFile(destInfo, candidateInfo) {
+			return pageID, true
+		}
+	}
+
+	return "", false
 }
 
 // NewReverseMediaHook creates a media hook for Markdown -> ADF conversion.
