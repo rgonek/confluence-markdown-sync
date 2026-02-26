@@ -1112,9 +1112,69 @@ func decodeAPIErrorMessage(body []byte) string {
 			return v
 		}
 	}
-	if v, ok := payload["errors"].([]any); ok && len(v) > 0 {
-		if first, ok := v[0].(string); ok {
-			return first
+
+	if msg := decodeErrorsFieldMessage(payload["errors"]); msg != "" {
+		return msg
+	}
+
+	if data, ok := payload["data"].(map[string]any); ok {
+		if msg := decodeErrorsFieldMessage(data["errors"]); msg != "" {
+			return msg
+		}
+	}
+
+	return ""
+}
+
+func decodeErrorsFieldMessage(value any) string {
+	switch v := value.(type) {
+	case []any:
+		if len(v) == 0 {
+			return ""
+		}
+		return decodeErrorItemMessage(v[0])
+	case map[string]any:
+		if msg := decodeErrorItemMessage(v); msg != "" {
+			return msg
+		}
+		for _, child := range v {
+			if msg := decodeErrorsFieldMessage(child); msg != "" {
+				return msg
+			}
+		}
+	}
+	return ""
+}
+
+func decodeErrorItemMessage(value any) string {
+	switch item := value.(type) {
+	case string:
+		return strings.TrimSpace(item)
+	case map[string]any:
+		title := ""
+		if v, ok := item["title"].(string); ok {
+			title = strings.TrimSpace(v)
+		}
+		detail := ""
+		if v, ok := item["detail"].(string); ok {
+			detail = strings.TrimSpace(v)
+		}
+		message := ""
+		if v, ok := item["message"].(string); ok {
+			message = strings.TrimSpace(v)
+		}
+
+		if title != "" && detail != "" {
+			return title + ": " + detail
+		}
+		if title != "" {
+			return title
+		}
+		if message != "" {
+			return message
+		}
+		if detail != "" {
+			return detail
 		}
 	}
 	return ""

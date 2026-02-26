@@ -412,6 +412,7 @@ func runPushDryRun(
 
 	_, _ = fmt.Fprintf(out, "\n[DRY-RUN] push completed: %d page change(s) would be synced\n", len(result.Commits))
 	printPushDiagnostics(out, result.Diagnostics)
+	printPushSyncSummary(out, result.Commits, result.Diagnostics)
 	return nil
 }
 
@@ -657,6 +658,7 @@ func runPushInWorktree(
 	}
 
 	printPushWarningSummary(out, warnings)
+	printPushSyncSummary(out, result.Commits, result.Diagnostics)
 
 	_, _ = fmt.Fprintf(out, "push completed: %d page change(s) synced\n", len(result.Commits))
 	slog.Info("push_sync_result", "space_key", spaceKey, "commit_count", len(result.Commits), "diagnostics", len(result.Diagnostics))
@@ -1244,6 +1246,39 @@ func printPushWarningSummary(out io.Writer, warnings []string) {
 	_, _ = fmt.Fprintln(out, "\nSummary of warnings:")
 	for _, warning := range warnings {
 		_, _ = fmt.Fprintf(out, "  - %s\n", warning)
+	}
+}
+
+func printPushSyncSummary(out io.Writer, commits []syncflow.PushCommitPlan, diagnostics []syncflow.PushDiagnostic) {
+	if len(commits) == 0 && len(diagnostics) == 0 {
+		return
+	}
+
+	deletedPages := 0
+	for _, commit := range commits {
+		if commit.Deleted {
+			deletedPages++
+		}
+	}
+
+	attachmentDeleted := 0
+	attachmentPreserved := 0
+	for _, diag := range diagnostics {
+		switch diag.Code {
+		case "ATTACHMENT_DELETED":
+			attachmentDeleted++
+		case "ATTACHMENT_PRESERVED":
+			attachmentPreserved++
+		}
+	}
+
+	_, _ = fmt.Fprintln(out, "\nSync Summary:")
+	_, _ = fmt.Fprintf(out, "  pages changed: %d (deleted: %d)\n", len(commits), deletedPages)
+	if attachmentDeleted > 0 || attachmentPreserved > 0 {
+		_, _ = fmt.Fprintf(out, "  attachments: deleted %d, preserved %d\n", attachmentDeleted, attachmentPreserved)
+	}
+	if len(diagnostics) > 0 {
+		_, _ = fmt.Fprintf(out, "  diagnostics: %d\n", len(diagnostics))
 	}
 }
 

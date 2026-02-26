@@ -949,6 +949,24 @@ func TestCreateFolder_WithParentID(t *testing.T) {
 	}
 }
 
+func TestDecodeAPIErrorMessage_UsesErrorsObjectTitle(t *testing.T) {
+	body := []byte(`{"errors":[{"status":400,"code":"INVALID_REQUEST_PARAMETER","title":"Provided value for 'id' is not the correct type. Expected type is ContentId","detail":""}]}`)
+
+	got := decodeAPIErrorMessage(body)
+	if !strings.Contains(got, "Expected type is ContentId") {
+		t.Fatalf("decodeAPIErrorMessage() = %q, want error title", got)
+	}
+}
+
+func TestDecodeAPIErrorMessage_UsesNestedDataErrors(t *testing.T) {
+	body := []byte(`{"data":{"errors":[{"message":"ADF payload invalid"}]}}`)
+
+	got := decodeAPIErrorMessage(body)
+	if got != "ADF payload invalid" {
+		t.Fatalf("decodeAPIErrorMessage() = %q, want %q", got, "ADF payload invalid")
+	}
+}
+
 func TestMovePage_PutsToCorrectEndpoint(t *testing.T) {
 	var calledPath string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
