@@ -544,80 +544,89 @@ func runPushInWorktree(
 	}
 
 	printPushDiagnostics(out, result.Diagnostics)
+	finalizePushGit := func() error {
+		for _, commitPlan := range result.Commits {
+			filesToAdd := make([]string, 0, len(commitPlan.StagedPaths))
+			for _, relPath := range commitPlan.StagedPaths {
+				filesToAdd = append(filesToAdd, filepath.Join(wtSpaceDir, relPath))
+			}
 
-	// 7. Commit in Worktree
-	for _, commitPlan := range result.Commits {
-		filesToAdd := make([]string, 0, len(commitPlan.StagedPaths))
-		for _, relPath := range commitPlan.StagedPaths {
-			filesToAdd = append(filesToAdd, filepath.Join(wtSpaceDir, relPath))
-		}
+			repoPaths := make([]string, 0, len(filesToAdd))
+			for _, absPath := range filesToAdd {
+				rel, _ := filepath.Rel(worktreeDir, absPath)
+				repoPaths = append(repoPaths, filepath.ToSlash(rel))
+			}
 
-		repoPaths := make([]string, 0, len(filesToAdd))
-		for _, absPath := range filesToAdd {
-			rel, _ := filepath.Rel(worktreeDir, absPath)
-			repoPaths = append(repoPaths, filepath.ToSlash(rel))
-		}
-
-		addCandidates := make([]string, 0, len(repoPaths))
-		for _, repoPath := range repoPaths {
-			absRepoPath := filepath.Join(worktreeDir, filepath.FromSlash(repoPath))
-			if _, statErr := os.Stat(absRepoPath); os.IsNotExist(statErr) {
-				if _, err := wtClient.Run("rm", "--cached", "--ignore-unmatch", "--", repoPath); err != nil {
-					return fmt.Errorf("git rm failed: %w", err)
+			addCandidates := make([]string, 0, len(repoPaths))
+			for _, repoPath := range repoPaths {
+				absRepoPath := filepath.Join(worktreeDir, filepath.FromSlash(repoPath))
+				if _, statErr := os.Stat(absRepoPath); os.IsNotExist(statErr) {
+					if _, err := wtClient.Run("rm", "--cached", "--ignore-unmatch", "--", repoPath); err != nil {
+						return fmt.Errorf("git rm failed: %w", err)
+					}
+					continue
 				}
-				continue
+				addCandidates = append(addCandidates, repoPath)
 			}
-			addCandidates = append(addCandidates, repoPath)
-		}
 
-		if len(addCandidates) > 0 {
-			addArgs := append([]string{"add", "-A", "--"}, addCandidates...)
-			if _, err := wtClient.Run(addArgs...); err != nil {
-				return fmt.Errorf("git add failed: %w", err)
+			if len(addCandidates) > 0 {
+				addArgs := append([]string{"add", "-A", "--"}, addCandidates...)
+				if _, err := wtClient.Run(addArgs...); err != nil {
+					return fmt.Errorf("git add failed: %w", err)
+				}
+			}
+
+			subject := fmt.Sprintf("Sync %q to Confluence (v%d)", commitPlan.PageTitle, commitPlan.Version)
+			body := fmt.Sprintf(
+				"Page ID: %s\nURL: %s\n\nConfluence-Page-ID: %s\nConfluence-Version: %d\nConfluence-Space-Key: %s\nConfluence-URL: %s",
+				commitPlan.PageID,
+				commitPlan.URL,
+				commitPlan.PageID,
+				commitPlan.Version,
+				commitPlan.SpaceKey,
+				commitPlan.URL,
+			)
+			if err := wtClient.Commit(subject, body); err != nil {
+				return fmt.Errorf("git commit failed: %w", err)
+			}
+
+			if progress == nil {
+				_, _ = fmt.Fprintf(out, "pushed %s (page %s, v%d)\n", commitPlan.Path, commitPlan.PageID, commitPlan.Version)
 			}
 		}
 
-		subject := fmt.Sprintf("Sync %q to Confluence (v%d)", commitPlan.PageTitle, commitPlan.Version)
-		body := fmt.Sprintf(
-			"Page ID: %s\nURL: %s\n\nConfluence-Page-ID: %s\nConfluence-Version: %d\nConfluence-Space-Key: %s\nConfluence-URL: %s",
-			commitPlan.PageID,
-			commitPlan.URL,
-			commitPlan.PageID,
-			commitPlan.Version,
-			commitPlan.SpaceKey,
-			commitPlan.URL,
-		)
-		if err := wtClient.Commit(subject, body); err != nil {
-			return fmt.Errorf("git commit failed: %w", err)
+		if err := gitClient.RemoveWorktree(worktreeDir); err != nil {
+			return fmt.Errorf("remove worktree: %w", err)
 		}
 
-		_, _ = fmt.Fprintf(out, "pushed %s (page %s, v%d)\n", commitPlan.Path, commitPlan.PageID, commitPlan.Version)
+		if err := gitClient.Merge(syncBranchName, ""); err != nil {
+			return fmt.Errorf("merge sync branch: %w", err)
+		}
+
+		refKey := fs.SanitizePathSegment(spaceKey)
+		tagName := fmt.Sprintf("confluence-sync/push/%s/%s", refKey, tsStr)
+		tagMsg := fmt.Sprintf("Confluence push sync for %s at %s", spaceKey, tsStr)
+		if err := gitClient.Tag(tagName, tagMsg); err != nil {
+			_, _ = fmt.Fprintf(out, "warning: failed to create tag: %v\n", err)
+		}
+
+		if err := gitClient.StashPop(*stashRef); err != nil {
+			_, _ = fmt.Fprintf(out, "warning: stash restore had conflicts: %v\n", err)
+		}
+		*stashRef = ""
+
+		return nil
 	}
 
-	// 8. Remove Worktree
-	if err := gitClient.RemoveWorktree(worktreeDir); err != nil {
-		return fmt.Errorf("remove worktree: %w", err)
+	if progress != nil {
+		if err := runWithIndeterminateStatus(out, "Finalizing push", finalizePushGit); err != nil {
+			return err
+		}
+	} else {
+		if err := finalizePushGit(); err != nil {
+			return err
+		}
 	}
-
-	// 9. Merge
-	if err := gitClient.Merge(syncBranchName, ""); err != nil {
-		return fmt.Errorf("merge sync branch: %w", err)
-	}
-
-	// 10. Tag
-	refKey := fs.SanitizePathSegment(spaceKey)
-	tagName := fmt.Sprintf("confluence-sync/push/%s/%s", refKey, tsStr)
-	tagMsg := fmt.Sprintf("Confluence push sync for %s at %s", spaceKey, tsStr)
-	if err := gitClient.Tag(tagName, tagMsg); err != nil {
-		_, _ = fmt.Fprintf(out, "warning: failed to create tag: %v\n", err)
-	}
-
-	// 11. Restore Stash (manual pop to show warning on success)
-	if err := gitClient.StashPop(*stashRef); err != nil {
-		_, _ = fmt.Fprintf(out, "warning: stash restore had conflicts: %v\n", err)
-	}
-	// Clear stashRef so the defer in runPush doesn't try to pop again
-	*stashRef = ""
 
 	if err := fs.SaveState(spaceDir, result.State); err != nil {
 		_, _ = fmt.Fprintf(out, "warning: failed to save local state: %v\n", err)

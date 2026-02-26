@@ -43,3 +43,18 @@ func outputSupportsProgress(out io.Writer) bool {
 	}
 	return term.IsTerminal(int(fileLike.Fd()))
 }
+
+func outputTerminalWidth(out io.Writer) int {
+	if synced, ok := out.(*synchronizedWriter); ok {
+		out = synced.w
+	}
+	fileLike, ok := out.(fdWriter)
+	if !ok {
+		return 0
+	}
+	width, _, err := term.GetSize(int(fileLike.Fd()))
+	if err != nil || width <= 0 {
+		return 0
+	}
+	return width
+}

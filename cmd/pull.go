@@ -209,7 +209,16 @@ func runPull(cmd *cobra.Command, target config.Target) (runErr error) {
 					cleanupFailedPullScope(repoRoot, scopePath)
 				}
 
-				restoreErr := applyAndDropStash(repoRoot, stashRef, scopePath, cmd.InOrStdin(), out)
+				restoreLocalChanges := func() error {
+					return applyAndDropStash(repoRoot, stashRef, scopePath, cmd.InOrStdin(), out)
+				}
+
+				var restoreErr error
+				if progress != nil {
+					restoreErr = runWithIndeterminateStatus(out, "Restoring local workspace", restoreLocalChanges)
+				} else {
+					restoreErr = restoreLocalChanges()
+				}
 				if restoreErr != nil {
 					runErr = errors.Join(runErr, restoreErr)
 				}
@@ -258,32 +267,51 @@ func runPull(cmd *cobra.Command, target config.Target) (runErr error) {
 		_, _ = fmt.Fprintf(out, "warning: %s [%s] %s\n", diag.Path, diag.Code, diag.Message)
 	}
 
-	if _, err := runGit(repoRoot, "add", "--", scopePath); err != nil {
-		return err
+	hasChanges := false
+	tagName := ""
+	finalizePullGit := func() error {
+		if _, err := runGit(repoRoot, "add", "--", scopePath); err != nil {
+			return err
+		}
+
+		var err error
+		hasChanges, err = gitHasScopedStagedChanges(repoRoot, scopePath)
+		if err != nil {
+			return err
+		}
+		if !hasChanges {
+			return nil
+		}
+
+		commitMsg := fmt.Sprintf("Sync from Confluence: [%s] (v%d)", pullCtx.spaceKey, result.MaxVersion)
+		if _, err := runGit(repoRoot, "commit", "-m", commitMsg); err != nil {
+			return err
+		}
+
+		ts := pullStartedAt.UTC().Format("20060102T150405Z")
+		refKey := fs.SanitizePathSegment(pullCtx.spaceKey)
+		tagName = fmt.Sprintf("confluence-sync/pull/%s/%s", refKey, ts)
+		tagMsg := fmt.Sprintf("Confluence pull sync for %s at %s", pullCtx.spaceKey, ts)
+		if _, err := runGit(repoRoot, "tag", "-a", tagName, "-m", tagMsg); err != nil {
+			return err
+		}
+
+		return nil
 	}
 
-	hasChanges, err := gitHasScopedStagedChanges(repoRoot, scopePath)
-	if err != nil {
-		return err
+	if progress != nil {
+		if err := runWithIndeterminateStatus(out, "Finalizing pull", finalizePullGit); err != nil {
+			return err
+		}
+	} else {
+		if err := finalizePullGit(); err != nil {
+			return err
+		}
 	}
 
 	if !hasChanges {
 		_, _ = fmt.Fprintln(out, "pull completed with no scoped changes (no-op)")
 		return nil
-	}
-
-	commitMsg := fmt.Sprintf("Sync from Confluence: [%s] (v%d)", pullCtx.spaceKey, result.MaxVersion)
-	if _, err := runGit(repoRoot, "commit", "-m", commitMsg); err != nil {
-		return err
-	}
-
-	ts := pullStartedAt.UTC().Format("20060102T150405Z")
-	// Use actual SpaceKey for tags, sanitized for safety
-	refKey := fs.SanitizePathSegment(pullCtx.spaceKey)
-	tagName := fmt.Sprintf("confluence-sync/pull/%s/%s", refKey, ts)
-	tagMsg := fmt.Sprintf("Confluence pull sync for %s at %s", pullCtx.spaceKey, ts)
-	if _, err := runGit(repoRoot, "tag", "-a", tagName, "-m", tagMsg); err != nil {
-		return err
 	}
 
 	_, _ = fmt.Fprintf(out, "pull completed: committed and tagged %s\n", tagName)
