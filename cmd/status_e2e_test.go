@@ -8,15 +8,15 @@ import (
 	"testing"
 	"time"
 
-	"github.com/rgonek/confluence-markdown-sync/internal/confluence"
 	"github.com/rgonek/confluence-markdown-sync/internal/config"
+	"github.com/rgonek/confluence-markdown-sync/internal/confluence"
 	"github.com/rgonek/confluence-markdown-sync/internal/fs"
 	"github.com/rgonek/confluence-markdown-sync/internal/git"
 )
 
 func TestCollectLocalStatusChanges_Success(t *testing.T) {
 	tempDir := t.TempDir()
-	
+
 	oldWd, _ := os.Getwd()
 	os.Chdir(tempDir)
 	defer os.Chdir(oldWd)
@@ -26,15 +26,15 @@ func TestCollectLocalStatusChanges_Success(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create client: %v", err)
 	}
-	
+
 	spaceDir := filepath.Join(tempDir, "TEST")
 	os.MkdirAll(spaceDir, 0755)
-	
+
 	os.WriteFile(filepath.Join(spaceDir, "page1.md"), []byte("---\nid: \"1\"\nversion: 1\n---\ntest\n"), 0644)
-	
+
 	client.Run("add", ".")
 	client.Run("commit", "-m", "init")
-	
+
 	tagTime := time.Now().UTC().Format("20060102T150405Z")
 	client.Run("tag", "-a", "confluence-sync/pull/TEST/"+tagTime, "-m", "pull")
 
@@ -48,15 +48,15 @@ func TestCollectLocalStatusChanges_Success(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	
+
 	if len(added) != 1 || filepath.Base(added[0]) != "page2.md" {
 		t.Errorf("expected 1 added file (page2.md), got %v", added)
 	}
-	
+
 	if len(modified) != 1 || filepath.Base(modified[0]) != "page1.md" {
 		t.Errorf("expected 1 modified file (page1.md), got %v", modified)
 	}
-	
+
 	if len(deleted) != 0 {
 		t.Errorf("expected 0 deleted files, got %v", deleted)
 	}
@@ -64,7 +64,7 @@ func TestCollectLocalStatusChanges_Success(t *testing.T) {
 
 func TestBuildStatusReport_Success(t *testing.T) {
 	tempDir := t.TempDir()
-	
+
 	oldWd, _ := os.Getwd()
 	os.Chdir(tempDir)
 	defer os.Chdir(oldWd)
@@ -74,15 +74,15 @@ func TestBuildStatusReport_Success(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create client: %v", err)
 	}
-	
+
 	spaceDir := filepath.Join(tempDir, "TEST")
 	os.MkdirAll(spaceDir, 0755)
-	
+
 	os.WriteFile(filepath.Join(spaceDir, "page1.md"), []byte("---\nid: \"1\"\nversion: 1\n---\ntest\n"), 0644)
-	
+
 	client.Run("add", ".")
 	client.Run("commit", "-m", "init")
-	
+
 	tagTime := time.Now().UTC().Format("20060102T150405Z")
 	client.Run("tag", "-a", "confluence-sync/pull/TEST/"+tagTime, "-m", "pull")
 
@@ -96,14 +96,14 @@ func TestBuildStatusReport_Success(t *testing.T) {
 			NextCursor: "",
 		},
 	}
-	
+
 	state := fs.SpaceState{
 		SpaceKey: "TEST",
 		PagePathIndex: map[string]string{
 			"page1.md": "1",
 		},
 	}
-	
+
 	target := config.Target{Value: "TEST", Mode: config.TargetModeSpace}
 	initialCtx := initialPullContext{
 		spaceDir: spaceDir,
@@ -114,7 +114,7 @@ func TestBuildStatusReport_Success(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	
+
 	if len(report.RemoteAdded) != 1 {
 		t.Errorf("expected 1 remote added, got %v", report.RemoteAdded)
 	}

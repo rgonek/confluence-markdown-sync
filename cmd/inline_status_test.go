@@ -9,7 +9,7 @@ import (
 
 func TestRunWithIndeterminateStatus(t *testing.T) {
 	out := new(bytes.Buffer)
-	
+
 	// A quick successful run
 	err := runWithIndeterminateStatus(out, "Doing something...", func() error {
 		time.Sleep(10 * time.Millisecond)
@@ -41,10 +41,10 @@ func TestStartInlineSpinner_SlowExecution(t *testing.T) {
 	// Wait long enough for the spinner ticker to fire multiple times
 	time.Sleep(150 * time.Millisecond)
 	cancel()
-	
+
 	// Wait a moment for goroutine to fully stop to prevent data races in checks
 	time.Sleep(10 * time.Millisecond)
-	
+
 	output := out.String()
 	// Should contain carriage returns to reset line
 	if !bytes.Contains([]byte(output), []byte("\r")) {

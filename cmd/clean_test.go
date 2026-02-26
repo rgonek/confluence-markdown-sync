@@ -54,7 +54,7 @@ func TestCleanCmd(t *testing.T) {
 		if err != nil {
 			t.Fatalf("failed to create state dir: %v", err)
 		}
-		
+
 		state := fs.SpaceState{SpaceKey: "SPACE"}
 		err = fs.SaveState(filepath.Dir(stateFile), state)
 		if err != nil {
@@ -66,7 +66,7 @@ func TestCleanCmd(t *testing.T) {
 		if err != nil {
 			t.Fatalf("expected no error, got %v", err)
 		}
-		
+
 		if !bytes.Contains(out.Bytes(), []byte("Normalized")) {
 			t.Fatalf("expected 'Normalized' in output, got %q", out.String())
 		}
@@ -102,7 +102,7 @@ func TestCleanCmd(t *testing.T) {
 			t.Fatalf("expected error, got nil")
 		}
 	})
-	
+
 	t.Run("confirmCleanActions interactive yes", func(t *testing.T) {
 		flagYes = false
 		flagNonInteractive = false

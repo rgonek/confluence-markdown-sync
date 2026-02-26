@@ -21,26 +21,26 @@ func TestStatusCmd(t *testing.T) {
 
 	t.Run("printStatusSection and printStatusList", func(t *testing.T) {
 		out := new(bytes.Buffer)
-		
+
 		added := []string{"add1.md"}
 		modified := []string{"mod1.md", "mod2.md"}
 		deleted := []string{}
-		
+
 		printStatusSection(out, "Test Section", added, modified, deleted)
-		
+
 		expectedSnippet := "Test Section"
 		if !bytes.Contains(out.Bytes(), []byte(expectedSnippet)) {
 			t.Fatalf("output missing expected text %q: %s", expectedSnippet, out.String())
 		}
-		
+
 		if !bytes.Contains(out.Bytes(), []byte("added (1)")) {
 			t.Fatalf("output missing expected text 'added (1)': %s", out.String())
 		}
-		
+
 		if !bytes.Contains(out.Bytes(), []byte("modified (2)")) {
 			t.Fatalf("output missing expected text 'modified (2)': %s", out.String())
 		}
-		
+
 		if !bytes.Contains(out.Bytes(), []byte("deleted (0)")) {
 			t.Fatalf("output missing expected text 'deleted (0)': %s", out.String())
 		}
@@ -77,10 +77,10 @@ func TestListAllPagesForStatus(t *testing.T) {
 			NextCursor: "",
 		},
 	}
-	
+
 	ctx := context.Background()
 	opts := confluence.PageListOptions{SpaceID: "123"}
-	
+
 	pages, err := listAllPagesForStatus(ctx, mock, opts)
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
