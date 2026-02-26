@@ -90,6 +90,10 @@ func runValidateCommand(cmd *cobra.Command, target config.Target) (runErr error)
 }
 
 func runValidateTargetWithContext(ctx context.Context, out io.Writer, target config.Target) error {
+	if err := ensureWorkspaceSyncReady("validate"); err != nil {
+		return err
+	}
+
 	targetCtx, err := resolveValidateTargetContext(target)
 	if err != nil {
 		return err
@@ -105,7 +109,7 @@ func runValidateTargetWithContext(ctx context.Context, out io.Writer, target con
 	}
 
 	_, _ = fmt.Fprintf(out, "Building index for space: %s\n", targetCtx.spaceDir)
-	index, err := syncflow.BuildPageIndex(targetCtx.spaceDir)
+	index, err := syncflow.BuildPageIndexWithPending(targetCtx.spaceDir, targetCtx.files)
 	if err != nil {
 		return fmt.Errorf("failed to build page index: %w", err)
 	}

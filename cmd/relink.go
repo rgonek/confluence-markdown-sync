@@ -34,6 +34,10 @@ If omitted, relink will attempt to resolve all possible links across all managed
 }
 
 func runRelink(cmd *cobra.Command, target string) error {
+	if err := ensureWorkspaceSyncReady("relink"); err != nil {
+		return err
+	}
+
 	repoRoot, err := gitRepoRoot()
 	if err != nil {
 		return err

@@ -55,6 +55,63 @@ func BuildPageIndex(spaceDir string) (PageIndex, error) {
 	return index, err
 }
 
+// BuildPageIndexWithPending extends BuildPageIndex by assigning deterministic
+// placeholder IDs for in-scope markdown files that do not yet have frontmatter id values.
+func BuildPageIndexWithPending(spaceDir string, files []string) (PageIndex, error) {
+	index, err := BuildPageIndex(spaceDir)
+	if err != nil {
+		return nil, err
+	}
+	if err := SeedPendingPageIDsForFiles(spaceDir, index, files); err != nil {
+		return nil, err
+	}
+	return index, nil
+}
+
+// SeedPendingPageIDsForFiles fills missing page IDs with deterministic placeholders.
+// Existing non-empty IDs are preserved.
+func SeedPendingPageIDsForFiles(spaceDir string, index PageIndex, files []string) error {
+	if index == nil {
+		return nil
+	}
+
+	for _, file := range files {
+		path := strings.TrimSpace(file)
+		if path == "" {
+			continue
+		}
+		if !filepath.IsAbs(path) {
+			path = filepath.Join(spaceDir, filepath.FromSlash(path))
+		}
+
+		fm, err := fs.ReadFrontmatter(path)
+		if err != nil {
+			return err
+		}
+
+		relPath, err := filepath.Rel(spaceDir, path)
+		if err != nil {
+			return err
+		}
+		relPath = normalizeRelPath(relPath)
+		if relPath == "" {
+			continue
+		}
+
+		if pageID := strings.TrimSpace(fm.ID); pageID != "" {
+			index[relPath] = pageID
+			continue
+		}
+
+		if strings.TrimSpace(index[relPath]) != "" {
+			continue
+		}
+		index[relPath] = pendingPageID(relPath)
+	}
+
+	return nil
+}
+
 // BuildGlobalPageIndex aggregates paths from all discovered spaces in root.
 func BuildGlobalPageIndex(root string) (GlobalPageIndex, error) {
 	global := make(GlobalPageIndex)

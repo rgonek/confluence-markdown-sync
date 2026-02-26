@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"bufio"
 	"context"
 	"errors"
 	"fmt"
@@ -74,6 +73,9 @@ func runPull(cmd *cobra.Command, target config.Target) (runErr error) {
 	out := ensureSynchronizedCmdOutput(cmd)
 	_, restoreLogger := beginCommandRun("pull")
 	defer restoreLogger()
+	if err := ensureWorkspaceSyncReady("pull"); err != nil {
+		return err
+	}
 
 	startedAt := time.Now()
 	telemetrySpaceKey := ""
@@ -187,7 +189,7 @@ func runPull(cmd *cobra.Command, target config.Target) (runErr error) {
 	if scopeDirExisted {
 		stashRef, err = stashScopeIfDirty(repoRoot, scopePath, pullCtx.spaceKey, pullStartedAt)
 		if err != nil {
-			return err
+			return translateWorkspaceGitError(err, "pull")
 		}
 		if stashRef != "" {
 			defer func() {
@@ -696,25 +698,36 @@ func applyAndDropStash(repoRoot, stashRef, scopePath string, in io.Reader, out i
 	}
 	outStr, err := runGit(repoRoot, "stash", "apply", "--index", stashRef)
 	if err != nil {
-		// Check if it's a conflict
-		if strings.Contains(err.Error(), "conflict") || strings.Contains(outStr, "CONFLICT") {
+		if isStashConflictError(err, outStr) {
 			return handlePullConflict(repoRoot, stashRef, scopePath, in, out)
 		}
-		return fmt.Errorf("local changes could not be automatically merged with remote updates. Please resolve the conflicts in the affected files and then run 'git stash drop %s' to clean up. Error: %w", stashRef, err)
+		return fmt.Errorf(
+			"your workspace is currently in a syncing state and could not restore local changes automatically. finish reconciling pending files, then run pull again",
+		)
 	}
 	if _, err := runGit(repoRoot, "stash", "drop", stashRef); err != nil {
-		return fmt.Errorf("restored stash but failed to drop %s: %w", stashRef, err)
+		return fmt.Errorf("local changes were restored, but cleanup could not complete automatically")
 	}
 	return nil
 }
 
 func handlePullConflict(repoRoot, stashRef, scopePath string, in io.Reader, out io.Writer) error {
+	conflictedPaths, err := listUnmergedPaths(repoRoot, scopePath)
+	if err != nil {
+		return fmt.Errorf("identify conflicted files: %w", err)
+	}
+	if len(conflictedPaths) == 0 {
+		return fmt.Errorf("the workspace is in a syncing state; finish reconciling pending files before running pull again")
+	}
+
 	if flagNonInteractive || flagYes {
-		return fmt.Errorf("local changes could not be automatically merged with remote updates (CONFLICT). Please resolve the conflicts in the affected files and then run 'git stash drop %s' to clean up", stashRef)
+		return fmt.Errorf(
+			"a sync conflict needs your choice (keep local, keep website, or keep both), but interactive input is disabled. rerun without --non-interactive to continue",
+		)
 	}
 
 	const (
-		choiceKeepBoth = "keep"
+		choiceKeepBoth = "both"
 		choiceRemote   = "remote"
 		choiceLocal    = "local"
 	)
@@ -725,11 +738,11 @@ func handlePullConflict(repoRoot, stashRef, scopePath string, in io.Reader, out 
 			huh.NewGroup(
 				huh.NewSelect[string]().
 					Title("⚠️  CONFLICT DETECTED").
-					Description("Local changes could not be automatically merged with remote updates.\nHow would you like to proceed?").
+					Description("Your local edits and the latest pulled content conflict.\nChoose how to continue:").
 					Options(
-						huh.NewOption("Keep both (add conflict markers to files) — RECOMMENDED", choiceKeepBoth),
-						huh.NewOption("Use Remote version (discard my local changes)", choiceRemote),
-						huh.NewOption("Use Local version (overwrite remote updates)", choiceLocal),
+						huh.NewOption("[C] Keep both (save local backup)", choiceKeepBoth),
+						huh.NewOption("[B] Take website version", choiceRemote),
+						huh.NewOption("[A] Keep my local version", choiceLocal),
 					).
 					Value(&choice),
 			),
@@ -737,61 +750,189 @@ func handlePullConflict(repoRoot, stashRef, scopePath string, in io.Reader, out 
 		if err := form.Run(); err != nil {
 			return err
 		}
-		return applyPullConflictChoice(choice, repoRoot, stashRef, scopePath, out)
+		return applyPullConflictChoice(choice, repoRoot, stashRef, scopePath, conflictedPaths, out)
 	}
 
 	// Plain-text fallback for non-TTY environments.
 	_, _ = fmt.Fprintln(out, "\n"+warningStyle.Render("⚠️  CONFLICT DETECTED"))
-	_, _ = fmt.Fprintln(out, "Local changes could not be automatically merged with remote updates.")
-	_, _ = fmt.Fprintln(out, "How would you like to proceed?")
-	_, _ = fmt.Fprintln(out, " [1] Keep both (add conflict markers to files) - RECOMMENDED")
-	_, _ = fmt.Fprintln(out, " [2] Use Remote version (discard my local changes for these files)")
-	_, _ = fmt.Fprintln(out, " [3] Use Local version (overwrite remote updates with my local changes)")
-	_, _ = fmt.Fprint(out, "\nChoice [1/2/3]: ")
+	_, _ = fmt.Fprintln(out, "Your local edits and the latest pulled content conflict.")
+	_, _ = fmt.Fprintln(out, " [A] Keep my local version (overwrite website on next push)")
+	_, _ = fmt.Fprintln(out, " [B] Take the website version (discard my local edits for conflicted files)")
+	_, _ = fmt.Fprintln(out, " [C] Keep both (save my local edits as separate backup files)")
+	_, _ = fmt.Fprint(out, "\nChoice [A/B/C] (default C): ")
 
-	scanner := bufio.NewScanner(in)
-	if !scanner.Scan() {
-		return fmt.Errorf("failed to read user input")
+	rawChoice, err := readPromptLine(in)
+	if err != nil {
+		return err
 	}
-	rawChoice := strings.TrimSpace(scanner.Text())
+
 	var choice string
-	switch rawChoice {
-	case "2":
-		choice = choiceRemote
-	case "3":
+	switch strings.ToLower(strings.TrimSpace(rawChoice)) {
+	case "a", "local", "keep-local":
 		choice = choiceLocal
+	case "b", "remote", "website", "take-website":
+		choice = choiceRemote
 	default:
 		choice = choiceKeepBoth
 	}
-	return applyPullConflictChoice(choice, repoRoot, stashRef, scopePath, out)
+	return applyPullConflictChoice(choice, repoRoot, stashRef, scopePath, conflictedPaths, out)
 }
 
-func applyPullConflictChoice(choice, repoRoot, stashRef, scopePath string, out io.Writer) error {
-	switch choice {
-	case "remote":
-		_, _ = fmt.Fprintln(out, "Discarding local changes...")
-		_, err := runGit(repoRoot, "checkout", "HEAD", "--", scopePath)
-		if err != nil {
-			return fmt.Errorf("failed to discard local changes: %w", err)
+func applyPullConflictChoice(choice, repoRoot, stashRef, scopePath string, conflictedPaths []string, out io.Writer) error {
+	resolveWithSide := func(side string) error {
+		for _, repoPath := range conflictedPaths {
+			if _, err := runGit(repoRoot, "checkout", "--"+side, "--", repoPath); err != nil {
+				return err
+			}
+			if _, err := runGit(repoRoot, "add", "--", repoPath); err != nil {
+				return err
+			}
 		}
-		_, _ = runGit(repoRoot, "stash", "drop", stashRef)
-		_, _ = fmt.Fprintln(out, successStyle.Render("Local changes discarded. Remote version kept."))
-		return nil
-	case "local":
-		_, _ = fmt.Fprintln(out, "Keeping local version...")
-		_, err := runGit(repoRoot, "checkout", stashRef, "--", scopePath)
-		if err != nil {
-			return fmt.Errorf("failed to keep local version: %w", err)
+
+		if _, err := runGit(repoRoot, "reset", "--", scopePath); err != nil {
+			return err
 		}
-		_, _ = runGit(repoRoot, "stash", "drop", stashRef)
-		_, _ = fmt.Fprintln(out, successStyle.Render("Remote updates overwritten by local version."))
-		return nil
-	default: // "keep"
-		_, _ = fmt.Fprintln(out, warningStyle.Render("Conflict markers kept."))
-		_, _ = fmt.Fprintln(out, "Resolve each conflict block by choosing the local or remote lines, then save the file(s).")
-		_, _ = fmt.Fprintf(out, "After resolving files, run 'git add <file>' for each resolved file and then run 'git stash drop %s'.\n", stashRef)
+
+		remaining, err := listUnmergedPaths(repoRoot, scopePath)
+		if err != nil {
+			return err
+		}
+		if len(remaining) > 0 {
+			return fmt.Errorf("some conflicted files still need manual reconciliation")
+		}
 		return nil
 	}
+
+	createBackupCopy := func(repoPath string) (string, error) {
+		localRaw, err := runGit(repoRoot, "show", fmt.Sprintf("%s:%s", stashRef, repoPath))
+		if err != nil {
+			return "", err
+		}
+
+		backupRepoPath, err := makeConflictBackupPath(repoRoot, repoPath, "My Local Changes")
+		if err != nil {
+			return "", err
+		}
+		backupAbsPath := filepath.Join(repoRoot, filepath.FromSlash(backupRepoPath))
+		if err := os.MkdirAll(filepath.Dir(backupAbsPath), 0o750); err != nil {
+			return "", err
+		}
+		if err := os.WriteFile(backupAbsPath, []byte(localRaw), 0o600); err != nil {
+			return "", err
+		}
+
+		return backupRepoPath, nil
+	}
+
+	switch choice {
+	case "remote":
+		_, _ = fmt.Fprintln(out, "Keeping website versions for conflicted files...")
+		if err := resolveWithSide("ours"); err != nil {
+			return fmt.Errorf("could not keep website versions: %w", err)
+		}
+		if _, err := runGit(repoRoot, "stash", "drop", stashRef); err != nil {
+			return fmt.Errorf("kept website versions, but cleanup could not finish automatically")
+		}
+		_, _ = fmt.Fprintln(out, successStyle.Render("Website version kept for conflicted files."))
+		return nil
+	case "local":
+		_, _ = fmt.Fprintln(out, "Keeping local versions for conflicted files...")
+		if err := resolveWithSide("theirs"); err != nil {
+			return fmt.Errorf("could not keep local versions: %w", err)
+		}
+		if _, err := runGit(repoRoot, "stash", "drop", stashRef); err != nil {
+			return fmt.Errorf("kept local versions, but cleanup could not finish automatically")
+		}
+		_, _ = fmt.Fprintln(out, successStyle.Render("Local version kept for conflicted files."))
+		return nil
+	default: // "both"
+		for _, repoPath := range conflictedPaths {
+			backupPath, backupErr := createBackupCopy(repoPath)
+			if backupErr != nil {
+				return fmt.Errorf("save local backup for %s: %w", repoPath, backupErr)
+			}
+			_, _ = fmt.Fprintf(out,
+				"Conflict found in %q. Saved local edits as %q. Copy your changes into the main file when ready.\n",
+				repoPath,
+				backupPath,
+			)
+		}
+
+		if err := resolveWithSide("ours"); err != nil {
+			return fmt.Errorf("restore website versions for keep-both flow: %w", err)
+		}
+		if _, err := runGit(repoRoot, "stash", "drop", stashRef); err != nil {
+			return fmt.Errorf("created backup files, but cleanup could not finish automatically")
+		}
+
+		_, _ = fmt.Fprintln(out, successStyle.Render("Kept both versions: website file remains primary, local edits were saved separately."))
+		return nil
+	}
+}
+
+func isStashConflictError(err error, output string) bool {
+	if err == nil {
+		return false
+	}
+	combined := strings.ToLower(strings.TrimSpace(err.Error() + "\n" + output))
+	return strings.Contains(combined, "conflict") ||
+		strings.Contains(combined, "unmerged") ||
+		strings.Contains(combined, "needs merge")
+}
+
+func listUnmergedPaths(repoRoot, scopePath string) ([]string, error) {
+	raw, err := runGit(repoRoot, "diff", "--name-only", "--diff-filter=U", "--", scopePath)
+	if err != nil {
+		return nil, err
+	}
+
+	paths := make([]string, 0)
+	for _, line := range strings.Split(strings.ReplaceAll(raw, "\r\n", "\n"), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		paths = append(paths, filepath.ToSlash(line))
+	}
+	return paths, nil
+}
+
+func makeConflictBackupPath(repoRoot, repoPath, label string) (string, error) {
+	repoPath = filepath.ToSlash(filepath.Clean(strings.TrimSpace(repoPath)))
+	if repoPath == "" || repoPath == "." {
+		return "", fmt.Errorf("invalid conflicted path")
+	}
+
+	dir := filepath.ToSlash(filepath.Dir(repoPath))
+	base := filepath.Base(repoPath)
+	ext := filepath.Ext(base)
+	stem := strings.TrimSuffix(base, ext)
+	if stem == "" {
+		stem = "file"
+	}
+
+	suffix := strings.TrimSpace(label)
+	if suffix == "" {
+		suffix = "Conflict"
+	}
+
+	for i := 1; i <= 1000; i++ {
+		candidateStem := fmt.Sprintf("%s (%s)", stem, suffix)
+		if i > 1 {
+			candidateStem = fmt.Sprintf("%s (%s %d)", stem, suffix, i)
+		}
+
+		candidate := candidateStem + ext
+		if dir != "." && dir != "" {
+			candidate = filepath.ToSlash(filepath.Join(dir, candidate))
+		}
+
+		if _, err := os.Stat(filepath.Join(repoRoot, filepath.FromSlash(candidate))); os.IsNotExist(err) {
+			return candidate, nil
+		}
+	}
+
+	return "", fmt.Errorf("unable to allocate conflict backup path for %s", repoPath)
 }
 
 func gitHasScopedStagedChanges(repoRoot, scopePath string) (bool, error) {

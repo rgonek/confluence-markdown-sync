@@ -32,6 +32,7 @@ var newPushRemote = func(cfg *config.Config) (syncflow.PushRemote, error) {
 }
 
 var flagPushPreflight bool
+var flagPushKeepOrphanAssets bool
 var flagArchiveTaskTimeout = confluence.DefaultArchiveTaskTimeout
 var flagArchiveTaskPollInterval = confluence.DefaultArchiveTaskPollInterval
 
@@ -63,6 +64,7 @@ It uses an isolated worktree and a temporary branch to ensure safety.`,
 	}
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Simulate the push without modifying Confluence or local Git state")
 	cmd.Flags().BoolVar(&flagPushPreflight, "preflight", false, "Show a concise push plan (changes and validation) without remote writes")
+	cmd.Flags().BoolVar(&flagPushKeepOrphanAssets, "keep-orphan-assets", false, "Keep unreferenced attachments instead of deleting them during push")
 	cmd.Flags().DurationVar(&flagArchiveTaskTimeout, "archive-task-timeout", confluence.DefaultArchiveTaskTimeout, "Max time to wait for Confluence archive long-task completion")
 	cmd.Flags().DurationVar(&flagArchiveTaskPollInterval, "archive-task-poll-interval", confluence.DefaultArchiveTaskPollInterval, "Polling interval while waiting for archive long-task completion")
 	cmd.Flags().BoolVarP(&flagYes, "yes", "y", false, "Auto-approve safety confirmations")
@@ -88,6 +90,9 @@ func runPush(cmd *cobra.Command, target config.Target, onConflict string, dryRun
 	out := ensureSynchronizedCmdOutput(cmd)
 	_, restoreLogger := beginCommandRun("push")
 	defer restoreLogger()
+	if err := ensureWorkspaceSyncReady("push"); err != nil {
+		return err
+	}
 
 	preflight := flagPushPreflight
 	startedAt := time.Now()
@@ -207,7 +212,7 @@ func runPush(cmd *cobra.Command, target config.Target, onConflict string, dryRun
 	// 1. Capture Snapshot
 	stashRef, err := gitClient.StashScopeIfDirty(spaceScopePath, spaceKey, ts)
 	if err != nil {
-		return fmt.Errorf("stash failed: %w", err)
+		return translateWorkspaceGitError(fmt.Errorf("stash failed: %w", err), "push")
 	}
 	defer func() {
 		if stashRef != "" {
@@ -390,6 +395,7 @@ func runPushDryRun(
 		State:               state,
 		Changes:             syncChanges,
 		ConflictPolicy:      toSyncConflictPolicy(onConflict),
+		KeepOrphanAssets:    flagPushKeepOrphanAssets,
 		DryRun:              true,
 		ArchiveTimeout:      normalizedArchiveTaskTimeout(),
 		ArchivePollInterval: normalizedArchiveTaskPollInterval(),
@@ -406,6 +412,7 @@ func runPushDryRun(
 
 	_, _ = fmt.Fprintf(out, "\n[DRY-RUN] push completed: %d page change(s) would be synced\n", len(result.Commits))
 	printPushDiagnostics(out, result.Diagnostics)
+	printPushSyncSummary(out, result.Commits, result.Diagnostics)
 	return nil
 }
 
@@ -519,6 +526,7 @@ func runPushInWorktree(
 		GlobalPageIndex:     globalPageIndex,
 		Changes:             syncChanges,
 		ConflictPolicy:      toSyncConflictPolicy(onConflict),
+		KeepOrphanAssets:    flagPushKeepOrphanAssets,
 		ArchiveTimeout:      normalizedArchiveTaskTimeout(),
 		ArchivePollInterval: normalizedArchiveTaskPollInterval(),
 		Progress:            progress,
@@ -650,6 +658,7 @@ func runPushInWorktree(
 	}
 
 	printPushWarningSummary(out, warnings)
+	printPushSyncSummary(out, result.Commits, result.Diagnostics)
 
 	_, _ = fmt.Fprintf(out, "push completed: %d page change(s) synced\n", len(result.Commits))
 	slog.Info("push_sync_result", "space_key", spaceKey, "commit_count", len(result.Commits), "diagnostics", len(result.Diagnostics))
@@ -1237,6 +1246,39 @@ func printPushWarningSummary(out io.Writer, warnings []string) {
 	_, _ = fmt.Fprintln(out, "\nSummary of warnings:")
 	for _, warning := range warnings {
 		_, _ = fmt.Fprintf(out, "  - %s\n", warning)
+	}
+}
+
+func printPushSyncSummary(out io.Writer, commits []syncflow.PushCommitPlan, diagnostics []syncflow.PushDiagnostic) {
+	if len(commits) == 0 && len(diagnostics) == 0 {
+		return
+	}
+
+	deletedPages := 0
+	for _, commit := range commits {
+		if commit.Deleted {
+			deletedPages++
+		}
+	}
+
+	attachmentDeleted := 0
+	attachmentPreserved := 0
+	for _, diag := range diagnostics {
+		switch diag.Code {
+		case "ATTACHMENT_DELETED":
+			attachmentDeleted++
+		case "ATTACHMENT_PRESERVED":
+			attachmentPreserved++
+		}
+	}
+
+	_, _ = fmt.Fprintln(out, "\nSync Summary:")
+	_, _ = fmt.Fprintf(out, "  pages changed: %d (deleted: %d)\n", len(commits), deletedPages)
+	if attachmentDeleted > 0 || attachmentPreserved > 0 {
+		_, _ = fmt.Fprintf(out, "  attachments: deleted %d, preserved %d\n", attachmentDeleted, attachmentPreserved)
+	}
+	if len(diagnostics) > 0 {
+		_, _ = fmt.Fprintf(out, "  diagnostics: %d\n", len(diagnostics))
 	}
 }
 

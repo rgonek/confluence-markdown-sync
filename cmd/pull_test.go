@@ -420,6 +420,75 @@ func TestIsPullGeneratedPath(t *testing.T) {
 	}
 }
 
+func TestApplyAndDropStash_KeepBothCreatesSideBySideConflictCopy(t *testing.T) {
+	runParallelCommandTest(t)
+
+	repo := t.TempDir()
+	setupGitRepo(t, repo)
+
+	spaceDir := filepath.Join(repo, "Engineering (ENG)")
+	if err := os.MkdirAll(spaceDir, 0o750); err != nil {
+		t.Fatalf("mkdir space dir: %v", err)
+	}
+
+	repoPath := filepath.ToSlash(filepath.Join("Engineering (ENG)", "Page.md"))
+	mainFile := filepath.Join(spaceDir, "Page.md")
+	if err := os.WriteFile(mainFile, []byte("base\n"), 0o600); err != nil {
+		t.Fatalf("write base file: %v", err)
+	}
+
+	runGitForTest(t, repo, "add", ".")
+	runGitForTest(t, repo, "commit", "-m", "baseline")
+
+	if err := os.WriteFile(mainFile, []byte("local edit\n"), 0o600); err != nil {
+		t.Fatalf("write local edit: %v", err)
+	}
+	runGitForTest(t, repo, "stash", "push", "--include-untracked", "-m", "local", "--", repoPath)
+	stashRef := strings.TrimSpace(runGitForTest(t, repo, "stash", "list", "-1", "--format=%gd"))
+	if stashRef == "" {
+		t.Fatal("expected stash ref")
+	}
+
+	if err := os.WriteFile(mainFile, []byte("website edit\n"), 0o600); err != nil {
+		t.Fatalf("write website edit: %v", err)
+	}
+	runGitForTest(t, repo, "add", repoPath)
+	runGitForTest(t, repo, "commit", "-m", "website update")
+
+	setAutomationFlags(t, false, false)
+	out := &bytes.Buffer{}
+	if err := applyAndDropStash(repo, stashRef, filepath.ToSlash(filepath.Base(spaceDir)), strings.NewReader("c\n"), out); err != nil {
+		t.Fatalf("applyAndDropStash() error: %v", err)
+	}
+
+	mainRaw, err := os.ReadFile(mainFile) //nolint:gosec // test path is created under t.TempDir
+	if err != nil {
+		t.Fatalf("read main file: %v", err)
+	}
+	if strings.Contains(string(mainRaw), "<<<<<<<") {
+		t.Fatalf("expected no conflict markers in main file, got:\n%s", string(mainRaw))
+	}
+	if !strings.Contains(string(mainRaw), "website edit") {
+		t.Fatalf("expected main file to keep website version, got:\n%s", string(mainRaw))
+	}
+
+	backupPath := filepath.Join(spaceDir, "Page (My Local Changes).md")
+	backupRaw, err := os.ReadFile(backupPath) //nolint:gosec // test path is created under t.TempDir
+	if err != nil {
+		t.Fatalf("read backup file: %v", err)
+	}
+	if !strings.Contains(string(backupRaw), "local edit") {
+		t.Fatalf("expected backup file to preserve local edits, got:\n%s", string(backupRaw))
+	}
+
+	if unmerged := strings.TrimSpace(runGitForTest(t, repo, "diff", "--name-only", "--diff-filter=U")); unmerged != "" {
+		t.Fatalf("expected no unmerged paths after keep-both flow, got %q", unmerged)
+	}
+	if stashList := strings.TrimSpace(runGitForTest(t, repo, "stash", "list")); stashList != "" {
+		t.Fatalf("expected stash to be dropped, got %q", stashList)
+	}
+}
+
 func TestRunPull_NoopDoesNotCreateTag(t *testing.T) {
 	runParallelCommandTest(t)
 
