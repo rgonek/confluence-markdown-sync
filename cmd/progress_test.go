@@ -71,3 +71,51 @@ func TestConsoleProgress_SetTotalResetsCount(t *testing.T) {
 		t.Fatalf("total = %d, want 20", p.model.total)
 	}
 }
+
+func TestConsoleProgress_ViewKeepsProgressPrefixPosition(t *testing.T) {
+	out := &bytes.Buffer{}
+	p := newConsoleProgress(out, "Syncing")
+	p.SetTotal(100)
+	p.Add(10)
+
+	p.SetCurrentItem("short.md")
+	shortView := p.model.View()
+
+	p.SetCurrentItem(strings.Repeat("very-long-item-name-", 8))
+	longView := p.model.View()
+
+	const token = "(10/100)"
+	shortIdx := strings.Index(shortView, token)
+	if shortIdx < 0 {
+		t.Fatalf("expected short view to include %q, got %q", token, shortView)
+	}
+	longIdx := strings.Index(longView, token)
+	if longIdx < 0 {
+		t.Fatalf("expected long view to include %q, got %q", token, longView)
+	}
+
+	if shortIdx != longIdx {
+		t.Fatalf("progress prefix moved when item length changed: short=%d long=%d", shortIdx, longIdx)
+	}
+}
+
+func TestProgressBarWidthForTerminal(t *testing.T) {
+	cases := []struct {
+		name         string
+		terminalWide int
+		want         int
+	}{
+		{name: "fallback", terminalWide: 0, want: progressBarDefaultWidth},
+		{name: "minimum", terminalWide: 24, want: progressBarMinWidth},
+		{name: "scaled", terminalWide: 90, want: 30},
+		{name: "maximum", terminalWide: 300, want: progressBarMaxWidth},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := progressBarWidthForTerminal(tc.terminalWide); got != tc.want {
+				t.Fatalf("progressBarWidthForTerminal(%d) = %d, want %d", tc.terminalWide, got, tc.want)
+			}
+		})
+	}
+}
