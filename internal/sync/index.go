@@ -3,6 +3,7 @@ package sync
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/rgonek/confluence-markdown-sync/internal/fs"
@@ -72,4 +73,44 @@ func BuildGlobalPageIndex(root string) (GlobalPageIndex, error) {
 		}
 	}
 	return global, nil
+}
+
+// BuildGlobalPathToPageIDIndex aggregates page IDs keyed by absolute file path.
+func BuildGlobalPathToPageIDIndex(root string) (map[string]string, error) {
+	globalByID, err := BuildGlobalPageIndex(root)
+	if err != nil {
+		return nil, err
+	}
+	return invertGlobalPageIndex(globalByID), nil
+}
+
+func invertGlobalPageIndex(index GlobalPageIndex) map[string]string {
+	out := make(map[string]string, len(index))
+	for pageID, rawPath := range index {
+		pageID = strings.TrimSpace(pageID)
+		if pageID == "" {
+			continue
+		}
+
+		pathKey := normalizeAbsolutePathKey(rawPath)
+		if pathKey == "" {
+			continue
+		}
+		out[pathKey] = pageID
+	}
+	return out
+}
+
+func normalizeAbsolutePathKey(path string) string {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return ""
+	}
+
+	path = filepath.Clean(path)
+	path = filepath.ToSlash(path)
+	if runtime.GOOS == "windows" {
+		path = strings.ToLower(path)
+	}
+	return path
 }

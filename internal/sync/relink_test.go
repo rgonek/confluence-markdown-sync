@@ -142,6 +142,36 @@ func TestResolveLinksInFile_PreservesAnchorAndTitle(t *testing.T) {
 	}
 }
 
+func TestResolveLinksInFile_EncodesSpacesInRelativePath(t *testing.T) {
+	tmpDir := t.TempDir()
+	sourcePath := filepath.Join(tmpDir, "source.md")
+	targetPath := filepath.Join(tmpDir, "Target Page.md")
+
+	content := `[spec](https://example.atlassian.net/wiki/pages/viewpage.action?pageId=456)`
+	if err := os.WriteFile(sourcePath, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(targetPath, []byte("target"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	changed, count, err := ResolveLinksInFile(sourcePath, GlobalPageIndex{"456": targetPath}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !changed || count != 1 {
+		t.Fatalf("changed=%v count=%d, want changed=true count=1", changed, count)
+	}
+
+	raw, err := os.ReadFile(sourcePath) //nolint:gosec // test file path is controlled in temp dir
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := string(raw), `[spec](Target%20Page.md)`; got != want {
+		t.Fatalf("unexpected content: got %q want %q", got, want)
+	}
+}
+
 func TestResolveLinksInFile_HandlesEscapedAndNestedBracketLabels(t *testing.T) {
 	tmpDir := t.TempDir()
 	sourcePath := filepath.Join(tmpDir, "source.md")

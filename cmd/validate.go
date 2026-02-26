@@ -110,6 +110,16 @@ func runValidateTargetWithContext(ctx context.Context, out io.Writer, target con
 		return fmt.Errorf("failed to build page index: %w", err)
 	}
 
+	var globalIndex syncflow.GlobalPageIndex
+	globalIndexRoot := filepath.Dir(targetCtx.spaceDir)
+	if repoRoot, rootErr := gitRepoRoot(); rootErr == nil {
+		globalIndexRoot = repoRoot
+	}
+	globalIndex, err = syncflow.BuildGlobalPageIndex(globalIndexRoot)
+	if err != nil {
+		return fmt.Errorf("failed to build global page index: %w", err)
+	}
+
 	state, err := fs.LoadState(targetCtx.spaceDir)
 	if err != nil {
 		return fmt.Errorf("failed to load state: %w", err)
@@ -120,7 +130,7 @@ func runValidateTargetWithContext(ctx context.Context, out io.Writer, target con
 
 	immutableResolver := newValidateImmutableFrontmatterResolver(targetCtx.spaceDir, targetCtx.spaceKey, state)
 
-	linkHook := syncflow.NewReverseLinkHook(targetCtx.spaceDir, index, cfg.Domain)
+	linkHook := syncflow.NewReverseLinkHookWithGlobalIndex(targetCtx.spaceDir, index, globalIndex, cfg.Domain)
 
 	hasErrors := false
 	for _, file := range targetCtx.files {

@@ -267,6 +267,46 @@ func TestRunValidateTarget_FailsForMissingAssetFile(t *testing.T) {
 	}
 }
 
+func TestRunValidateTarget_AllowsCrossSpaceEncodedRelativeLink(t *testing.T) {
+	repo := t.TempDir()
+	setupGitRepo(t, repo)
+	setupEnv(t)
+
+	engDir := filepath.Join(repo, "Engineering (ENG)")
+	tdDir := filepath.Join(repo, "Technical Docs (TD)")
+	if err := os.MkdirAll(engDir, 0o750); err != nil {
+		t.Fatalf("mkdir eng dir: %v", err)
+	}
+	if err := os.MkdirAll(tdDir, 0o750); err != nil {
+		t.Fatalf("mkdir td dir: %v", err)
+	}
+
+	writeMarkdown(t, filepath.Join(tdDir, "target.md"), fs.MarkdownDocument{
+		Frontmatter: fs.Frontmatter{Title: "Target", ID: "200", Space: "TD", Version: 1},
+		Body:        "target\n",
+	})
+	if err := fs.SaveState(tdDir, fs.SpaceState{SpaceKey: "TD", PagePathIndex: map[string]string{"target.md": "200"}}); err != nil {
+		t.Fatalf("save td state: %v", err)
+	}
+
+	writeMarkdown(t, filepath.Join(engDir, "root.md"), fs.MarkdownDocument{
+		Frontmatter: fs.Frontmatter{Title: "Root", ID: "100", Space: "ENG", Version: 1},
+		Body:        "[cross](../Technical%20Docs%20(TD)/target.md)\n",
+	})
+	if err := fs.SaveState(engDir, fs.SpaceState{SpaceKey: "ENG", PagePathIndex: map[string]string{"root.md": "100"}}); err != nil {
+		t.Fatalf("save eng state: %v", err)
+	}
+
+	runGitForTest(t, repo, "add", ".")
+	runGitForTest(t, repo, "commit", "-m", "baseline")
+
+	chdirRepo(t, repo)
+	out := &bytes.Buffer{}
+	if err := runValidateTarget(out, config.Target{Mode: config.TargetModeSpace, Value: "Engineering (ENG)"}); err != nil {
+		t.Fatalf("expected validate success, got: %v\nOutput:\n%s", err, out.String())
+	}
+}
+
 func TestRunValidateTargetWithContext_ReturnsCancellation(t *testing.T) {
 	repo := t.TempDir()
 	setupGitRepo(t, repo)

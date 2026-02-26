@@ -423,6 +423,12 @@ func runPushInWorktree(
 	worktreeDir, syncBranchName, snapshotRefName string,
 	stashRef *string,
 ) error {
+	warnings := make([]string, 0)
+	addWarning := func(message string) {
+		warnings = append(warnings, message)
+		_, _ = fmt.Fprintf(out, "warning: %s\n", message)
+	}
+
 	// 4. Validate (in worktree)
 	wtSpaceDir := filepath.Join(worktreeDir, spaceScopePath)
 	wtClient := &git.Client{RootDir: worktreeDir}
@@ -495,6 +501,11 @@ func runPushInWorktree(
 		return fmt.Errorf("load state: %w", err)
 	}
 
+	globalPageIndex, err := syncflow.BuildGlobalPageIndex(worktreeDir)
+	if err != nil {
+		return fmt.Errorf("build global page index: %w", err)
+	}
+
 	var progress syncflow.Progress
 	if !flagVerbose && outputSupportsProgress(out) {
 		progress = newConsoleProgress(out, "Syncing to Confluence")
@@ -505,6 +516,7 @@ func runPushInWorktree(
 		SpaceDir:            wtSpaceDir,
 		Domain:              cfg.Domain,
 		State:               state,
+		GlobalPageIndex:     globalPageIndex,
 		Changes:             syncChanges,
 		ConflictPolicy:      toSyncConflictPolicy(onConflict),
 		ArchiveTimeout:      normalizedArchiveTaskTimeout(),
@@ -612,11 +624,11 @@ func runPushInWorktree(
 		tagName := fmt.Sprintf("confluence-sync/push/%s/%s", refKey, tsStr)
 		tagMsg := fmt.Sprintf("Confluence push sync for %s at %s", spaceKey, tsStr)
 		if err := gitClient.Tag(tagName, tagMsg); err != nil {
-			_, _ = fmt.Fprintf(out, "warning: failed to create tag: %v\n", err)
+			addWarning(fmt.Sprintf("failed to create tag: %v", err))
 		}
 
 		if err := restorePushStash(gitClient, *stashRef, spaceScopePath, result.Commits); err != nil {
-			_, _ = fmt.Fprintf(out, "warning: stash restore had conflicts: %v\n", err)
+			addWarning(fmt.Sprintf("stash restore had conflicts: %v", err))
 		}
 		*stashRef = ""
 
@@ -634,8 +646,10 @@ func runPushInWorktree(
 	}
 
 	if err := fs.SaveState(spaceDir, result.State); err != nil {
-		_, _ = fmt.Fprintf(out, "warning: failed to save local state: %v\n", err)
+		addWarning(fmt.Sprintf("failed to save local state: %v", err))
 	}
+
+	printPushWarningSummary(out, warnings)
 
 	_, _ = fmt.Fprintf(out, "push completed: %d page change(s) synced\n", len(result.Commits))
 	slog.Info("push_sync_result", "space_key", spaceKey, "commit_count", len(result.Commits), "diagnostics", len(result.Diagnostics))
@@ -909,9 +923,8 @@ func restorePushStash(
 	sort.Strings(untrackedPaths)
 
 	if len(trackedPaths) > 0 {
-		args := append([]string{"stash", "apply", "--index", stashRef, "--"}, trackedPaths...)
-		if _, err := client.Run(args...); err != nil {
-			return fmt.Errorf("restore tracked workspace changes from stash: %w", err)
+		if err := restoreTrackedPathsFromStash(client, stashRef, trackedPaths); err != nil {
+			return err
 		}
 	}
 
@@ -920,6 +933,44 @@ func restorePushStash(
 	}
 
 	return client.StashDrop(stashRef)
+}
+
+func restoreTrackedPathsFromStash(client *git.Client, stashRef string, paths []string) error {
+	if len(paths) == 0 {
+		return nil
+	}
+
+	stashRef = strings.TrimSpace(stashRef)
+	if stashRef == "" {
+		return nil
+	}
+
+	restoreWorktreeArgs := append([]string{"restore", "--source=" + stashRef, "--worktree", "--"}, paths...)
+	if _, err := client.Run(restoreWorktreeArgs...); err != nil {
+		return fmt.Errorf("restore tracked workspace changes from stash: %w", err)
+	}
+
+	stagedPathSet, err := listStashIndexPathSet(client, stashRef, paths)
+	if err != nil {
+		return fmt.Errorf("identify stashed staged paths: %w", err)
+	}
+
+	stagedPaths := make([]string, 0, len(stagedPathSet))
+	for _, path := range paths {
+		if _, staged := stagedPathSet[path]; staged {
+			stagedPaths = append(stagedPaths, path)
+		}
+	}
+	if len(stagedPaths) == 0 {
+		return nil
+	}
+
+	restoreStagedArgs := append([]string{"restore", "--source=" + stashRef + "^2", "--staged", "--"}, stagedPaths...)
+	if _, err := client.Run(restoreStagedArgs...); err != nil {
+		return fmt.Errorf("restore staged workspace changes from stash: %w", err)
+	}
+
+	return nil
 }
 
 func listStashPaths(client *git.Client, stashRef, scopePath string) ([]string, error) {
@@ -975,6 +1026,35 @@ func listStashUntrackedPathSet(client *git.Client, stashRef, scopePath string) (
 	scopePath = normalizeRepoRelPath(scopePath)
 	if scopePath != "" {
 		args = append(args, "--", scopePath)
+	}
+
+	raw, err := client.Run(args...)
+	if err != nil {
+		return nil, err
+	}
+
+	for _, line := range strings.Split(strings.ReplaceAll(raw, "\r\n", "\n"), "\n") {
+		path := normalizeRepoRelPath(line)
+		if path == "" {
+			continue
+		}
+		out[path] = struct{}{}
+	}
+
+	return out, nil
+}
+
+func listStashIndexPathSet(client *git.Client, stashRef string, scopePaths []string) (map[string]struct{}, error) {
+	out := map[string]struct{}{}
+	stashRef = strings.TrimSpace(stashRef)
+	if stashRef == "" {
+		return out, nil
+	}
+
+	args := []string{"diff", "--name-only", stashRef + "^1", stashRef + "^2"}
+	if len(scopePaths) > 0 {
+		args = append(args, "--")
+		args = append(args, scopePaths...)
 	}
 
 	raw, err := client.Run(args...)
@@ -1146,6 +1226,17 @@ func printPushDiagnostics(out io.Writer, diagnostics []syncflow.PushDiagnostic) 
 	_, _ = fmt.Fprintln(out, "\nDiagnostics:")
 	for _, diag := range diagnostics {
 		_, _ = fmt.Fprintf(out, "  [%s] %s: %s\n", diag.Code, diag.Path, diag.Message)
+	}
+}
+
+func printPushWarningSummary(out io.Writer, warnings []string) {
+	if len(warnings) == 0 {
+		return
+	}
+
+	_, _ = fmt.Fprintln(out, "\nSummary of warnings:")
+	for _, warning := range warnings {
+		_, _ = fmt.Fprintf(out, "  - %s\n", warning)
 	}
 }
 

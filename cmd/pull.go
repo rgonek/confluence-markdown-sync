@@ -472,10 +472,34 @@ func resolveInitialPullContext(target config.Target) (initialPullContext, error)
 }
 
 func cleanupFailedPullScope(repoRoot, scopePath string) {
+	abortInProgressPullGitOps(repoRoot)
+
 	if _, err := runGit(repoRoot, "restore", "--source=HEAD", "--staged", "--worktree", "--", scopePath); err != nil {
 		_, _ = runGit(repoRoot, "checkout", "HEAD", "--", scopePath)
 	}
 	removeScopedPullGeneratedFiles(repoRoot, scopePath)
+}
+
+func abortInProgressPullGitOps(repoRoot string) {
+	if hasGitRef(repoRoot, "MERGE_HEAD") {
+		_, _ = runGit(repoRoot, "merge", "--abort")
+	}
+	if hasGitRef(repoRoot, "CHERRY_PICK_HEAD") {
+		_, _ = runGit(repoRoot, "cherry-pick", "--abort")
+	}
+	if hasGitRef(repoRoot, "REVERT_HEAD") {
+		_, _ = runGit(repoRoot, "revert", "--abort")
+	}
+
+	gitDir := filepath.Join(repoRoot, ".git")
+	if dirExists(filepath.Join(gitDir, "rebase-apply")) || dirExists(filepath.Join(gitDir, "rebase-merge")) {
+		_, _ = runGit(repoRoot, "rebase", "--abort")
+	}
+}
+
+func hasGitRef(repoRoot, refName string) bool {
+	_, err := runGit(repoRoot, "rev-parse", "--verify", "--quiet", refName)
+	return err == nil
 }
 
 func removeScopedPullGeneratedFiles(repoRoot, scopePath string) {

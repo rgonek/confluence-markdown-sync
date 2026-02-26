@@ -77,6 +77,7 @@ type PushOptions struct {
 	SpaceDir            string
 	Domain              string
 	State               fs.SpaceState
+	GlobalPageIndex     GlobalPageIndex
 	Changes             []PushFileChange
 	ConflictPolicy      PushConflictPolicy
 	HardDelete          bool
@@ -218,6 +219,11 @@ func Push(ctx context.Context, remote PushRemote, opts PushOptions) (PushResult,
 		return PushResult{}, fmt.Errorf("build page index: %w", err)
 	}
 
+	pageTitleByPath, err := buildLocalPageTitleIndex(spaceDir)
+	if err != nil {
+		return PushResult{}, fmt.Errorf("build title index: %w", err)
+	}
+
 	attachmentIDByPath := cloneStringMap(state.AttachmentIndex)
 	folderIDByPath := cloneStringMap(state.FolderPathIndex)
 	changes := normalizePushChanges(opts.Changes)
@@ -256,6 +262,7 @@ func Push(ctx context.Context, remote PushRemote, opts PushOptions) (PushResult,
 				state,
 				policy,
 				pageIDByPath,
+				pageTitleByPath,
 				attachmentIDByPath,
 				folderIDByPath,
 				remotePageByID,
@@ -400,6 +407,7 @@ func pushUpsertPage(
 	state fs.SpaceState,
 	policy PushConflictPolicy,
 	pageIDByPath PageIndex,
+	pageTitleByPath map[string]string,
 	attachmentIDByPath map[string]string,
 	folderIDByPath map[string]string,
 	remotePageByID map[string]confluence.Page,
@@ -416,6 +424,19 @@ func pushUpsertPage(
 	targetState := normalizePageLifecycleState(doc.Frontmatter.State)
 	dirPath := normalizeRelPath(filepath.ToSlash(filepath.Dir(filepath.FromSlash(relPath))))
 	title := resolveLocalTitle(doc, relPath)
+	pageTitleByPath[normalizeRelPath(relPath)] = title
+
+	if pageID == "" {
+		if conflictingPath, conflictingID := findTrackedTitleConflict(relPath, title, state.PagePathIndex, pageTitleByPath); conflictingPath != "" {
+			return PushCommitPlan{}, fmt.Errorf(
+				"new page %q duplicates tracked page %q (id=%s) with title %q; update the existing file instead of creating a duplicate",
+				relPath,
+				conflictingPath,
+				conflictingID,
+				title,
+			)
+		}
+	}
 
 	trackedPageID := strings.TrimSpace(state.PagePathIndex[relPath])
 	if trackedPageID != "" {
@@ -534,7 +555,7 @@ func pushUpsertPage(
 	}
 
 	// Phase 1: preflight planning and strict conversion validation.
-	linkHook := NewReverseLinkHook(opts.SpaceDir, pageIDByPath, opts.Domain)
+	linkHook := NewReverseLinkHookWithGlobalIndex(opts.SpaceDir, pageIDByPath, opts.GlobalPageIndex, opts.Domain)
 	strictAttachmentIndex, referencedAssetPaths, err := BuildStrictAttachmentIndex(opts.SpaceDir, absPath, doc.Body, attachmentIDByPath)
 	if err != nil {
 		return PushCommitPlan{}, fmt.Errorf("resolve assets for %s: %w", relPath, err)
@@ -1378,6 +1399,81 @@ func resolveLocalTitle(doc fs.MarkdownDocument, relPath string) string {
 
 	base := filepath.Base(relPath)
 	return strings.TrimSuffix(base, filepath.Ext(base))
+}
+
+func buildLocalPageTitleIndex(spaceDir string) (map[string]string, error) {
+	out := map[string]string{}
+	err := filepath.WalkDir(spaceDir, func(path string, d os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if d.IsDir() {
+			if d.Name() == "assets" || strings.HasPrefix(d.Name(), ".") {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !strings.HasSuffix(strings.ToLower(d.Name()), ".md") {
+			return nil
+		}
+
+		relPath, err := filepath.Rel(spaceDir, path)
+		if err != nil {
+			return nil
+		}
+		relPath = normalizeRelPath(relPath)
+		if relPath == "" {
+			return nil
+		}
+
+		doc, err := fs.ReadMarkdownDocument(path)
+		if err != nil {
+			return nil
+		}
+
+		title := strings.TrimSpace(resolveLocalTitle(doc, relPath))
+		if title == "" {
+			return nil
+		}
+		out[relPath] = title
+		return nil
+	})
+	return out, err
+}
+
+func findTrackedTitleConflict(relPath, title string, pagePathIndex map[string]string, pageTitleByPath map[string]string) (string, string) {
+	titleKey := strings.ToLower(strings.TrimSpace(title))
+	if titleKey == "" {
+		return "", ""
+	}
+
+	normalizedPath := normalizeRelPath(relPath)
+	currentDir := normalizeRelPath(filepath.ToSlash(filepath.Dir(filepath.FromSlash(normalizedPath))))
+
+	for trackedPath, trackedPageID := range pagePathIndex {
+		trackedPath = normalizeRelPath(trackedPath)
+		trackedPageID = strings.TrimSpace(trackedPageID)
+		if trackedPath == "" || trackedPageID == "" {
+			continue
+		}
+		if trackedPath == normalizedPath {
+			continue
+		}
+
+		trackedTitle := strings.ToLower(strings.TrimSpace(pageTitleByPath[trackedPath]))
+		if trackedTitle == "" || trackedTitle != titleKey {
+			continue
+		}
+
+		trackedDir := normalizeRelPath(filepath.ToSlash(filepath.Dir(filepath.FromSlash(trackedPath))))
+		if trackedDir != currentDir {
+			continue
+		}
+
+		return trackedPath, trackedPageID
+	}
+
+	return "", ""
 }
 
 func detectAssetContentType(filename string, raw []byte) string {

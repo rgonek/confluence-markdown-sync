@@ -1,6 +1,7 @@
 package sync
 
 import (
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -161,7 +162,8 @@ func resolveRelinkDestination(rawDestination, sourcePath string, index GlobalPag
 		return "", false
 	}
 
-	return filepath.ToSlash(relPath) + anchor, true
+	encodedRelPath := encodeMarkdownPath(filepath.ToSlash(relPath))
+	return encodedRelPath + anchor, true
 }
 
 func canonicalRelinkDestination(raw string) string {
@@ -215,6 +217,17 @@ func formatRelinkDestinationToken(originalToken, replacement string) string {
 		return "<" + replacement + ">"
 	}
 	return replacement
+}
+
+func encodeMarkdownPath(path string) string {
+	parts := strings.Split(path, "/")
+	for i, part := range parts {
+		if part == "" || part == "." || part == ".." {
+			continue
+		}
+		parts[i] = url.PathEscape(part)
+	}
+	return strings.Join(parts, "/")
 }
 
 func collectLinkDestinationOccurrences(content []byte) []linkDestinationOccurrence {

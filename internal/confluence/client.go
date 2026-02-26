@@ -330,6 +330,68 @@ func (c *Client) GetPage(ctx context.Context, pageID string) (Page, error) {
 	return payload.toModel(c.baseURL), nil
 }
 
+// ListAttachments fetches attachments for a page.
+func (c *Client) ListAttachments(ctx context.Context, pageID string) ([]Attachment, error) {
+	pageID = strings.TrimSpace(pageID)
+	if pageID == "" {
+		return nil, errors.New("page ID is required")
+	}
+
+	query := url.Values{}
+	query.Set("limit", "100")
+
+	req, err := c.newRequest(ctx, http.MethodGet, "/wiki/api/v2/pages/"+url.PathEscape(pageID)+"/attachments", query, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	attachments := []Attachment{}
+	var payload v2ListResponse[attachmentDTO]
+	for {
+		if err := c.do(req, &payload); err != nil {
+			if isHTTPStatus(err, http.StatusNotFound) {
+				return nil, ErrNotFound
+			}
+			return nil, err
+		}
+
+		for _, item := range payload.Results {
+			attachmentID := strings.TrimSpace(item.ID)
+			if attachmentID == "" {
+				continue
+			}
+
+			attachments = append(attachments, Attachment{
+				ID:        attachmentID,
+				PageID:    pageID,
+				Filename:  firstNonEmpty(item.Title, item.Filename),
+				MediaType: item.MediaType,
+			})
+		}
+
+		nextURLStr := strings.TrimSpace(payload.Links.Next)
+		if nextURLStr == "" {
+			break
+		}
+
+		if !strings.HasPrefix(nextURLStr, "http") {
+			nextURLStr = resolveWebURL(c.baseURL, nextURLStr)
+		}
+
+		req, err = http.NewRequestWithContext(ctx, http.MethodGet, nextURLStr, nil)
+		if err != nil {
+			return nil, err
+		}
+		req.SetBasicAuth(c.email, c.apiToken)
+		req.Header.Set("Accept", "application/json")
+		req.Header.Set("User-Agent", c.userAgent)
+
+		payload = v2ListResponse[attachmentDTO]{}
+	}
+
+	return attachments, nil
+}
+
 // DownloadAttachment downloads attachment bytes by attachment ID.
 func (c *Client) DownloadAttachment(ctx context.Context, attachmentID string, pageID string, out io.Writer) error {
 	id := strings.TrimSpace(attachmentID)
@@ -1446,6 +1508,9 @@ func statusIndicatesTerminal(status string) bool {
 type attachmentDTO struct {
 	ID           string `json:"id"`
 	FileID       string `json:"fileId"`
+	Title        string `json:"title"`
+	Filename     string `json:"filename"`
+	MediaType    string `json:"mediaType"`
 	DownloadLink string `json:"downloadLink"`
 	Links        struct {
 		Download string `json:"download"`

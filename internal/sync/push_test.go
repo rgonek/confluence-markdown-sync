@@ -507,6 +507,108 @@ func TestPush_PreflightStrictFailureSkipsRemoteMutations(t *testing.T) {
 	}
 }
 
+func TestPush_PreflightStrictResolvesCrossSpaceLinkWithGlobalIndex(t *testing.T) {
+	repo := t.TempDir()
+	engDir := filepath.Join(repo, "Engineering (ENG)")
+	tdDir := filepath.Join(repo, "Technical Docs (TD)")
+	if err := os.MkdirAll(engDir, 0o750); err != nil {
+		t.Fatalf("mkdir eng dir: %v", err)
+	}
+	if err := os.MkdirAll(tdDir, 0o750); err != nil {
+		t.Fatalf("mkdir td dir: %v", err)
+	}
+
+	mdPath := filepath.Join(engDir, "new.md")
+	if err := fs.WriteMarkdownDocument(mdPath, fs.MarkdownDocument{
+		Frontmatter: fs.Frontmatter{
+			Title: "New",
+			Space: "ENG",
+		},
+		Body: "[Cross Space](../Technical%20Docs%20(TD)/target.md)\n",
+	}); err != nil {
+		t.Fatalf("write markdown: %v", err)
+	}
+
+	targetPath := filepath.Join(tdDir, "target.md")
+	if err := fs.WriteMarkdownDocument(targetPath, fs.MarkdownDocument{
+		Frontmatter: fs.Frontmatter{
+			Title:   "Target",
+			ID:      "200",
+			Space:   "TD",
+			Version: 1,
+		},
+		Body: "target\n",
+	}); err != nil {
+		t.Fatalf("write cross-space markdown: %v", err)
+	}
+
+	remote := newRollbackPushRemote()
+	result, err := Push(context.Background(), remote, PushOptions{
+		SpaceKey:            "ENG",
+		SpaceDir:            engDir,
+		Domain:              "https://example.atlassian.net",
+		State:               fs.SpaceState{SpaceKey: "ENG"},
+		GlobalPageIndex:     GlobalPageIndex{"200": targetPath},
+		ConflictPolicy:      PushConflictPolicyCancel,
+		Changes:             []PushFileChange{{Type: PushChangeAdd, Path: "new.md"}},
+		ArchiveTimeout:      confluence.DefaultArchiveTaskTimeout,
+		ArchivePollInterval: confluence.DefaultArchiveTaskPollInterval,
+	})
+	if err != nil {
+		t.Fatalf("Push() unexpected error: %v", err)
+	}
+	if len(result.Commits) != 1 {
+		t.Fatalf("commit count = %d, want 1", len(result.Commits))
+	}
+}
+
+func TestPush_NewPageFailsWhenTrackedPageWithSameTitleExistsInSameDirectory(t *testing.T) {
+	spaceDir := t.TempDir()
+
+	existingPath := filepath.Join(spaceDir, "Conflict-Test-Page.md")
+	if err := fs.WriteMarkdownDocument(existingPath, fs.MarkdownDocument{
+		Frontmatter: fs.Frontmatter{
+			Title:   "Conflict Test Page",
+			ID:      "1",
+			Space:   "ENG",
+			Version: 1,
+		},
+		Body: "existing\n",
+	}); err != nil {
+		t.Fatalf("write existing markdown: %v", err)
+	}
+
+	newPath := filepath.Join(spaceDir, "Conflict-Test.md")
+	if err := fs.WriteMarkdownDocument(newPath, fs.MarkdownDocument{
+		Frontmatter: fs.Frontmatter{
+			Title: "Conflict Test Page",
+			Space: "ENG",
+		},
+		Body: "new\n",
+	}); err != nil {
+		t.Fatalf("write new markdown: %v", err)
+	}
+
+	remote := newRollbackPushRemote()
+	_, err := Push(context.Background(), remote, PushOptions{
+		SpaceKey:       "ENG",
+		SpaceDir:       spaceDir,
+		Domain:         "https://example.atlassian.net",
+		State:          fs.SpaceState{SpaceKey: "ENG", PagePathIndex: map[string]string{"Conflict-Test-Page.md": "1"}},
+		ConflictPolicy: PushConflictPolicyCancel,
+		Changes: []PushFileChange{{
+			Type: PushChangeAdd,
+			Path: "Conflict-Test.md",
+		}},
+	})
+	if err == nil {
+		t.Fatal("expected duplicate title validation error")
+	}
+	if !strings.Contains(err.Error(), "duplicates tracked page") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 func TestPush_RollbackDeletesCreatedPageAndAttachmentsOnUpdateFailure(t *testing.T) {
 	spaceDir := t.TempDir()
 	mdPath := filepath.Join(spaceDir, "new.md")
