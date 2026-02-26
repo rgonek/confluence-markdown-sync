@@ -14,12 +14,12 @@ import (
 	"github.com/spf13/cobra"
 )
 
-func newRepairSyncCmd() *cobra.Command {
+func newCleanCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:     "repair-sync",
-		Aliases: []string{"clean"},
-		Short:   "Repair leftover sync workspace state",
-		Long: `repair-sync inspects and cleans leftover sync artifacts when pull/push was interrupted.
+		Use:     "clean",
+		Aliases: []string{"repair"},
+		Short:   "clean leftover sync workspace state",
+		Long: `clean inspects and cleans leftover sync artifacts when pull/push was interrupted.
 
 It can:
 - switch away from sync/* branches,
@@ -27,15 +27,15 @@ It can:
 - prune refs/confluence-sync/snapshots/* refs,
 - and normalize readable state files.`,
 		Args: cobra.NoArgs,
-		RunE: runRepairSync,
+		RunE: runClean,
 	}
 
-	cmd.Flags().BoolVarP(&flagYes, "yes", "y", false, "Auto-approve repair actions")
+	cmd.Flags().BoolVarP(&flagYes, "yes", "y", false, "Auto-approve clean actions")
 	cmd.Flags().BoolVar(&flagNonInteractive, "non-interactive", false, "Disable prompts; fail fast when confirmation is required")
 	return cmd
 }
 
-func runRepairSync(cmd *cobra.Command, _ []string) error {
+func runClean(cmd *cobra.Command, _ []string) error {
 	out := ensureSynchronizedCmdOutput(cmd)
 
 	client, err := git.NewClient()
@@ -51,16 +51,16 @@ func runRepairSync(cmd *cobra.Command, _ []string) error {
 
 	targetBranch := ""
 	if strings.HasPrefix(currentBranch, "sync/") {
-		targetBranch, _ = resolveRepairTargetBranch(client)
+		targetBranch, _ = resolveCleanTargetBranch(client)
 	}
 
 	worktreesRoot := filepath.Join(client.RootDir, ".confluence-worktrees")
-	worktreeDirs, err := listRepairWorktreeDirs(worktreesRoot)
+	worktreeDirs, err := listCleanWorktreeDirs(worktreesRoot)
 	if err != nil {
 		return err
 	}
 
-	snapshotRefs, err := listRepairSnapshotRefs(client)
+	snapshotRefs, err := listCleanSnapshotRefs(client)
 	if err != nil {
 		return err
 	}
@@ -81,14 +81,14 @@ func runRepairSync(cmd *cobra.Command, _ []string) error {
 	_, _ = fmt.Fprintf(out, "Snapshot refs: %d\n", len(snapshotRefs))
 
 	if !hasActions {
-		if err := normalizeRepairStates(out, client.RootDir); err != nil {
+		if err := normalizeCleanStates(out, client.RootDir); err != nil {
 			return err
 		}
-		_, _ = fmt.Fprintln(out, "repair-sync completed: workspace is already clean")
+		_, _ = fmt.Fprintln(out, "clean completed: workspace is already clean")
 		return nil
 	}
 
-	if err := confirmRepairActions(cmd.InOrStdin(), out, currentBranch, len(worktreeDirs), len(snapshotRefs)); err != nil {
+	if err := confirmCleanActions(cmd.InOrStdin(), out, currentBranch, len(worktreeDirs), len(snapshotRefs)); err != nil {
 		return err
 	}
 
@@ -121,23 +121,23 @@ func runRepairSync(cmd *cobra.Command, _ []string) error {
 		deletedRefs++
 	}
 
-	if err := normalizeRepairStates(out, client.RootDir); err != nil {
+	if err := normalizeCleanStates(out, client.RootDir); err != nil {
 		return err
 	}
 
-	_, _ = fmt.Fprintf(out, "repair-sync completed: removed %d worktree(s), deleted %d snapshot ref(s)\n", removedWorktrees, deletedRefs)
+	_, _ = fmt.Fprintf(out, "clean completed: removed %d worktree(s), deleted %d snapshot ref(s)\n", removedWorktrees, deletedRefs)
 	return nil
 }
 
-func confirmRepairActions(in io.Reader, out io.Writer, branch string, worktreeCount, refCount int) error {
+func confirmCleanActions(in io.Reader, out io.Writer, branch string, worktreeCount, refCount int) error {
 	if flagYes {
 		return nil
 	}
 	if flagNonInteractive {
-		return fmt.Errorf("repair-sync requires confirmation; rerun with --yes")
+		return fmt.Errorf("clean requires confirmation; rerun with --yes")
 	}
 
-	title := fmt.Sprintf("Apply repair actions for branch=%s, worktrees=%d, snapshot refs=%d?", branch, worktreeCount, refCount)
+	title := fmt.Sprintf("Apply clean actions for branch=%s, worktrees=%d, snapshot refs=%d?", branch, worktreeCount, refCount)
 	if outputSupportsProgress(out) {
 		var confirm bool
 		form := huh.NewForm(
@@ -152,7 +152,7 @@ func confirmRepairActions(in io.Reader, out io.Writer, branch string, worktreeCo
 			return err
 		}
 		if !confirm {
-			return fmt.Errorf("repair-sync cancelled")
+			return fmt.Errorf("clean cancelled")
 		}
 		return nil
 	}
@@ -166,12 +166,12 @@ func confirmRepairActions(in io.Reader, out io.Writer, branch string, worktreeCo
 	}
 	choice = strings.ToLower(strings.TrimSpace(choice))
 	if choice != "y" && choice != "yes" {
-		return fmt.Errorf("repair-sync cancelled")
+		return fmt.Errorf("clean cancelled")
 	}
 	return nil
 }
 
-func resolveRepairTargetBranch(client *git.Client) (string, error) {
+func resolveCleanTargetBranch(client *git.Client) (string, error) {
 	if branchExists(client, "main") {
 		return "main", nil
 	}
@@ -206,7 +206,7 @@ func branchExists(client *git.Client, name string) bool {
 	return err == nil
 }
 
-func listRepairWorktreeDirs(worktreesRoot string) ([]string, error) {
+func listCleanWorktreeDirs(worktreesRoot string) ([]string, error) {
 	entries, err := os.ReadDir(worktreesRoot)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -226,7 +226,7 @@ func listRepairWorktreeDirs(worktreesRoot string) ([]string, error) {
 	return dirs, nil
 }
 
-func listRepairSnapshotRefs(client *git.Client) ([]string, error) {
+func listCleanSnapshotRefs(client *git.Client) ([]string, error) {
 	raw, err := client.Run("for-each-ref", "--format=%(refname)", "refs/confluence-sync/snapshots/")
 	if err != nil {
 		return nil, fmt.Errorf("list snapshot refs: %w", err)
@@ -243,7 +243,7 @@ func listRepairSnapshotRefs(client *git.Client) ([]string, error) {
 	return refs, nil
 }
 
-func normalizeRepairStates(out io.Writer, repoRoot string) error {
+func normalizeCleanStates(out io.Writer, repoRoot string) error {
 	states, err := fs.FindAllStateFiles(repoRoot)
 	if err != nil {
 		if fs.IsStateConflictError(err) {

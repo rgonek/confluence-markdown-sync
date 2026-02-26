@@ -15,13 +15,13 @@ import (
 	"github.com/spf13/cobra"
 )
 
-type checkSyncRemote interface {
+type StatusRemote interface {
 	GetSpace(ctx context.Context, spaceKey string) (confluence.Space, error)
 	ListPages(ctx context.Context, opts confluence.PageListOptions) (confluence.PageListResult, error)
 	GetPage(ctx context.Context, pageID string) (confluence.Page, error)
 }
 
-type checkSyncReport struct {
+type StatusReport struct {
 	LocalAdded      []string
 	LocalModified   []string
 	LocalDeleted    []string
@@ -31,16 +31,16 @@ type checkSyncReport struct {
 	MaxVersionDrift int
 }
 
-var newCheckSyncRemote = func(cfg *config.Config) (checkSyncRemote, error) {
+var newStatusRemote = func(cfg *config.Config) (StatusRemote, error) {
 	return newConfluenceClientFromConfig(cfg)
 }
 
-func newCheckSyncCmd() *cobra.Command {
+func newStatusCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:     "check-sync [TARGET]",
-		Aliases: []string{"status"},
-		Short:   "Inspect local and remote sync drift",
-		Long: `check-sync prints a high-level sync summary without mutating local files or remote content.
+		Use: "status [TARGET]",
+
+		Short: "Inspect local and remote sync drift",
+		Long: `status prints a high-level sync summary without mutating local files or remote content.
 
 TARGET follows the standard rule:
 - .md suffix => file mode (space inferred from file)
@@ -51,15 +51,15 @@ TARGET follows the standard rule:
 			if len(args) > 0 {
 				raw = args[0]
 			}
-			return runCheckSync(cmd, config.ParseTarget(raw))
+			return runStatus(cmd, config.ParseTarget(raw))
 		},
 	}
 
 	return cmd
 }
 
-func runCheckSync(cmd *cobra.Command, target config.Target) error {
-	if err := ensureWorkspaceSyncReady("check-sync"); err != nil {
+func runStatus(cmd *cobra.Command, target config.Target) error {
+	if err := ensureWorkspaceSyncReady("status"); err != nil {
 		return err
 	}
 
@@ -96,7 +96,7 @@ func runCheckSync(cmd *cobra.Command, target config.Target) error {
 		return fmt.Errorf("ATLASSIAN_DOMAIN is missing in %s", envPath)
 	}
 
-	remote, err := newCheckSyncRemote(cfg)
+	remote, err := newStatusRemote(cfg)
 	if err != nil {
 		return fmt.Errorf("create Confluence client: %w", err)
 	}
@@ -115,7 +115,7 @@ func runCheckSync(cmd *cobra.Command, target config.Target) error {
 		targetRelPath = normalizeRepoRelPath(rel)
 	}
 
-	report, err := buildCheckSyncReport(ctx, remote, target, initialCtx, state, spaceKey, targetRelPath)
+	report, err := buildStatusReport(ctx, remote, target, initialCtx, state, spaceKey, targetRelPath)
 	if err != nil {
 		return err
 	}
@@ -123,8 +123,8 @@ func runCheckSync(cmd *cobra.Command, target config.Target) error {
 	_, _ = fmt.Fprintf(out, "Space: %s\n", spaceKey)
 	_, _ = fmt.Fprintf(out, "Directory: %s\n", initialCtx.spaceDir)
 
-	printCheckSyncSection(out, "Local not pushed", report.LocalAdded, report.LocalModified, report.LocalDeleted)
-	printCheckSyncSection(out, "Remote not pulled", report.RemoteAdded, report.RemoteModified, report.RemoteDeleted)
+	printStatusSection(out, "Local not pushed", report.LocalAdded, report.LocalModified, report.LocalDeleted)
+	printStatusSection(out, "Remote not pulled", report.RemoteAdded, report.RemoteModified, report.RemoteDeleted)
 
 	if report.MaxVersionDrift > 0 {
 		_, _ = fmt.Fprintf(out, "\nVersion drift: local markdown is up to %d version(s) behind remote\n", report.MaxVersionDrift)
@@ -135,28 +135,28 @@ func runCheckSync(cmd *cobra.Command, target config.Target) error {
 	return nil
 }
 
-func buildCheckSyncReport(
+func buildStatusReport(
 	ctx context.Context,
-	remote checkSyncRemote,
+	remote StatusRemote,
 	target config.Target,
 	initialCtx initialPullContext,
 	state fs.SpaceState,
 	spaceKey string,
 	targetRelPath string,
-) (checkSyncReport, error) {
-	localAdded, localModified, localDeleted, err := collectLocalCheckSyncChanges(target, initialCtx.spaceDir, spaceKey)
+) (StatusReport, error) {
+	localAdded, localModified, localDeleted, err := collectLocalStatusChanges(target, initialCtx.spaceDir, spaceKey)
 	if err != nil {
-		return checkSyncReport{}, err
+		return StatusReport{}, err
 	}
 
 	space, err := remote.GetSpace(ctx, spaceKey)
 	if err != nil {
-		return checkSyncReport{}, fmt.Errorf("fetch space %s: %w", spaceKey, err)
+		return StatusReport{}, fmt.Errorf("fetch space %s: %w", spaceKey, err)
 	}
 
-	remotePages, err := listAllPagesForCheckSync(ctx, remote, confluence.PageListOptions{SpaceID: space.ID, SpaceKey: space.Key, Status: "current", Limit: 100})
+	remotePages, err := listAllPagesForStatus(ctx, remote, confluence.PageListOptions{SpaceID: space.ID, SpaceKey: space.Key, Status: "current", Limit: 100})
 	if err != nil {
-		return checkSyncReport{}, fmt.Errorf("list remote pages: %w", err)
+		return StatusReport{}, fmt.Errorf("list remote pages: %w", err)
 	}
 
 	pathByID := make(map[string]string, len(state.PagePathIndex))
@@ -237,7 +237,7 @@ func buildCheckSyncReport(
 	sort.Strings(remoteModified)
 	sort.Strings(remoteDeleted)
 
-	return checkSyncReport{
+	return StatusReport{
 		LocalAdded:      localAdded,
 		LocalModified:   localModified,
 		LocalDeleted:    localDeleted,
@@ -248,7 +248,7 @@ func buildCheckSyncReport(
 	}, nil
 }
 
-func listAllPagesForCheckSync(ctx context.Context, remote checkSyncRemote, opts confluence.PageListOptions) ([]confluence.Page, error) {
+func listAllPagesForStatus(ctx context.Context, remote StatusRemote, opts confluence.PageListOptions) ([]confluence.Page, error) {
 	pages := make([]confluence.Page, 0)
 	cursor := opts.Cursor
 	iterations := 0
@@ -271,7 +271,7 @@ func listAllPagesForCheckSync(ctx context.Context, remote checkSyncRemote, opts 
 	return pages, nil
 }
 
-func collectLocalCheckSyncChanges(target config.Target, spaceDir, spaceKey string) ([]string, []string, []string, error) {
+func collectLocalStatusChanges(target config.Target, spaceDir, spaceKey string) ([]string, []string, []string, error) {
 	client, err := git.NewClient()
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("init git client: %w", err)
@@ -317,14 +317,14 @@ func collectLocalCheckSyncChanges(target config.Target, spaceDir, spaceKey strin
 	return added, modified, deleted, nil
 }
 
-func printCheckSyncSection(out interface{ Write([]byte) (int, error) }, title string, added, modified, deleted []string) {
+func printStatusSection(out interface{ Write([]byte) (int, error) }, title string, added, modified, deleted []string) {
 	_, _ = fmt.Fprintf(out, "\n%s:\n", title)
-	printCheckSyncList(out, "added", added)
-	printCheckSyncList(out, "modified", modified)
-	printCheckSyncList(out, "deleted", deleted)
+	printStatusList(out, "added", added)
+	printStatusList(out, "modified", modified)
+	printStatusList(out, "deleted", deleted)
 }
 
-func printCheckSyncList(out interface{ Write([]byte) (int, error) }, label string, items []string) {
+func printStatusList(out interface{ Write([]byte) (int, error) }, label string, items []string) {
 	if len(items) == 0 {
 		_, _ = fmt.Fprintf(out, "  %s (0)\n", label)
 		return
