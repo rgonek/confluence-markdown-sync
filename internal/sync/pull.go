@@ -1298,7 +1298,7 @@ func recoverMissingPages(ctx context.Context, remote recoveryRemote, spaceID str
 		// Fetch missing page individually
 		page, err := remote.GetPage(ctx, id)
 		if err != nil {
-			if errors.Is(err, confluence.ErrNotFound) {
+			if errors.Is(err, confluence.ErrNotFound) || errors.Is(err, confluence.ErrArchived) {
 				continue // Truly deleted
 			}
 			var apiErr *confluence.APIError

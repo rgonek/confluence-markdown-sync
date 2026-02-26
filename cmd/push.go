@@ -127,7 +127,7 @@ func runPush(cmd *cobra.Command, target config.Target, onConflict string, dryRun
 		telemetryConflictPolicy = resolvedPolicy
 	}
 
-	initialCtx, err := resolveInitialPullContext(target)
+	initialCtx, err := resolveInitialPushContext(target)
 	if err != nil {
 		return err
 	}
@@ -983,4 +983,37 @@ func normalizedArchiveTaskPollInterval() time.Duration {
 		return timeout
 	}
 	return interval
+}
+
+func resolveInitialPushContext(target config.Target) (initialPullContext, error) {
+	if !target.IsFile() {
+		return resolveInitialPullContext(target)
+	}
+
+	absPath, err := filepath.Abs(target.Value)
+	if err != nil {
+		return initialPullContext{}, err
+	}
+
+	doc, err := fs.ReadMarkdownDocument(absPath)
+	if err != nil {
+		return initialPullContext{}, fmt.Errorf("read target file %s: %w", target.Value, err)
+	}
+
+	spaceKey := strings.TrimSpace(doc.Frontmatter.Space)
+	if spaceKey == "" {
+		spaceDir := findSpaceDirFromFile(absPath, "")
+		if state, stateErr := fs.LoadState(spaceDir); stateErr == nil {
+			spaceKey = strings.TrimSpace(state.SpaceKey)
+		}
+	}
+	if spaceKey == "" {
+		return initialPullContext{}, fmt.Errorf("target file %s missing space", target.Value)
+	}
+
+	return initialPullContext{
+		spaceKey: spaceKey,
+		spaceDir: findSpaceDirFromFile(absPath, spaceKey),
+		fixedDir: true,
+	}, nil
 }

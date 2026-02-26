@@ -320,6 +320,33 @@ func TestArchiveAndDeleteEndpoints(t *testing.T) {
 	}
 }
 
+func TestArchivePages_AlreadyArchivedReturnsErrArchived(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/wiki/rest/api/content/archive" {
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.String())
+		}
+		w.WriteHeader(http.StatusBadRequest)
+		if _, err := io.WriteString(w, `{"message":"Page 1 is already archived"}`); err != nil {
+			t.Fatalf("write response: %v", err)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	client, err := NewClient(ClientConfig{
+		BaseURL:  server.URL,
+		Email:    "user@example.com",
+		APIToken: "token-123",
+	})
+	if err != nil {
+		t.Fatalf("NewClient() unexpected error: %v", err)
+	}
+
+	_, err = client.ArchivePages(context.Background(), []string{"1"})
+	if !errors.Is(err, ErrArchived) {
+		t.Fatalf("ArchivePages() error = %v, want ErrArchived", err)
+	}
+}
+
 func TestWaitForArchiveTask_CompletesAfterPolling(t *testing.T) {
 	callCount := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -487,6 +514,38 @@ func TestCreateAndUpdatePage_Payloads(t *testing.T) {
 	_, err = client.UpdatePage(ctx, "101", input)
 	if err != nil {
 		t.Fatalf("UpdatePage failed: %v", err)
+	}
+}
+
+func TestUpdatePage_ArchivedReturnsErrArchived(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPut || r.URL.Path != "/wiki/api/v2/pages/101" {
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.String())
+		}
+		w.WriteHeader(http.StatusConflict)
+		if _, err := io.WriteString(w, `{"message":"Cannot update archived content"}`); err != nil {
+			t.Fatalf("write response: %v", err)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	client, err := NewClient(ClientConfig{
+		BaseURL:  server.URL,
+		Email:    "user@example.com",
+		APIToken: "token-123",
+	})
+	if err != nil {
+		t.Fatalf("NewClient() unexpected error: %v", err)
+	}
+
+	_, err = client.UpdatePage(context.Background(), "101", PageUpsertInput{
+		SpaceID: "S1",
+		Title:   "Archived",
+		Version: 2,
+		BodyADF: json.RawMessage(`{"version":1,"type":"doc","content":[]}`),
+	})
+	if !errors.Is(err, ErrArchived) {
+		t.Fatalf("UpdatePage() error = %v, want ErrArchived", err)
 	}
 }
 

@@ -54,7 +54,7 @@ func Forward(ctx context.Context, adfJSON []byte, cfg ForwardConfig, sourcePath 
 	}
 
 	return ForwardResult{
-		Markdown: res.Markdown,
+		Markdown: normalizeForwardMarkdown(res.Markdown),
 		Warnings: res.Warnings,
 	}, nil
 }

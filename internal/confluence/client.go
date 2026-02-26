@@ -37,6 +37,8 @@ const (
 var (
 	// ErrNotFound indicates the requested resource does not exist.
 	ErrNotFound = errors.New("confluence resource not found")
+	// ErrArchived indicates the requested page is already archived.
+	ErrArchived = errors.New("confluence page archived")
 	// ErrArchiveTaskFailed indicates Confluence long-task failure.
 	ErrArchiveTaskFailed = errors.New("confluence archive task failed")
 	// ErrArchiveTaskTimeout indicates archive long-task polling timed out.
@@ -320,6 +322,9 @@ func (c *Client) GetPage(ctx context.Context, pageID string) (Page, error) {
 		if isHTTPStatus(err, http.StatusNotFound) {
 			return Page{}, ErrNotFound
 		}
+		if isArchivedAPIError(err) {
+			return Page{}, ErrArchived
+		}
 		return Page{}, err
 	}
 	return payload.toModel(c.baseURL), nil
@@ -573,6 +578,9 @@ func (c *Client) UpdatePage(ctx context.Context, pageID string, input PageUpsert
 		if isHTTPStatus(err, http.StatusNotFound) {
 			return Page{}, ErrNotFound
 		}
+		if isArchivedAPIError(err) {
+			return Page{}, ErrArchived
+		}
 		return Page{}, err
 	}
 	return payload.toModel(c.baseURL), nil
@@ -645,6 +653,9 @@ func (c *Client) ArchivePages(ctx context.Context, pageIDs []string) (ArchiveRes
 
 	var payload archiveResponse
 	if err := c.do(req, &payload); err != nil {
+		if isArchivedAPIError(err) {
+			return ArchiveResult{}, ErrArchived
+		}
 		return ArchiveResult{}, err
 	}
 	return ArchiveResult{TaskID: payload.ID}, nil
@@ -986,6 +997,43 @@ func isInvalidAttachmentIdentifierError(err error) bool {
 	combined := message + " " + body
 	return strings.Contains(combined, "invalid_request_parameter") &&
 		(strings.Contains(combined, "expected type is contentid") || strings.Contains(combined, "for 'id'"))
+}
+
+func isArchivedAPIError(err error) bool {
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) {
+		return false
+	}
+
+	switch apiErr.StatusCode {
+	case http.StatusBadRequest, http.StatusConflict, http.StatusForbidden, http.StatusNotFound, http.StatusUnprocessableEntity:
+		// continue
+	default:
+		return false
+	}
+
+	combined := strings.ToLower(strings.TrimSpace(apiErr.Message + " " + apiErr.Body))
+	if combined == "" {
+		return false
+	}
+
+	if strings.Contains(combined, "already archived") {
+		return true
+	}
+	if strings.Contains(combined, "is archived") {
+		return true
+	}
+	if strings.Contains(combined, "archived content") {
+		return true
+	}
+	if strings.Contains(combined, "status=archived") || strings.Contains(combined, "status: archived") {
+		return true
+	}
+	if strings.Contains(combined, "cannot update archived") {
+		return true
+	}
+
+	return false
 }
 
 func decodeAPIErrorMessage(body []byte) string {

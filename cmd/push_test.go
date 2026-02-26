@@ -400,6 +400,56 @@ func TestRunPush_FileTargetDetectsWorkspaceChanges(t *testing.T) {
 	}
 }
 
+func TestRunPush_FileTargetAllowsMissingIDForNewPage(t *testing.T) {
+	runParallelCommandTest(t)
+
+	repo := t.TempDir()
+	spaceDir := preparePushRepoWithBaseline(t, repo)
+	newFile := filepath.Join(spaceDir, "new-page.md")
+
+	writeMarkdown(t, newFile, fs.MarkdownDocument{
+		Frontmatter: fs.Frontmatter{
+			Title: "New page",
+			Space: "ENG",
+		},
+		Body: "new content\n",
+	})
+
+	fake := newCmdFakePushRemote(1)
+	oldPushFactory := newPushRemote
+	oldPullFactory := newPullRemote
+	newPushRemote = func(_ *config.Config) (syncflow.PushRemote, error) { return fake, nil }
+	newPullRemote = func(_ *config.Config) (syncflow.PullRemote, error) { return fake, nil }
+	t.Cleanup(func() {
+		newPushRemote = oldPushFactory
+		newPullRemote = oldPullFactory
+	})
+
+	setupEnv(t)
+	chdirRepo(t, spaceDir)
+
+	cmd := &cobra.Command{}
+	cmd.SetOut(&bytes.Buffer{})
+
+	if err := runPush(cmd, config.Target{Mode: config.TargetModeFile, Value: newFile}, OnConflictCancel, false); err != nil {
+		t.Fatalf("runPush() unexpected error: %v", err)
+	}
+	if len(fake.updateCalls) != 1 {
+		t.Fatalf("expected one update call for new file push, got %d", len(fake.updateCalls))
+	}
+
+	doc, err := fs.ReadMarkdownDocument(newFile)
+	if err != nil {
+		t.Fatalf("read new page markdown: %v", err)
+	}
+	if strings.TrimSpace(doc.Frontmatter.ID) == "" {
+		t.Fatal("expected push to persist generated id for new page")
+	}
+	if doc.Frontmatter.Version <= 0 {
+		t.Fatalf("expected positive version after push, got %d", doc.Frontmatter.Version)
+	}
+}
+
 func TestRunPush_DryRunDoesNotMutateFrontmatter(t *testing.T) {
 	runParallelCommandTest(t)
 
