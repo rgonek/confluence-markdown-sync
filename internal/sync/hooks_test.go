@@ -93,6 +93,62 @@ func TestForwardMediaHook(t *testing.T) {
 	}
 }
 
+func TestForwardMediaHook_FallbackByPageAndFilename(t *testing.T) {
+	sourcePath, _ := filepath.Abs("myspace/page.md")
+	targetPath, _ := filepath.Abs("myspace/assets/42/att-123-diagram.png")
+
+	attachmentPathByID := map[string]string{
+		"att-123": targetPath,
+	}
+
+	hook := NewForwardMediaHook(sourcePath, attachmentPathByID)
+	ctx := context.Background()
+
+	out, err := hook(ctx, adfconv.MediaRenderInput{
+		ID: "UNKNOWN_MEDIA_ID",
+		Meta: adfconv.MediaMetadata{
+			PageID:   "42",
+			Filename: "diagram.png",
+		},
+		Alt: "Diagram",
+	})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	if !out.Handled {
+		t.Fatal("Expected Handled=true for filename fallback")
+	}
+
+	expected := "![Diagram](assets/42/att-123-diagram.png)"
+	if out.Markdown != expected {
+		t.Fatalf("Expected markdown %q, got %q", expected, out.Markdown)
+	}
+}
+
+func TestForwardMediaHook_FallbackStaysUnresolvedWhenAmbiguous(t *testing.T) {
+	sourcePath, _ := filepath.Abs("myspace/page.md")
+	firstPath, _ := filepath.Abs("myspace/assets/41/att-111-diagram.png")
+	secondPath, _ := filepath.Abs("myspace/assets/42/att-222-diagram.png")
+
+	attachmentPathByID := map[string]string{
+		"att-111": firstPath,
+		"att-222": secondPath,
+	}
+
+	hook := NewForwardMediaHook(sourcePath, attachmentPathByID)
+	ctx := context.Background()
+
+	_, err := hook(ctx, adfconv.MediaRenderInput{
+		ID: "UNKNOWN_MEDIA_ID",
+		Meta: adfconv.MediaMetadata{
+			Filename: "diagram.png",
+		},
+	})
+	if err != adfconv.ErrUnresolved {
+		t.Fatalf("Expected ErrUnresolved for ambiguous fallback, got %v", err)
+	}
+}
+
 func TestReverseLinkHook(t *testing.T) {
 	spaceDir, _ := filepath.Abs("myspace")
 	index := PageIndex{

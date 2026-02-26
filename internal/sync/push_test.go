@@ -457,6 +457,9 @@ func TestCollectReferencedAssetPaths_FailsForNonAssetsReference(t *testing.T) {
 	if !strings.Contains(err.Error(), "assets/") {
 		t.Fatalf("unexpected error: %v", err)
 	}
+	if !strings.Contains(err.Error(), "Move-Item") {
+		t.Fatalf("expected remediation command hint in error, got: %v", err)
+	}
 }
 
 func TestPush_PreflightStrictFailureSkipsRemoteMutations(t *testing.T) {
