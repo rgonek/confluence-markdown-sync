@@ -110,7 +110,7 @@ func runValidateTargetWithContext(ctx context.Context, out io.Writer, target con
 		return fmt.Errorf("failed to build page index: %w", err)
 	}
 
-	globalIndex := syncflow.GlobalPageIndex{}
+	var globalIndex syncflow.GlobalPageIndex
 	globalIndexRoot := filepath.Dir(targetCtx.spaceDir)
 	if repoRoot, rootErr := gitRepoRoot(); rootErr == nil {
 		globalIndexRoot = repoRoot
