@@ -444,7 +444,7 @@ func buildDiffAttachmentPathByID(spaceDir string, attachmentIndex map[string]str
 func printNoIndexDiff(out io.Writer, leftPath, rightPath string) error {
 	workingDir, leftArg, rightArg := diffCommandPaths(leftPath, rightPath)
 
-	cmd := exec.Command(
+	cmd := exec.Command( //nolint:gosec // arguments are fixed git flags plus scoped local temp paths for display-only diff
 		"git",
 		"-c",
 		"core.autocrlf=false",
