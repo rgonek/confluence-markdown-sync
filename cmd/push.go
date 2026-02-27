@@ -31,6 +31,8 @@ var newPushRemote = func(cfg *config.Config) (syncflow.PushRemote, error) {
 	return newConfluenceClientFromConfig(cfg)
 }
 
+var runPullForPush = runPull
+
 var flagPushPreflight bool
 var flagPushKeepOrphanAssets bool
 var flagArchiveTaskTimeout = confluence.DefaultArchiveTaskTimeout
@@ -544,9 +546,13 @@ func runPushInWorktree(
 			if onConflict == OnConflictPullMerge {
 				slog.Info("push_conflict_resolution", "strategy", OnConflictPullMerge, "action", "run_pull")
 				_, _ = fmt.Fprintf(out, "conflict detected for %s; policy is %s, attempting automatic pull-merge...\n", conflictErr.Path, onConflict)
-				// Clear stashRef before pull-merge since pull will restore workspace
-				*stashRef = ""
-				if pullErr := runPull(cmd, target); pullErr != nil {
+				if strings.TrimSpace(*stashRef) != "" {
+					if err := gitClient.StashPop(*stashRef); err != nil {
+						return fmt.Errorf("restore local workspace before automatic pull-merge: %w", err)
+					}
+					*stashRef = ""
+				}
+				if pullErr := runPullForPush(cmd, target); pullErr != nil {
 					return fmt.Errorf("automatic pull-merge failed: %w", pullErr)
 				}
 				retryCmd := "conf push"

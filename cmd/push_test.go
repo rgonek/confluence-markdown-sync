@@ -175,6 +175,69 @@ func TestRunPush_ConflictPolicies(t *testing.T) {
 	}
 }
 
+func TestRunPush_PullMergeRestoresStashedWorkspaceBeforePull(t *testing.T) {
+	runParallelCommandTest(t)
+
+	repo := t.TempDir()
+	spaceDir := preparePushRepoWithBaseline(t, repo)
+	rootPath := filepath.Join(spaceDir, "root.md")
+
+	writeMarkdown(t, rootPath, fs.MarkdownDocument{
+		Frontmatter: fs.Frontmatter{
+			Title:                  "Root",
+			ID:                     "1",
+			Space:                  "ENG",
+			Version:                1,
+			ConfluenceLastModified: "2026-02-01T10:00:00Z",
+		},
+		Body: "local uncommitted content\n",
+	})
+
+	fake := newCmdFakePushRemote(3)
+	oldPushFactory := newPushRemote
+	oldPullFactory := newPullRemote
+	newPushRemote = func(_ *config.Config) (syncflow.PushRemote, error) { return fake, nil }
+	newPullRemote = func(_ *config.Config) (syncflow.PullRemote, error) { return fake, nil }
+	t.Cleanup(func() {
+		newPushRemote = oldPushFactory
+		newPullRemote = oldPullFactory
+	})
+
+	restoredBeforePull := false
+	oldRunPullForPush := runPullForPush
+	runPullForPush = func(_ *cobra.Command, _ config.Target) error {
+		doc, err := fs.ReadMarkdownDocument(rootPath)
+		if err != nil {
+			return err
+		}
+		restoredBeforePull = strings.Contains(doc.Body, "local uncommitted content")
+		return errors.New("stop pull")
+	}
+	t.Cleanup(func() {
+		runPullForPush = oldRunPullForPush
+	})
+
+	setupEnv(t)
+	chdirRepo(t, spaceDir)
+
+	cmd := &cobra.Command{}
+	cmd.SetOut(&bytes.Buffer{})
+	err := runPush(cmd, config.Target{Mode: config.TargetModeSpace, Value: ""}, OnConflictPullMerge, false)
+	if err == nil {
+		t.Fatal("runPush() expected error from stubbed pull")
+	}
+	if !strings.Contains(err.Error(), "automatic pull-merge failed: stop pull") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !restoredBeforePull {
+		t.Fatal("expected local workspace changes to be restored before automatic pull-merge")
+	}
+
+	if stashList := strings.TrimSpace(runGitForTest(t, repo, "stash", "list")); stashList != "" {
+		t.Fatalf("expected stash to be empty after workspace restore, got:\n%s", stashList)
+	}
+}
+
 func TestRunPush_WritesStructuredCommitTrailers(t *testing.T) {
 	runParallelCommandTest(t)
 
