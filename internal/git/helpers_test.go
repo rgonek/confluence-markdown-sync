@@ -194,12 +194,180 @@ func TestRefsBranchesWorktreesAndCommitHelpers(t *testing.T) {
 	}
 }
 
+func TestBranchOperations(t *testing.T) {
+	repo := setupGitRepoForHelpers(t)
+	client := &Client{RootDir: repo}
+
+	// Test CurrentBranch
+	branch, err := client.CurrentBranch()
+	if err != nil {
+		t.Fatalf("CurrentBranch() error: %v", err)
+	}
+	if branch != "main" {
+		t.Fatalf("CurrentBranch() = %q, want main", branch)
+	}
+
+	// Test Create and Switch Branch (using git commands since Switch isn't in our client yet, but we want to test CurrentBranch)
+	runGitForHelpers(t, repo, "checkout", "-b", "feature")
+	branch, err = client.CurrentBranch()
+	if err != nil {
+		t.Fatalf("CurrentBranch() after checkout error: %v", err)
+	}
+	if branch != "feature" {
+		t.Fatalf("CurrentBranch() = %q, want feature", branch)
+	}
+
+	// Test Merge
+	runGitForHelpers(t, repo, "checkout", "main")
+	if err := os.WriteFile(filepath.Join(repo, "feature.txt"), []byte("feature content"), 0o600); err != nil {
+		t.Fatalf("write feature file: %v", err)
+	}
+	runGitForHelpers(t, repo, "add", "feature.txt")
+	runGitForHelpers(t, repo, "commit", "-m", "feature change")
+
+	// Create another branch to merge from
+	if err := client.CreateBranch("to-merge", "HEAD"); err != nil {
+		t.Fatalf("CreateBranch error: %v", err)
+	}
+
+	// Switch to to-merge and make a change
+	runGitForHelpers(t, repo, "checkout", "to-merge")
+	if err := os.WriteFile(filepath.Join(repo, "merged.txt"), []byte("merged content"), 0o600); err != nil {
+		t.Fatalf("write merged file: %v", err)
+	}
+	runGitForHelpers(t, repo, "add", "merged.txt")
+	runGitForHelpers(t, repo, "commit", "-m", "to-merge change")
+
+	// Back to main and merge
+	runGitForHelpers(t, repo, "checkout", "main")
+	if err := client.Merge("to-merge", "merge to-merge"); err != nil {
+		t.Fatalf("Merge() error: %v", err)
+	}
+
+	if _, err := os.Stat(filepath.Join(repo, "merged.txt")); err != nil {
+		t.Fatalf("merged file should exist: %v", err)
+	}
+}
+
+func TestCommitAndTagOperations(t *testing.T) {
+	repo := setupGitRepoForHelpers(t)
+	client := &Client{RootDir: repo}
+
+	// Test AddForce
+	gitignorePath := filepath.Join(repo, ".gitignore")
+	if err := os.WriteFile(gitignorePath, []byte("ignored.txt\n"), 0o600); err != nil {
+		t.Fatalf("write .gitignore: %v", err)
+	}
+	runGitForHelpers(t, repo, "add", ".gitignore")
+	runGitForHelpers(t, repo, "commit", "-m", "add gitignore")
+
+	ignoredFile := filepath.Join(repo, "ignored.txt")
+	if err := os.WriteFile(ignoredFile, []byte("ignored content"), 0o600); err != nil {
+		t.Fatalf("write ignored file: %v", err)
+	}
+
+	// Regular add should fail (or rather, not add the file)
+	_ = client.Add("ignored.txt")
+	status, _ := client.StatusPorcelain("ignored.txt")
+	if strings.Contains(status, "A") || strings.Contains(status, "M") {
+		t.Fatalf("ignored file should not be staged by regular Add")
+	}
+
+	// AddForce should stage it
+	if err := client.AddForce("ignored.txt"); err != nil {
+		t.Fatalf("AddForce() error: %v", err)
+	}
+	status, _ = client.StatusPorcelain("ignored.txt")
+	if !strings.Contains(status, "A") {
+		t.Fatalf("ignored file should be staged by AddForce, got status %q", status)
+	}
+
+	// Test Tag
+	if err := client.Commit("commit for tag", ""); err != nil {
+		t.Fatalf("Commit error: %v", err)
+	}
+	tagName := "v1.0.0"
+	if err := client.Tag(tagName, "release v1.0.0"); err != nil {
+		t.Fatalf("Tag() error: %v", err)
+	}
+
+	tags := runGitForHelpers(t, repo, "tag")
+	if !strings.Contains(tags, tagName) {
+		t.Fatalf("tag %s not found in tags: %s", tagName, tags)
+	}
+}
+
+func TestStashApplyAndDrop(t *testing.T) {
+	repo := setupGitRepoForHelpers(t)
+	client := &Client{RootDir: repo}
+
+	// Make a change and stash it
+	filePath := filepath.Join(repo, "change.txt")
+	if err := os.WriteFile(filePath, []byte("change"), 0o600); err != nil {
+		t.Fatalf("write change file: %v", err)
+	}
+	runGitForHelpers(t, repo, "add", "change.txt")
+	runGitForHelpers(t, repo, "stash", "push", "-m", "test stash")
+
+	// Verify stashed
+	if _, err := os.Stat(filePath); !os.IsNotExist(err) {
+		t.Fatal("file should be stashed and gone")
+	}
+
+	// Apply stash
+	if err := client.StashApply("stash@{0}"); err != nil {
+		t.Fatalf("StashApply() error: %v", err)
+	}
+	if _, err := os.Stat(filePath); err != nil {
+		t.Fatal("file should be back after StashApply")
+	}
+
+	// Drop stash
+	if err := client.StashDrop("stash@{0}"); err != nil {
+		t.Fatalf("StashDrop() error: %v", err)
+	}
+}
+
+func TestWorktreePrune(t *testing.T) {
+	repo := setupGitRepoForHelpers(t)
+	client := &Client{RootDir: repo}
+
+	// Just call it to see it doesn't fail
+	if err := client.PruneWorktrees(); err != nil {
+		t.Fatalf("PruneWorktrees() error: %v", err)
+	}
+}
+
+func TestNewClient(t *testing.T) {
+	repo := setupGitRepoForHelpers(t)
+	oldWD, _ := os.Getwd()
+	defer os.Chdir(oldWD)
+
+	if err := os.Chdir(repo); err != nil {
+		t.Fatalf("chdir repo: %v", err)
+	}
+
+	client, err := NewClient()
+	if err != nil {
+		t.Fatalf("NewClient() error: %v", err)
+	}
+	if !strings.EqualFold(evalFinalPath(client.RootDir), evalFinalPath(repo)) {
+		t.Fatalf("NewClient RootDir = %q, want %q", client.RootDir, repo)
+	}
+}
+
 func setupGitRepoForHelpers(t *testing.T) string {
 	t.Helper()
 	repo := t.TempDir()
 	runGitForHelpers(t, repo, "init", "-b", "main")
 	runGitForHelpers(t, repo, "config", "user.email", "git-helpers-test@example.com")
 	runGitForHelpers(t, repo, "config", "user.name", "git-helpers-test")
+	// Add initial commit so HEAD exists
+	if err := os.WriteFile(filepath.Join(repo, ".initial"), []byte("init"), 0o600); err != nil {
+		t.Fatalf("write initial file: %v", err)
+	}
+	runGitForHelpers(t, repo, "add", ".initial")
+	runGitForHelpers(t, repo, "commit", "-m", "initial commit")
 	return repo
 }
 
