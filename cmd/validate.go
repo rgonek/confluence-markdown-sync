@@ -359,7 +359,7 @@ func validateFile(ctx context.Context, path, spaceDir string, linkHook mdconvert
 		})
 		return issues
 	}
-	preparedBody, err := syncflow.PrepareMarkdownForAttachmentConversion(spaceDir, path, doc.Body)
+	preparedBody, err := syncflow.PrepareMarkdownForAttachmentConversion(spaceDir, path, doc.Body, strictAttachmentIndex)
 	if err != nil {
 		issues = append(issues, fs.ValidationIssue{
 			Code:    "conversion_error",

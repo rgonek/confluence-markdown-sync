@@ -93,6 +93,30 @@ func TestForwardMediaHook(t *testing.T) {
 	}
 }
 
+func TestForwardMediaHook_RendersFileAsMarkdownLink(t *testing.T) {
+	sourcePath, _ := filepath.Abs("myspace/index.md")
+	targetPath, _ := filepath.Abs("myspace/assets/manual.pdf")
+
+	hook := NewForwardMediaHook(sourcePath, map[string]string{"att-file": targetPath})
+	out, err := hook(context.Background(), adfconv.MediaRenderInput{
+		ID:        "att-file",
+		MediaType: "file",
+		Meta: adfconv.MediaMetadata{
+			AttachmentID: "att-file",
+			Filename:     "manual.pdf",
+		},
+	})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	if !out.Handled {
+		t.Fatal("Expected Handled=true")
+	}
+	if got, want := out.Markdown, "[manual.pdf](assets/manual.pdf)"; got != want {
+		t.Fatalf("Expected markdown %q, got %q", want, got)
+	}
+}
+
 func TestForwardMediaHook_FallbackByPageAndFilename(t *testing.T) {
 	sourcePath, _ := filepath.Abs("myspace/page.md")
 	targetPath, _ := filepath.Abs("myspace/assets/42/att-123-diagram.png")

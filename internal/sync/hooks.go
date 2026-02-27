@@ -108,8 +108,35 @@ func NewForwardMediaHook(sourcePath string, attachmentPathByID map[string]string
 			sourceDir := filepath.Dir(sourcePath)
 			relPath, err := filepath.Rel(sourceDir, targetPath)
 			if err == nil {
+				relPath = filepath.ToSlash(relPath)
+				if resolveForwardMediaType(in) == "file" {
+					label := strings.TrimSpace(in.Meta.Filename)
+					if label == "" {
+						label = strings.TrimSpace(in.Alt)
+					}
+					if label == "" {
+						label = strings.TrimSpace(filepath.Base(targetPath))
+					}
+					if label == "" {
+						label = "Attachment"
+					}
+
+					return adfconv.MediaRenderOutput{
+						Markdown: fmt.Sprintf("[%s](%s)", escapeMarkdownLinkLabel(label), relPath),
+						Handled:  true,
+					}, nil
+				}
+
+				alt := strings.TrimSpace(in.Alt)
+				if alt == "" {
+					alt = strings.TrimSpace(in.Meta.Filename)
+				}
+				if alt == "" {
+					alt = "Image"
+				}
+
 				return adfconv.MediaRenderOutput{
-					Markdown: fmt.Sprintf("![%s](%s)", in.Alt, filepath.ToSlash(relPath)),
+					Markdown: fmt.Sprintf("![%s](%s)", escapeMarkdownLinkLabel(alt), relPath),
 					Handled:  true,
 				}, nil
 			}
@@ -121,6 +148,22 @@ func NewForwardMediaHook(sourcePath string, attachmentPathByID map[string]string
 
 		return adfconv.MediaRenderOutput{Handled: false}, nil
 	}
+}
+
+func resolveForwardMediaType(in adfconv.MediaRenderInput) string {
+	mediaType := strings.ToLower(strings.TrimSpace(in.MediaType))
+	if mediaType == "" {
+		mediaType = strings.ToLower(strings.TrimSpace(stringValue(in.Attrs["type"])))
+	}
+	if mediaType == "image" {
+		return "image"
+	}
+	return "file"
+}
+
+func escapeMarkdownLinkLabel(value string) string {
+	replacer := strings.NewReplacer(`\\`, `\\\\`, `[`, `\\[`, `]`, `\\]`)
+	return replacer.Replace(value)
 }
 
 func resolveAttachmentPathByID(in adfconv.MediaRenderInput, attachmentPathByID map[string]string) (string, bool) {
