@@ -55,15 +55,15 @@ type mockStatusRemote struct {
 	err   error
 }
 
-func (m *mockStatusRemote) GetSpace(ctx context.Context, spaceKey string) (confluence.Space, error) {
+func (m *mockStatusRemote) GetSpace(_ context.Context, _ string) (confluence.Space, error) {
 	return m.space, m.err
 }
 
-func (m *mockStatusRemote) ListPages(ctx context.Context, opts confluence.PageListOptions) (confluence.PageListResult, error) {
+func (m *mockStatusRemote) ListPages(_ context.Context, _ confluence.PageListOptions) (confluence.PageListResult, error) {
 	return m.pages, m.err
 }
 
-func (m *mockStatusRemote) GetPage(ctx context.Context, pageID string) (confluence.Page, error) {
+func (m *mockStatusRemote) GetPage(_ context.Context, _ string) (confluence.Page, error) {
 	return m.page, m.err
 }
 

@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"io"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -15,12 +16,14 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// StatusRemote defines the subset of Confluence API methods needed for sync inspection.
 type StatusRemote interface {
 	GetSpace(ctx context.Context, spaceKey string) (confluence.Space, error)
 	ListPages(ctx context.Context, opts confluence.PageListOptions) (confluence.PageListResult, error)
 	GetPage(ctx context.Context, pageID string) (confluence.Page, error)
 }
 
+// StatusReport contains the results of a sync drift inspection.
 type StatusReport struct {
 	LocalAdded      []string
 	LocalModified   []string
@@ -317,14 +320,14 @@ func collectLocalStatusChanges(target config.Target, spaceDir, spaceKey string) 
 	return added, modified, deleted, nil
 }
 
-func printStatusSection(out interface{ Write([]byte) (int, error) }, title string, added, modified, deleted []string) {
+func printStatusSection(out io.Writer, title string, added, modified, deleted []string) {
 	_, _ = fmt.Fprintf(out, "\n%s:\n", title)
 	printStatusList(out, "added", added)
 	printStatusList(out, "modified", modified)
 	printStatusList(out, "deleted", deleted)
 }
 
-func printStatusList(out interface{ Write([]byte) (int, error) }, label string, items []string) {
+func printStatusList(out io.Writer, label string, items []string) {
 	if len(items) == 0 {
 		_, _ = fmt.Fprintf(out, "  %s (0)\n", label)
 		return

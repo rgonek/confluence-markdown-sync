@@ -54,6 +54,7 @@ func TestCollectLocalStatusChanges(t *testing.T) {
 }
 
 func TestPrintStatusSection(t *testing.T) {
+	runParallelCommandTest(t)
 	out := new(bytes.Buffer)
 	printStatusSection(out, "test", []string{"a"}, []string{"b"}, []string{"c"})
 
@@ -67,6 +68,7 @@ func TestPrintStatusSection(t *testing.T) {
 }
 
 func TestPrintStatusList_Items(t *testing.T) {
+	runParallelCommandTest(t)
 	out := new(bytes.Buffer)
 	printStatusList(out, "deleted", []string{"file1.md", "file2.md"})
 

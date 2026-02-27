@@ -7,6 +7,7 @@ import (
 )
 
 func TestEnsureSynchronizedCmdOutput(t *testing.T) {
+	runParallelCommandTest(t)
 	cmd := newCleanCmd()
 	cmd.SetOut(os.Stdout) // Default behavior mapping
 

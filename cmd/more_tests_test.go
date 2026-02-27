@@ -20,14 +20,10 @@ func TestBuildStatusReport_SkipGit(t *testing.T) {
 }
 
 func TestPrintStatusList_Empty(t *testing.T) {
+	runParallelCommandTest(t)
 	out := new(bytes.Buffer)
 	printStatusList(out, "test", []string{})
 	if !bytes.Contains(out.Bytes(), []byte("(0)")) {
 		t.Errorf("Expected empty list formatting")
 	}
-}
-
-func TestBuildStatusReport_RemoteFetch(t *testing.T) {
-	// The problem is collectLocalStatusChanges hits git and fails immediately, returning error.
-	// We can't reach the rest of buildStatusReport without a valid git repo or stubbing it.
 }

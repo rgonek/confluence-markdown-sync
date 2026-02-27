@@ -8,6 +8,7 @@ import (
 )
 
 func TestRunWithIndeterminateStatus(t *testing.T) {
+	runParallelCommandTest(t)
 	out := new(bytes.Buffer)
 
 	// A quick successful run
@@ -29,6 +30,7 @@ func TestRunWithIndeterminateStatus(t *testing.T) {
 }
 
 func TestStartInlineSpinner(t *testing.T) {
+	runParallelCommandTest(t)
 	out := new(bytes.Buffer)
 	cancel := startInlineSpinner(out, "Testing Spinner...")
 	time.Sleep(10 * time.Millisecond)
@@ -36,6 +38,7 @@ func TestStartInlineSpinner(t *testing.T) {
 }
 
 func TestStartInlineSpinner_SlowExecution(t *testing.T) {
+	runParallelCommandTest(t)
 	out := new(bytes.Buffer)
 	cancel := startInlineSpinner(out, "Testing Slow...")
 	// Wait long enough for the spinner ticker to fire multiple times
