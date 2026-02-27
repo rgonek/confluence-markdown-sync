@@ -1,8 +1,6 @@
 package cmd
 
 import (
-	"os"
-	"os/exec"
 	"testing"
 
 	"github.com/rgonek/confluence-markdown-sync/internal/git"
@@ -12,13 +10,8 @@ func TestResolveCleanTargetBranchHelper(t *testing.T) {
 	runParallelCommandTest(t)
 	tempDir := t.TempDir()
 
-	oldWd, _ := os.Getwd()
-	os.Chdir(tempDir)
-	defer os.Chdir(oldWd)
-
-	// Init via exec
-	cmd := exec.Command("git", "init")
-	cmd.Run()
+	setupGitRepo(t, tempDir)
+	chdirRepo(t, tempDir)
 
 	client, err := git.NewClient()
 	if err != nil {
@@ -52,12 +45,8 @@ func TestResolveCleanTargetBranch_Fallback(t *testing.T) {
 	runParallelCommandTest(t)
 	tempDir := t.TempDir()
 
-	oldWd, _ := os.Getwd()
-	os.Chdir(tempDir)
-	defer os.Chdir(oldWd)
-
-	cmd := exec.Command("git", "init")
-	cmd.Run()
+	setupGitRepo(t, tempDir)
+	chdirRepo(t, tempDir)
 
 	client, err := git.NewClient()
 	if err != nil {

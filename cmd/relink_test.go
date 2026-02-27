@@ -13,6 +13,7 @@ import (
 )
 
 func TestRunRelink_NonInteractiveRequiresYesForHighImpactChanges(t *testing.T) {
+	runParallelCommandTest(t)
 	repo := t.TempDir()
 	setupGitRepo(t, repo)
 

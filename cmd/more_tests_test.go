@@ -11,6 +11,7 @@ import (
 )
 
 func TestBuildStatusReport_SkipGit(t *testing.T) {
+	runParallelCommandTest(t)
 	// Let's test the error return from GetSpace to cover more lines
 	mock := &mockStatusRemote{err: confluence.ErrNotFound}
 

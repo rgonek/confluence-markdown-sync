@@ -3,7 +3,6 @@ package cmd
 import (
 	"context"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"testing"
 	"time"
@@ -18,11 +17,9 @@ func TestCollectLocalStatusChanges_Success(t *testing.T) {
 	runParallelCommandTest(t)
 	tempDir := t.TempDir()
 
-	oldWd, _ := os.Getwd()
-	os.Chdir(tempDir)
-	defer os.Chdir(oldWd)
+	setupGitRepo(t, tempDir)
+	chdirRepo(t, tempDir)
 
-	exec.Command("git", "init").Run()
 	client, err := git.NewClient()
 	if err != nil {
 		t.Fatalf("failed to create client: %v", err)
@@ -67,11 +64,9 @@ func TestBuildStatusReport_Success(t *testing.T) {
 	runParallelCommandTest(t)
 	tempDir := t.TempDir()
 
-	oldWd, _ := os.Getwd()
-	os.Chdir(tempDir)
-	defer os.Chdir(oldWd)
+	setupGitRepo(t, tempDir)
+	chdirRepo(t, tempDir)
 
-	exec.Command("git", "init").Run()
 	client, err := git.NewClient()
 	if err != nil {
 		t.Fatalf("failed to create client: %v", err)

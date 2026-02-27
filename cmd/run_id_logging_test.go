@@ -38,6 +38,7 @@ func TestRunPush_LifecycleLogsIncludeStableRunID(t *testing.T) {
 }
 
 func TestRunPull_LifecycleLogsIncludeStableRunID(t *testing.T) {
+	runParallelCommandTest(t)
 	repo := t.TempDir()
 	chdirRepo(t, repo)
 	setupEnv(t)
@@ -82,6 +83,7 @@ func TestRunDiff_LifecycleLogsIncludeStableRunID(t *testing.T) {
 }
 
 func TestRunValidate_LifecycleLogsIncludeStableRunID(t *testing.T) {
+	runParallelCommandTest(t)
 	repo := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(repo, "ENG"), 0o750); err != nil {
 		t.Fatalf("mkdir ENG dir: %v", err)

@@ -14,6 +14,7 @@ import (
 )
 
 func TestResolveValidateTargetContext_ResolvesSanitizedSpaceDirectoryByKey(t *testing.T) {
+	runParallelCommandTest(t)
 	repo := t.TempDir()
 	spaceDir := filepath.Join(repo, "Technical documentation (TD)")
 	if err := os.MkdirAll(spaceDir, 0o750); err != nil {
@@ -90,6 +91,7 @@ func TestRunValidateTarget_BlocksTamperedIDAgainstState(t *testing.T) {
 }
 
 func TestRunValidateTarget_IgnoresSpaceFrontmatter(t *testing.T) {
+	runParallelCommandTest(t)
 	repo := t.TempDir()
 	setupGitRepo(t, repo)
 	setupEnv(t)
@@ -125,6 +127,7 @@ func TestRunValidateTarget_IgnoresSpaceFrontmatter(t *testing.T) {
 }
 
 func TestRunValidateTarget_BlocksCurrentToDraftTransition(t *testing.T) {
+	runParallelCommandTest(t)
 	repo := t.TempDir()
 	setupGitRepo(t, repo)
 	setupEnv(t)
@@ -163,6 +166,7 @@ func TestRunValidateTarget_BlocksCurrentToDraftTransition(t *testing.T) {
 }
 
 func TestRunValidateTarget_AllowsDraftToDraftForExistingDraftPage(t *testing.T) {
+	runParallelCommandTest(t)
 	repo := t.TempDir()
 	setupGitRepo(t, repo)
 	setupEnv(t)
@@ -197,6 +201,7 @@ func TestRunValidateTarget_AllowsDraftToDraftForExistingDraftPage(t *testing.T) 
 }
 
 func TestRunValidateTarget_AllowsNonAssetsMediaReferenceWithinSpace(t *testing.T) {
+	runParallelCommandTest(t)
 	repo := t.TempDir()
 	setupGitRepo(t, repo)
 	setupEnv(t)
@@ -229,6 +234,7 @@ func TestRunValidateTarget_AllowsNonAssetsMediaReferenceWithinSpace(t *testing.T
 }
 
 func TestRunValidateTarget_AllowsLocalFileLinkAttachment(t *testing.T) {
+	runParallelCommandTest(t)
 	repo := t.TempDir()
 	setupGitRepo(t, repo)
 	setupEnv(t)
@@ -260,6 +266,7 @@ func TestRunValidateTarget_AllowsLocalFileLinkAttachment(t *testing.T) {
 }
 
 func TestRunValidateTarget_FailsForMissingAssetFile(t *testing.T) {
+	runParallelCommandTest(t)
 	repo := t.TempDir()
 	setupGitRepo(t, repo)
 	setupEnv(t)
@@ -292,6 +299,7 @@ func TestRunValidateTarget_FailsForMissingAssetFile(t *testing.T) {
 }
 
 func TestRunValidateTarget_OutsideAssetPathShowsActionableMessage(t *testing.T) {
+	runParallelCommandTest(t)
 	repo := t.TempDir()
 	setupGitRepo(t, repo)
 	setupEnv(t)
@@ -327,6 +335,7 @@ func TestRunValidateTarget_OutsideAssetPathShowsActionableMessage(t *testing.T) 
 }
 
 func TestRunValidateTarget_AllowsCrossSpaceEncodedRelativeLink(t *testing.T) {
+	runParallelCommandTest(t)
 	repo := t.TempDir()
 	setupGitRepo(t, repo)
 	setupEnv(t)
@@ -367,6 +376,7 @@ func TestRunValidateTarget_AllowsCrossSpaceEncodedRelativeLink(t *testing.T) {
 }
 
 func TestRunValidateTarget_AllowsLinkToSimultaneousNewPageInSpaceScope(t *testing.T) {
+	runParallelCommandTest(t)
 	repo := t.TempDir()
 	setupGitRepo(t, repo)
 	setupEnv(t)
@@ -399,6 +409,7 @@ func TestRunValidateTarget_AllowsLinkToSimultaneousNewPageInSpaceScope(t *testin
 }
 
 func TestRunValidateTargetWithContext_ReturnsCancellation(t *testing.T) {
+	runParallelCommandTest(t)
 	repo := t.TempDir()
 	setupGitRepo(t, repo)
 	setupEnv(t)

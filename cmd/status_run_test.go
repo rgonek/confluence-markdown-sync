@@ -10,6 +10,7 @@ import (
 )
 
 func TestStatusCmdRun(t *testing.T) {
+	runParallelCommandTest(t)
 	t.Run("creates cobra command successfully", func(t *testing.T) {
 		cmd := newStatusCmd()
 		if cmd == nil {
@@ -33,6 +34,7 @@ func TestStatusCmdRun(t *testing.T) {
 }
 
 func TestBuildStatusReport(t *testing.T) {
+	runParallelCommandTest(t)
 	// A mock to get some coverage on buildStatusReport if possible
 	// It normally errors on collectLocalStatusChanges if git repo isn't right
 	mock := &mockStatusRemote{}
@@ -45,6 +47,7 @@ func TestBuildStatusReport(t *testing.T) {
 }
 
 func TestCollectLocalStatusChanges(t *testing.T) {
+	runParallelCommandTest(t)
 	// Test the fallback/error branch
 	target := config.Target{Value: "TEST", Mode: config.TargetModeSpace}
 	_, _, _, _ = collectLocalStatusChanges(target, "/nonexistent", "TEST")
@@ -77,6 +80,7 @@ func TestPrintStatusList_Items(t *testing.T) {
 }
 
 func TestBuildStatusReport_Drift(t *testing.T) {
+	runParallelCommandTest(t)
 	mock := &mockStatusRemote{}
 	target := config.Target{Value: "TEST", Mode: config.TargetModeSpace}
 	ctx := context.Background()

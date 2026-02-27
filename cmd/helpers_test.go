@@ -19,7 +19,6 @@ var (
 
 func runParallelCommandTest(t *testing.T) {
 	t.Helper()
-	t.Parallel()
 
 	commandTestMu.Lock()
 	t.Cleanup(commandTestMu.Unlock)
