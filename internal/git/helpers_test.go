@@ -328,6 +328,46 @@ func TestStashApplyAndDrop(t *testing.T) {
 	}
 }
 
+func TestStashPop_Conflict(t *testing.T) {
+	repo := setupGitRepoForHelpers(t)
+	client := &Client{RootDir: repo}
+
+	filePath := filepath.Join(repo, "conflict.txt")
+	if err := os.WriteFile(filePath, []byte("v1\n"), 0o600); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+	runGitForHelpers(t, repo, "add", "conflict.txt")
+	runGitForHelpers(t, repo, "commit", "-m", "v1")
+
+	// Change and stash
+	if err := os.WriteFile(filePath, []byte("v2-stashed\n"), 0o600); err != nil {
+		t.Fatalf("write v2: %v", err)
+	}
+	runGitForHelpers(t, repo, "add", "conflict.txt")
+	out := runGitForHelpers(t, repo, "stash", "create")
+	fields := strings.Fields(out)
+	if len(fields) == 0 {
+		t.Fatalf("stash create returned no output")
+	}
+	stashRef := fields[len(fields)-1]
+	runGitForHelpers(t, repo, "stash", "store", "-m", "conflict stash", stashRef)
+	runGitForHelpers(t, repo, "reset", "--hard", "HEAD")
+
+	// Change in working directory to conflict
+	if err := os.WriteFile(filePath, []byte("v2-working\n"), 0o600); err != nil {
+		t.Fatalf("write v2 working: %v", err)
+	}
+
+	// Try to pop - should fail due to conflict
+	err := client.StashPop("stash@{0}")
+	if err == nil {
+		t.Fatal("expected conflict error on StashPop, got nil")
+	}
+	if !strings.Contains(err.Error(), "conflict") && !strings.Contains(err.Error(), "merge") {
+		t.Fatalf("expected conflict message in error, got: %v", err)
+	}
+}
+
 func TestWorktreePrune(t *testing.T) {
 	repo := setupGitRepoForHelpers(t)
 	client := &Client{RootDir: repo}
@@ -362,6 +402,7 @@ func setupGitRepoForHelpers(t *testing.T) string {
 	runGitForHelpers(t, repo, "init", "-b", "main")
 	runGitForHelpers(t, repo, "config", "user.email", "git-helpers-test@example.com")
 	runGitForHelpers(t, repo, "config", "user.name", "git-helpers-test")
+	runGitForHelpers(t, repo, "config", "core.autocrlf", "false")
 	// Add initial commit so HEAD exists
 	if err := os.WriteFile(filepath.Join(repo, ".initial"), []byte("init"), 0o600); err != nil {
 		t.Fatalf("write initial file: %v", err)

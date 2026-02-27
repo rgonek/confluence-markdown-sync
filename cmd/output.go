@@ -33,7 +33,7 @@ type fdWriter interface {
 	Fd() uintptr
 }
 
-func outputSupportsProgress(out io.Writer) bool {
+var outputSupportsProgress = func(out io.Writer) bool {
 	if synced, ok := out.(*synchronizedWriter); ok {
 		out = synced.w
 	}
