@@ -464,13 +464,13 @@ func Pull(ctx context.Context, remote PullRemote, opts PullOptions) (PullResult,
 				closeErr := tempFile.Close()
 
 				if downloadErr == nil && closeErr == nil {
-					if err := os.Rename(tempName, assetPath); err != nil {
-						_ = os.Remove(tempName)
+					if err := os.Rename(tempName, assetPath); err != nil { //nolint:gosec // Path is controlled by application
+						_ = os.Remove(tempName) //nolint:gosec // Path is controlled by application
 						return fmt.Errorf("rename attachment file %s: %w", assetPath, err)
 					}
 					return nil
 				}
-				_ = os.Remove(tempName)
+				_ = os.Remove(tempName) //nolint:gosec // Path is controlled by application
 
 				if downloadErr == nil && closeErr != nil {
 					return fmt.Errorf("close temp attachment file %s: %w", assetPath, closeErr)
@@ -566,7 +566,6 @@ func Pull(ctx context.Context, remote PullRemote, opts PullOptions) (PullResult,
 			Frontmatter: fs.Frontmatter{
 				Title:     page.Title,
 				ID:        page.ID,
-				Space:     opts.SpaceKey,
 				Version:   page.Version,
 				State:     page.Status,
 				Status:    page.ContentStatus,
@@ -822,6 +821,22 @@ func resolveFolderHierarchyFromPages(ctx context.Context, remote PullRemote, pag
 	}
 
 	return folderByID, diagnostics, nil
+}
+
+// ResolveFolderPathIndex rebuilds folder_path_index from remote hierarchy.
+func ResolveFolderPathIndex(ctx context.Context, remote PullRemote, pages []confluence.Page) (map[string]string, []PullDiagnostic, error) {
+	folderByID, diagnostics, err := resolveFolderHierarchyFromPages(ctx, remote, pages)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	pageByID := make(map[string]confluence.Page, len(pages))
+	for _, page := range pages {
+		pageByID[strings.TrimSpace(page.ID)] = page
+	}
+
+	folderPathIndex := buildFolderPathIndex(folderByID, pageByID)
+	return folderPathIndex, diagnostics, nil
 }
 
 func listAllChanges(ctx context.Context, remote PullRemote, opts confluence.ChangeListOptions, progress Progress) ([]confluence.Change, error) {

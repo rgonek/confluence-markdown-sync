@@ -354,7 +354,6 @@ func renderDiffMarkdown(
 		Frontmatter: fs.Frontmatter{
 			Title:   page.Title,
 			ID:      page.ID,
-			Space:   spaceKey,
 			Version: page.Version,
 		},
 		Body: forward.Markdown,

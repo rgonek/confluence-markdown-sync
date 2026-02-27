@@ -64,10 +64,57 @@ func TestNormalizeForwardMarkdown_LeavesNonLinksEscaped(t *testing.T) {
 	}
 }
 
-func TestNormalizeForwardMarkdown_LeavesUnknownDestinationEscaped(t *testing.T) {
-	input := "Keep \\[label\\]\\(not-a-link\\) as plain text.\n"
+func TestForwardWithMediaHook(t *testing.T) {
+	ctx := context.Background()
+	// ADF with media
+	adfJSON := []byte(`{"version":1,"type":"doc","content":[{"type":"mediaGroup","content":[{"type":"media","attrs":{"id":"media-1","type":"file","collection":"col"}}]}]}`)
 
-	if got := normalizeForwardMarkdown(input); got != input {
-		t.Fatalf("normalizeForwardMarkdown() unexpectedly changed input: %q", got)
+	mediaHook := func(ctx context.Context, in adfconv.MediaRenderInput) (adfconv.MediaRenderOutput, error) {
+		return adfconv.MediaRenderOutput{
+			Markdown: "![Alt Text](assets/image.png)",
+			Handled:  true,
+		}, nil
+	}
+
+	res, err := Forward(ctx, adfJSON, ForwardConfig{MediaHook: mediaHook}, "test.md")
+	if err != nil {
+		t.Fatalf("Forward failed: %v", err)
+	}
+
+	expected := "![Alt Text](assets/image.png)\n"
+	if res.Markdown != expected {
+		t.Errorf("Expected markdown %q, got %q", expected, res.Markdown)
+	}
+}
+
+func TestNormalizeForwardMarkdown_Complex(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{
+			name:     "mixed links and brackets",
+			input:    "Intro \\[Page A\\]\\(./Page-A.md\\) and \\[Other\\].\n",
+			expected: "Intro [Page A](./Page-A.md) and \\[Other\\].\n",
+		},
+		{
+			name:     "multiple links",
+			input:    "\\[L1\\]\\(P1.md\\) and \\[L2\\]\\(P2.md\\)\n",
+			expected: "[L1](P1.md) and [L2](P2.md)\n",
+		},
+		{
+			name:     "link with anchor",
+			input:    "\\[Text\\]\\(path.md#anchor\\)\n",
+			expected: "[Text](path.md#anchor)\n",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := normalizeForwardMarkdown(tt.input); got != tt.expected {
+				t.Errorf("normalizeForwardMarkdown() = %q, want %q", got, tt.expected)
+			}
+		})
 	}
 }

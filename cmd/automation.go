@@ -18,6 +18,10 @@ func requireSafetyConfirmation(in io.Reader, out io.Writer, action string, chang
 		return nil
 	}
 
+	if flagYes {
+		return nil
+	}
+
 	reasonParts := make([]string, 0, 2)
 	if changedCount > safetyConfirmationThreshold {
 		reasonParts = append(reasonParts, fmt.Sprintf("%d files", changedCount))
@@ -27,18 +31,15 @@ func requireSafetyConfirmation(in io.Reader, out io.Writer, action string, chang
 	}
 	reason := strings.Join(reasonParts, " and ")
 
-	if flagYes {
-		return nil
-	}
 	if flagNonInteractive {
 		return fmt.Errorf("%s requires confirmation (%s); rerun with --yes", action, reason)
 	}
 
-	deleteNote := ""
+	title := fmt.Sprintf("%s will affect %d markdown file(s)", action, changedCount)
 	if hasDeletes {
-		deleteNote = " and includes delete operations (including unstaged deletions)"
+		title += " and includes delete operations (including unstaged deletions)"
 	}
-	title := fmt.Sprintf("%s will affect %d markdown file(s)%s. Continue?", action, changedCount, deleteNote)
+	title += ". Continue?"
 
 	if outputSupportsProgress(out) {
 		var confirm bool

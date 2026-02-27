@@ -9,6 +9,7 @@ import (
 )
 
 func TestRunInit_CreatesInitialCommitWhenRepoMissing(t *testing.T) {
+	runParallelCommandTest(t)
 	repo := t.TempDir()
 	chdirRepo(t, repo)
 
@@ -46,6 +47,7 @@ func TestRunInit_CreatesInitialCommitWhenRepoMissing(t *testing.T) {
 }
 
 func TestRunInit_DoesNotCreateCommitInsideExistingRepo(t *testing.T) {
+	runParallelCommandTest(t)
 	repo := t.TempDir()
 	setupGitRepo(t, repo)
 

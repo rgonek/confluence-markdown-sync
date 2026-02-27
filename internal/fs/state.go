@@ -2,6 +2,7 @@ package fs
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -11,6 +12,8 @@ import (
 
 // StateFileName is the per-space sync state file.
 const StateFileName = ".confluence-state.json"
+
+var ErrStateConflictMarkers = errors.New("state file contains git conflict markers")
 
 // SpaceState stores per-space sync metadata used for pull/push planning.
 type SpaceState struct {
@@ -52,6 +55,9 @@ func LoadState(spaceDir string) (SpaceState, error) {
 
 	var state SpaceState
 	if err := json.Unmarshal(raw, &state); err != nil {
+		if hasGitConflictMarkers(raw) {
+			return SpaceState{}, fmt.Errorf("%w: %s", ErrStateConflictMarkers, path)
+		}
 		return SpaceState{}, fmt.Errorf("parse state file %s: %w", path, err)
 	}
 	state.normalize()
@@ -130,4 +136,16 @@ func validateWatermark(v string) error {
 		return err
 	}
 	return nil
+}
+
+func hasGitConflictMarkers(raw []byte) bool {
+	if len(raw) == 0 {
+		return false
+	}
+	content := string(raw)
+	return strings.Contains(content, "<<<<<<<") || strings.Contains(content, "=======") || strings.Contains(content, ">>>>>>>")
+}
+
+func IsStateConflictError(err error) bool {
+	return errors.Is(err, ErrStateConflictMarkers)
 }

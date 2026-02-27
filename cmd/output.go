@@ -33,7 +33,7 @@ type fdWriter interface {
 	Fd() uintptr
 }
 
-func outputSupportsProgress(out io.Writer) bool {
+var outputSupportsProgress = func(out io.Writer) bool {
 	if synced, ok := out.(*synchronizedWriter); ok {
 		out = synced.w
 	}
@@ -52,7 +52,7 @@ func outputTerminalWidth(out io.Writer) int {
 	if !ok {
 		return 0
 	}
-	width, _, err := term.GetSize(int(fileLike.Fd()))
+	width, _, err := term.GetSize(int(fileLike.Fd())) //nolint:gosec // Fd is small and fits in int
 	if err != nil || width <= 0 {
 		return 0
 	}

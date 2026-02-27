@@ -14,6 +14,7 @@ import (
 )
 
 func TestResolveValidateTargetContext_ResolvesSanitizedSpaceDirectoryByKey(t *testing.T) {
+	runParallelCommandTest(t)
 	repo := t.TempDir()
 	spaceDir := filepath.Join(repo, "Technical documentation (TD)")
 	if err := os.MkdirAll(spaceDir, 0o750); err != nil {
@@ -80,7 +81,7 @@ func TestRunValidateTarget_BlocksTamperedIDAgainstState(t *testing.T) {
 
 	chdirRepo(t, repo)
 	out := &bytes.Buffer{}
-	err := runValidateTarget(out, config.Target{Mode: config.TargetModeSpace, Value: "Engineering (ENG)"})
+	err := runValidateTargetWithContext(context.Background(), out, config.Target{Mode: config.TargetModeSpace, Value: "Engineering (ENG)"})
 	if err == nil {
 		t.Fatal("expected validate to fail for tampered id")
 	}
@@ -89,7 +90,8 @@ func TestRunValidateTarget_BlocksTamperedIDAgainstState(t *testing.T) {
 	}
 }
 
-func TestRunValidateTarget_BlocksTamperedSpaceAgainstState(t *testing.T) {
+func TestRunValidateTarget_IgnoresSpaceFrontmatter(t *testing.T) {
+	runParallelCommandTest(t)
 	repo := t.TempDir()
 	setupGitRepo(t, repo)
 	setupEnv(t)
@@ -118,16 +120,14 @@ func TestRunValidateTarget_BlocksTamperedSpaceAgainstState(t *testing.T) {
 
 	chdirRepo(t, repo)
 	out := &bytes.Buffer{}
-	err := runValidateTarget(out, config.Target{Mode: config.TargetModeSpace, Value: "Engineering (ENG)"})
-	if err == nil {
-		t.Fatal("expected validate to fail for tampered space")
-	}
-	if !strings.Contains(out.String(), "[immutable] space") {
-		t.Fatalf("expected immutable space issue, got:\n%s", out.String())
+	err := runValidateTargetWithContext(context.Background(), out, config.Target{Mode: config.TargetModeSpace, Value: "Engineering (ENG)"})
+	if err != nil {
+		t.Fatalf("expected validate success when space differs, got: %v\nOutput:\n%s", err, out.String())
 	}
 }
 
 func TestRunValidateTarget_BlocksCurrentToDraftTransition(t *testing.T) {
+	runParallelCommandTest(t)
 	repo := t.TempDir()
 	setupGitRepo(t, repo)
 	setupEnv(t)
@@ -156,7 +156,7 @@ func TestRunValidateTarget_BlocksCurrentToDraftTransition(t *testing.T) {
 
 	chdirRepo(t, repo)
 	out := &bytes.Buffer{}
-	err := runValidateTarget(out, config.Target{Mode: config.TargetModeSpace, Value: "Engineering (ENG)"})
+	err := runValidateTargetWithContext(context.Background(), out, config.Target{Mode: config.TargetModeSpace, Value: "Engineering (ENG)"})
 	if err == nil {
 		t.Fatal("expected validate to fail for current->draft transition")
 	}
@@ -166,6 +166,7 @@ func TestRunValidateTarget_BlocksCurrentToDraftTransition(t *testing.T) {
 }
 
 func TestRunValidateTarget_AllowsDraftToDraftForExistingDraftPage(t *testing.T) {
+	runParallelCommandTest(t)
 	repo := t.TempDir()
 	setupGitRepo(t, repo)
 	setupEnv(t)
@@ -194,12 +195,13 @@ func TestRunValidateTarget_AllowsDraftToDraftForExistingDraftPage(t *testing.T) 
 
 	chdirRepo(t, repo)
 	out := &bytes.Buffer{}
-	if err := runValidateTarget(out, config.Target{Mode: config.TargetModeSpace, Value: "Engineering (ENG)"}); err != nil {
+	if err := runValidateTargetWithContext(context.Background(), out, config.Target{Mode: config.TargetModeSpace, Value: "Engineering (ENG)"}); err != nil {
 		t.Fatalf("expected validate success for draft->draft, got: %v\nOutput:\n%s", err, out.String())
 	}
 }
 
 func TestRunValidateTarget_AllowsNonAssetsMediaReferenceWithinSpace(t *testing.T) {
+	runParallelCommandTest(t)
 	repo := t.TempDir()
 	setupGitRepo(t, repo)
 	setupEnv(t)
@@ -226,12 +228,13 @@ func TestRunValidateTarget_AllowsNonAssetsMediaReferenceWithinSpace(t *testing.T
 
 	chdirRepo(t, repo)
 	out := &bytes.Buffer{}
-	if err := runValidateTarget(out, config.Target{Mode: config.TargetModeSpace, Value: "Engineering (ENG)"}); err != nil {
+	if err := runValidateTargetWithContext(context.Background(), out, config.Target{Mode: config.TargetModeSpace, Value: "Engineering (ENG)"}); err != nil {
 		t.Fatalf("expected validate success, got: %v\nOutput:\n%s", err, out.String())
 	}
 }
 
 func TestRunValidateTarget_AllowsLocalFileLinkAttachment(t *testing.T) {
+	runParallelCommandTest(t)
 	repo := t.TempDir()
 	setupGitRepo(t, repo)
 	setupEnv(t)
@@ -257,12 +260,13 @@ func TestRunValidateTarget_AllowsLocalFileLinkAttachment(t *testing.T) {
 
 	chdirRepo(t, repo)
 	out := &bytes.Buffer{}
-	if err := runValidateTarget(out, config.Target{Mode: config.TargetModeSpace, Value: "Engineering (ENG)"}); err != nil {
+	if err := runValidateTargetWithContext(context.Background(), out, config.Target{Mode: config.TargetModeSpace, Value: "Engineering (ENG)"}); err != nil {
 		t.Fatalf("expected validate success, got: %v\nOutput:\n%s", err, out.String())
 	}
 }
 
 func TestRunValidateTarget_FailsForMissingAssetFile(t *testing.T) {
+	runParallelCommandTest(t)
 	repo := t.TempDir()
 	setupGitRepo(t, repo)
 	setupEnv(t)
@@ -285,7 +289,7 @@ func TestRunValidateTarget_FailsForMissingAssetFile(t *testing.T) {
 
 	chdirRepo(t, repo)
 	out := &bytes.Buffer{}
-	err := runValidateTarget(out, config.Target{Mode: config.TargetModeSpace, Value: "Engineering (ENG)"})
+	err := runValidateTargetWithContext(context.Background(), out, config.Target{Mode: config.TargetModeSpace, Value: "Engineering (ENG)"})
 	if err == nil {
 		t.Fatal("expected validate to fail for missing asset")
 	}
@@ -295,6 +299,7 @@ func TestRunValidateTarget_FailsForMissingAssetFile(t *testing.T) {
 }
 
 func TestRunValidateTarget_OutsideAssetPathShowsActionableMessage(t *testing.T) {
+	runParallelCommandTest(t)
 	repo := t.TempDir()
 	setupGitRepo(t, repo)
 	setupEnv(t)
@@ -317,7 +322,7 @@ func TestRunValidateTarget_OutsideAssetPathShowsActionableMessage(t *testing.T) 
 
 	chdirRepo(t, repo)
 	out := &bytes.Buffer{}
-	err := runValidateTarget(out, config.Target{Mode: config.TargetModeSpace, Value: "Engineering (ENG)"})
+	err := runValidateTargetWithContext(context.Background(), out, config.Target{Mode: config.TargetModeSpace, Value: "Engineering (ENG)"})
 	if err == nil {
 		t.Fatal("expected validate to fail for outside-space asset reference")
 	}
@@ -330,6 +335,7 @@ func TestRunValidateTarget_OutsideAssetPathShowsActionableMessage(t *testing.T) 
 }
 
 func TestRunValidateTarget_AllowsCrossSpaceEncodedRelativeLink(t *testing.T) {
+	runParallelCommandTest(t)
 	repo := t.TempDir()
 	setupGitRepo(t, repo)
 	setupEnv(t)
@@ -364,12 +370,13 @@ func TestRunValidateTarget_AllowsCrossSpaceEncodedRelativeLink(t *testing.T) {
 
 	chdirRepo(t, repo)
 	out := &bytes.Buffer{}
-	if err := runValidateTarget(out, config.Target{Mode: config.TargetModeSpace, Value: "Engineering (ENG)"}); err != nil {
+	if err := runValidateTargetWithContext(context.Background(), out, config.Target{Mode: config.TargetModeSpace, Value: "Engineering (ENG)"}); err != nil {
 		t.Fatalf("expected validate success, got: %v\nOutput:\n%s", err, out.String())
 	}
 }
 
 func TestRunValidateTarget_AllowsLinkToSimultaneousNewPageInSpaceScope(t *testing.T) {
+	runParallelCommandTest(t)
 	repo := t.TempDir()
 	setupGitRepo(t, repo)
 	setupEnv(t)
@@ -396,12 +403,13 @@ func TestRunValidateTarget_AllowsLinkToSimultaneousNewPageInSpaceScope(t *testin
 
 	chdirRepo(t, repo)
 	out := &bytes.Buffer{}
-	if err := runValidateTarget(out, config.Target{Mode: config.TargetModeSpace, Value: "Engineering (ENG)"}); err != nil {
+	if err := runValidateTargetWithContext(context.Background(), out, config.Target{Mode: config.TargetModeSpace, Value: "Engineering (ENG)"}); err != nil {
 		t.Fatalf("expected validate success, got: %v\nOutput:\n%s", err, out.String())
 	}
 }
 
 func TestRunValidateTargetWithContext_ReturnsCancellation(t *testing.T) {
+	runParallelCommandTest(t)
 	repo := t.TempDir()
 	setupGitRepo(t, repo)
 	setupEnv(t)

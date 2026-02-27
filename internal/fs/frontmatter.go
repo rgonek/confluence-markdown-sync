@@ -21,7 +21,6 @@ var (
 	// ImmutableFrontmatterKeys contains keys that cannot be changed manually.
 	ImmutableFrontmatterKeys = []string{
 		"id",
-		"space",
 	}
 
 	// MutableBySyncFrontmatterKeys contains keys that are managed by sync operations.
@@ -102,7 +101,6 @@ func (fm Frontmatter) MarshalYAML() (any, error) {
 	return frontmatterYAML{
 		Title:     fm.Title,
 		ID:        fm.ID,
-		Space:     fm.Space,
 		Version:   fm.Version,
 		State:     normalizeStateForMarshal(fm.State),
 		Status:    fm.Status,
@@ -361,15 +359,6 @@ func ValidateFrontmatterSchema(fm Frontmatter) ValidationResult {
 	result := ValidationResult{}
 
 	// id is optional for new pages but must be valid if present
-	// space is always required
-	if strings.TrimSpace(fm.Space) == "" {
-		result.Issues = append(result.Issues, ValidationIssue{
-			Field:   "space",
-			Code:    "required",
-			Message: "space is required",
-		})
-	}
-
 	if strings.TrimSpace(fm.ID) != "" {
 		if fm.Version <= 0 {
 			result.Issues = append(result.Issues, ValidationIssue{
@@ -420,13 +409,6 @@ func ValidateImmutableFrontmatter(previous, current Frontmatter) ValidationResul
 			Field:   "id",
 			Code:    "immutable",
 			Message: "id is immutable and cannot be changed manually",
-		})
-	}
-	if strings.TrimSpace(previous.Space) != strings.TrimSpace(current.Space) {
-		result.Issues = append(result.Issues, ValidationIssue{
-			Field:   "space",
-			Code:    "immutable",
-			Message: "space is immutable and cannot be changed manually",
 		})
 	}
 

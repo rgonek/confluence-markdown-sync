@@ -61,8 +61,11 @@ Body text.
 	if strings.Contains(string(out), "author:") || strings.Contains(string(out), "last_modified_by:") || strings.Contains(string(out), "last_modified_at:") {
 		t.Fatalf("formatted output should use created_/updated_ keys, got:\n%s", string(out))
 	}
-	if !strings.Contains(string(out), "\nid:") || !strings.Contains(string(out), "\nspace:") || !strings.Contains(string(out), "\nversion:") {
+	if !strings.Contains(string(out), "\nid:") || !strings.Contains(string(out), "\nversion:") {
 		t.Fatalf("formatted output missing canonical keys, got:\n%s", string(out))
+	}
+	if strings.Contains(string(out), "\nspace:") {
+		t.Fatalf("formatted output should omit space key, got:\n%s", string(out))
 	}
 	if !strings.Contains(string(out), "\ncreated_by:") || !strings.Contains(string(out), "\nupdated_by:") || !strings.Contains(string(out), "\nupdated_at:") {
 		t.Fatalf("formatted output missing metadata keys, got:\n%s", string(out))
@@ -72,8 +75,8 @@ Body text.
 	if err != nil {
 		t.Fatalf("ParseMarkdownDocument(second pass) unexpected error: %v", err)
 	}
-	if parsedAgain.Frontmatter.Space != "DOCS" {
-		t.Fatalf("Space(second pass) = %q, want DOCS", parsedAgain.Frontmatter.Space)
+	if parsedAgain.Frontmatter.Space != "" {
+		t.Fatalf("Space(second pass) = %q, want empty", parsedAgain.Frontmatter.Space)
 	}
 }
 
@@ -116,13 +119,12 @@ func TestParseMarkdownDocument_MissingFrontmatter(t *testing.T) {
 
 func TestValidateFrontmatterSchema(t *testing.T) {
 	result := ValidateFrontmatterSchema(Frontmatter{})
-	if result.IsValid() {
-		t.Fatal("ValidateFrontmatterSchema() should fail for empty frontmatter")
+	if !result.IsValid() {
+		t.Fatalf("ValidateFrontmatterSchema() unexpected issues for empty frontmatter: %#v", result.Issues)
 	}
 
 	result = ValidateFrontmatterSchema(Frontmatter{
 		ID:      "10",
-		Space:   "OPS",
 		Version: 2,
 	})
 	if !result.IsValid() {
@@ -130,7 +132,6 @@ func TestValidateFrontmatterSchema(t *testing.T) {
 	}
 
 	result = ValidateFrontmatterSchema(Frontmatter{
-		Space: "OPS",
 		State: "draft",
 	})
 	if !result.IsValid() {
@@ -138,7 +139,6 @@ func TestValidateFrontmatterSchema(t *testing.T) {
 	}
 
 	result = ValidateFrontmatterSchema(Frontmatter{
-		Space: "OPS",
 		State: "invalid",
 	})
 	if result.IsValid() {
@@ -233,7 +233,7 @@ func TestValidateImmutableFrontmatter(t *testing.T) {
 	if result.IsValid() {
 		t.Fatal("ValidateImmutableFrontmatter() should fail when immutable keys change")
 	}
-	if len(result.Issues) != 2 {
-		t.Fatalf("issues = %d, want 2", len(result.Issues))
+	if len(result.Issues) != 1 {
+		t.Fatalf("issues = %d, want 1", len(result.Issues))
 	}
 }

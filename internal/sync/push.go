@@ -490,20 +490,6 @@ func pushUpsertPage(
 				relPath, trackedPageID, pageID,
 			)
 		}
-
-		expectedSpace := strings.TrimSpace(state.SpaceKey)
-		if expectedSpace == "" {
-			expectedSpace = strings.TrimSpace(opts.SpaceKey)
-		}
-		if expectedSpace != "" && !strings.EqualFold(strings.TrimSpace(doc.Frontmatter.Space), expectedSpace) {
-			return PushCommitPlan{}, fmt.Errorf(
-				"page %q changed immutable space from %s to %s",
-				relPath, expectedSpace, strings.TrimSpace(doc.Frontmatter.Space),
-			)
-		}
-	}
-	if !strings.EqualFold(strings.TrimSpace(doc.Frontmatter.Space), strings.TrimSpace(opts.SpaceKey)) {
-		return PushCommitPlan{}, fmt.Errorf("%s belongs to space %q, expected %q", relPath, doc.Frontmatter.Space, opts.SpaceKey)
 	}
 
 	localVersion := doc.Frontmatter.Version
@@ -672,11 +658,10 @@ func pushUpsertPage(
 			pageIDByPath[normalizedRelPath] = pageID
 
 			doc.Frontmatter.ID = pageID
-			doc.Frontmatter.Space = opts.SpaceKey
 			doc.Frontmatter.Version = precreatedPage.Version
 		} else {
 			if dirPath != "" && dirPath != "." {
-				folderIDByPath, err = ensureFolderHierarchy(ctx, remote, space.ID, dirPath, folderIDByPath, diagnostics)
+				folderIDByPath, err = ensureFolderHierarchy(ctx, remote, space.ID, dirPath, relPath, pageIDByPath, folderIDByPath, diagnostics)
 				if err != nil {
 					return failWithRollback(fmt.Errorf("ensure folder hierarchy for %s: %w", relPath, err))
 				}
@@ -706,7 +691,6 @@ func pushUpsertPage(
 			pageIDByPath[normalizedRelPath] = pageID
 
 			doc.Frontmatter.ID = pageID
-			doc.Frontmatter.Space = opts.SpaceKey
 			doc.Frontmatter.Version = created.Version
 		}
 	}
@@ -838,6 +822,7 @@ func pushUpsertPage(
 	}
 
 	state.PagePathIndex[relPath] = pageID
+	collapseFolderParentIfIndexPage(ctx, remote, relPath, pageID, folderIDByPath, remotePageByID, diagnostics)
 	rollback.clearContentSnapshot()
 	stagedPaths := append([]string{relPath}, touchedAssets...)
 	stagedPaths = dedupeSortedPaths(stagedPaths)
@@ -1182,6 +1167,7 @@ func restorePageMetadataSnapshot(ctx context.Context, remote PushRemote, pageID 
 func resolveParentIDFromHierarchy(relPath, pageID, fallbackParentID string, pageIDByPath PageIndex, folderIDByPath map[string]string) string {
 	resolvedFallback := strings.TrimSpace(fallbackParentID)
 	resolvedPageID := strings.TrimSpace(pageID)
+	normalizedRelPath := normalizeRelPath(relPath)
 
 	dirPath := normalizeRelPath(filepath.ToSlash(filepath.Dir(filepath.FromSlash(relPath))))
 	if dirPath == "" || dirPath == "." {
@@ -1190,16 +1176,18 @@ func resolveParentIDFromHierarchy(relPath, pageID, fallbackParentID string, page
 
 	currentDir := dirPath
 	for currentDir != "" && currentDir != "." {
-		dirBase := filepath.Base(filepath.FromSlash(currentDir))
-		if strings.TrimSpace(dirBase) != "" && dirBase != "." {
-			if folderID, ok := folderIDByPath[currentDir]; ok && folderID != "" {
-				return folderID
+		dirBase := strings.TrimSpace(filepath.Base(filepath.FromSlash(currentDir)))
+		if dirBase != "" && dirBase != "." {
+			candidatePath := indexPagePathForDir(currentDir)
+			if candidatePath != "" && candidatePath != normalizedRelPath {
+				candidateID := strings.TrimSpace(pageIDByPath[candidatePath])
+				if candidateID != "" && candidateID != resolvedPageID {
+					return candidateID
+				}
 			}
 
-			candidatePath := normalizeRelPath(filepath.ToSlash(filepath.Join(currentDir, dirBase+".md")))
-			candidateID := strings.TrimSpace(pageIDByPath[candidatePath])
-			if candidateID != "" && candidateID != resolvedPageID {
-				return candidateID
+			if folderID, ok := folderIDByPath[currentDir]; ok && strings.TrimSpace(folderID) != "" {
+				return strings.TrimSpace(folderID)
 			}
 		}
 
@@ -1217,15 +1205,22 @@ func ensureFolderHierarchy(
 	ctx context.Context,
 	remote PushRemote,
 	spaceID, dirPath string,
+	currentRelPath string,
+	pageIDByPath PageIndex,
 	folderIDByPath map[string]string,
 	diagnostics *[]PushDiagnostic,
 ) (map[string]string, error) {
 	if dirPath == "" || dirPath == "." {
 		return folderIDByPath, nil
 	}
+	if folderIDByPath == nil {
+		folderIDByPath = map[string]string{}
+	}
 
 	segments := strings.Split(filepath.ToSlash(dirPath), "/")
 	var currentPath string
+	parentID := ""
+	parentType := "space"
 
 	for _, seg := range segments {
 		if currentPath == "" {
@@ -1234,26 +1229,40 @@ func ensureFolderHierarchy(
 			currentPath = filepath.ToSlash(filepath.Join(currentPath, seg))
 		}
 
-		if existingID, ok := folderIDByPath[currentPath]; ok && existingID != "" {
+		if indexParentID, hasIndexParent := indexPageParentIDForDir(currentPath, currentRelPath, pageIDByPath); hasIndexParent {
+			parentID = indexParentID
+			parentType = "page"
 			continue
 		}
 
-		var parentFolderID string
-		parentPath := filepath.ToSlash(filepath.Dir(currentPath))
-		if parentPath != "." && parentPath != "" {
-			parentFolderID = folderIDByPath[parentPath]
+		if existingID, ok := folderIDByPath[currentPath]; ok && strings.TrimSpace(existingID) != "" {
+			parentID = strings.TrimSpace(existingID)
+			parentType = "folder"
+			continue
 		}
 
-		created, err := remote.CreateFolder(ctx, confluence.FolderCreateInput{
-			SpaceID:  spaceID,
-			ParentID: parentFolderID,
-			Title:    seg,
-		})
+		createInput := confluence.FolderCreateInput{
+			SpaceID: spaceID,
+			Title:   seg,
+		}
+		if strings.TrimSpace(parentID) != "" {
+			createInput.ParentID = parentID
+			createInput.ParentType = parentType
+		}
+
+		created, err := remote.CreateFolder(ctx, createInput)
 		if err != nil {
 			return nil, fmt.Errorf("create folder %q: %w", currentPath, err)
 		}
 
-		folderIDByPath[currentPath] = created.ID
+		createdID := strings.TrimSpace(created.ID)
+		if createdID == "" {
+			return nil, fmt.Errorf("create folder %q returned empty folder ID", currentPath)
+		}
+
+		folderIDByPath[currentPath] = createdID
+		parentID = createdID
+		parentType = "folder"
 
 		if diagnostics != nil {
 			*diagnostics = append(*diagnostics, PushDiagnostic{
@@ -1265,6 +1274,104 @@ func ensureFolderHierarchy(
 	}
 
 	return folderIDByPath, nil
+}
+
+func collapseFolderParentIfIndexPage(
+	ctx context.Context,
+	remote PushRemote,
+	relPath, pageID string,
+	folderIDByPath map[string]string,
+	remotePageByID map[string]confluence.Page,
+	diagnostics *[]PushDiagnostic,
+) {
+	if !isIndexFile(relPath) {
+		return
+	}
+
+	pageID = strings.TrimSpace(pageID)
+	if pageID == "" {
+		return
+	}
+
+	dirPath := normalizeRelPath(filepath.ToSlash(filepath.Dir(filepath.FromSlash(relPath))))
+	if dirPath == "" || dirPath == "." {
+		return
+	}
+
+	folderID := strings.TrimSpace(folderIDByPath[dirPath])
+	if folderID == "" {
+		return
+	}
+
+	movedChildren := 0
+	for _, remoteID := range sortedStringKeys(remotePageByID) {
+		remotePage := remotePageByID[remoteID]
+		if strings.TrimSpace(remotePage.ID) == "" || strings.TrimSpace(remotePage.ID) == pageID {
+			continue
+		}
+		if !strings.EqualFold(strings.TrimSpace(remotePage.ParentType), "folder") {
+			continue
+		}
+		if strings.TrimSpace(remotePage.ParentPageID) != folderID {
+			continue
+		}
+
+		if err := remote.MovePage(ctx, remotePage.ID, pageID); err != nil {
+			appendPushDiagnostic(
+				diagnostics,
+				relPath,
+				"FOLDER_COLLAPSE_MOVE_FAILED",
+				fmt.Sprintf("failed to move page %s from folder %s under index page %s: %v", remotePage.ID, folderID, pageID, err),
+			)
+			continue
+		}
+
+		remotePage.ParentType = "page"
+		remotePage.ParentPageID = pageID
+		remotePageByID[remotePage.ID] = remotePage
+		movedChildren++
+		appendPushDiagnostic(
+			diagnostics,
+			relPath,
+			"FOLDER_CHILD_REPARENTED",
+			fmt.Sprintf("moved page %s under index page %s", remotePage.ID, pageID),
+		)
+	}
+
+	delete(folderIDByPath, dirPath)
+	appendPushDiagnostic(
+		diagnostics,
+		relPath,
+		"FOLDER_COLLAPSED",
+		fmt.Sprintf("collapsed folder %q (id=%s) into index page %s; moved %d child page(s)", dirPath, folderID, pageID, movedChildren),
+	)
+}
+
+func indexPagePathForDir(dirPath string) string {
+	dirPath = normalizeRelPath(dirPath)
+	if dirPath == "" || dirPath == "." {
+		return ""
+	}
+	dirBase := strings.TrimSpace(filepath.Base(filepath.FromSlash(dirPath)))
+	if dirBase == "" || dirBase == "." {
+		return ""
+	}
+	return normalizeRelPath(filepath.ToSlash(filepath.Join(dirPath, dirBase+".md")))
+}
+
+func indexPageParentIDForDir(dirPath, currentRelPath string, pageIDByPath PageIndex) (string, bool) {
+	if len(pageIDByPath) == 0 {
+		return "", false
+	}
+	indexPath := indexPagePathForDir(dirPath)
+	if indexPath == "" || indexPath == normalizeRelPath(currentRelPath) {
+		return "", false
+	}
+	indexPageID := strings.TrimSpace(pageIDByPath[indexPath])
+	if indexPageID == "" {
+		return "", false
+	}
+	return indexPageID, true
 }
 
 func normalizePushState(state fs.SpaceState) fs.SpaceState {
@@ -1466,13 +1573,9 @@ func precreatePendingPushPages(
 			)
 		}
 
-		if !strings.EqualFold(strings.TrimSpace(doc.Frontmatter.Space), strings.TrimSpace(opts.SpaceKey)) {
-			return nil, fmt.Errorf("%s belongs to space %q, expected %q", relPath, doc.Frontmatter.Space, opts.SpaceKey)
-		}
-
 		dirPath := normalizeRelPath(filepath.ToSlash(filepath.Dir(filepath.FromSlash(relPath))))
 		if dirPath != "" && dirPath != "." {
-			folderIDByPath, err = ensureFolderHierarchy(ctx, remote, space.ID, dirPath, folderIDByPath, diagnostics)
+			folderIDByPath, err = ensureFolderHierarchy(ctx, remote, space.ID, dirPath, relPath, pageIDByPath, folderIDByPath, diagnostics)
 			if err != nil {
 				return nil, fmt.Errorf("ensure folder hierarchy for %s: %w", relPath, err)
 			}

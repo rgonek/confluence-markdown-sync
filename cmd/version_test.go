@@ -8,6 +8,7 @@ import (
 )
 
 func TestVersionCommand_PrintsVersion(t *testing.T) {
+	runParallelCommandTest(t)
 	previousVersion := Version
 	Version = "v1.2.3"
 	t.Cleanup(func() { Version = previousVersion })
@@ -26,6 +27,7 @@ func TestVersionCommand_PrintsVersion(t *testing.T) {
 }
 
 func TestRootVersionFlag_PrintsVersion(t *testing.T) {
+	runParallelCommandTest(t)
 	previousVersion := Version
 	Version = "v9.9.9"
 	t.Cleanup(func() { Version = previousVersion })

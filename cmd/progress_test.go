@@ -7,6 +7,7 @@ import (
 )
 
 func TestConsoleProgress_SetDescriptionUpdatesState(t *testing.T) {
+	runParallelCommandTest(t)
 	oldDelay := progressDescriptionSwitchDelay
 	progressDescriptionSwitchDelay = 0
 	t.Cleanup(func() { progressDescriptionSwitchDelay = oldDelay })
@@ -21,6 +22,7 @@ func TestConsoleProgress_SetDescriptionUpdatesState(t *testing.T) {
 }
 
 func TestConsoleProgress_SetCurrentItemRetainsBaseDescription(t *testing.T) {
+	runParallelCommandTest(t)
 	out := &bytes.Buffer{}
 	p := newConsoleProgress(out, "Syncing")
 
@@ -36,6 +38,7 @@ func TestConsoleProgress_SetCurrentItemRetainsBaseDescription(t *testing.T) {
 }
 
 func TestConsoleProgress_DoneWritesCarriageReturn(t *testing.T) {
+	runParallelCommandTest(t)
 	out := &bytes.Buffer{}
 	p := newConsoleProgress(out, "Syncing")
 	p.Done()
@@ -46,6 +49,7 @@ func TestConsoleProgress_DoneWritesCarriageReturn(t *testing.T) {
 }
 
 func TestConsoleProgress_AddUpdatesView(t *testing.T) {
+	runParallelCommandTest(t)
 	out := &bytes.Buffer{}
 	p := newConsoleProgress(out, "Syncing")
 	p.SetTotal(10)
@@ -58,6 +62,7 @@ func TestConsoleProgress_AddUpdatesView(t *testing.T) {
 }
 
 func TestConsoleProgress_SetTotalResetsCount(t *testing.T) {
+	runParallelCommandTest(t)
 	out := &bytes.Buffer{}
 	p := newConsoleProgress(out, "Syncing")
 	p.SetTotal(10)
@@ -73,6 +78,7 @@ func TestConsoleProgress_SetTotalResetsCount(t *testing.T) {
 }
 
 func TestConsoleProgress_ViewKeepsProgressPrefixPosition(t *testing.T) {
+	runParallelCommandTest(t)
 	out := &bytes.Buffer{}
 	p := newConsoleProgress(out, "Syncing")
 	p.SetTotal(100)
@@ -100,6 +106,7 @@ func TestConsoleProgress_ViewKeepsProgressPrefixPosition(t *testing.T) {
 }
 
 func TestProgressBarWidthForTerminal(t *testing.T) {
+	runParallelCommandTest(t)
 	cases := []struct {
 		name         string
 		terminalWide int
