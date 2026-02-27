@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"path/filepath"
@@ -342,8 +343,11 @@ func isNotFoundError(err error) bool {
 	if err == nil {
 		return false
 	}
+	if errors.Is(err, confluence.ErrNotFound) {
+		return true
+	}
 	if strings.Contains(strings.ToLower(strings.TrimSpace(err.Error())), "not found") {
 		return true
 	}
-	return err == confluence.ErrNotFound
+	return false
 }
