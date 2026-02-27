@@ -26,7 +26,7 @@ func TestCollectLocalStatusChanges_Success(t *testing.T) {
 	}
 
 	spaceDir := filepath.Join(tempDir, "TEST")
-	if err := os.MkdirAll(spaceDir, 0755); err != nil {
+	if err := os.MkdirAll(spaceDir, 0700); err != nil {
 		t.Fatalf("failed to create space dir: %v", err)
 	}
 
@@ -89,7 +89,7 @@ func TestBuildStatusReport_Success(t *testing.T) {
 	}
 
 	spaceDir := filepath.Join(tempDir, "TEST")
-	if err := os.MkdirAll(spaceDir, 0755); err != nil {
+	if err := os.MkdirAll(spaceDir, 0700); err != nil {
 		t.Fatalf("failed to create space dir: %v", err)
 	}
 
