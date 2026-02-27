@@ -110,6 +110,13 @@ func runValidateTargetWithContext(ctx context.Context, out io.Writer, target con
 		return fmt.Errorf("failed to build page index: %w", err)
 	}
 
+	if dupErrs := detectDuplicatePageIDs(index); len(dupErrs) > 0 {
+		for _, msg := range dupErrs {
+			_, _ = fmt.Fprintf(out, "Validation failed: %s\n", msg)
+		}
+		return fmt.Errorf("validation failed: duplicate page IDs detected - rename each file to have a unique id or remove the duplicate id")
+	}
+
 	var globalIndex syncflow.GlobalPageIndex
 	globalIndexRoot := filepath.Dir(targetCtx.spaceDir)
 	if repoRoot, rootErr := gitRepoRoot(); rootErr == nil {
@@ -359,7 +366,7 @@ func validateFile(ctx context.Context, path, spaceDir string, linkHook mdconvert
 		})
 		return issues
 	}
-	preparedBody, err := syncflow.PrepareMarkdownForAttachmentConversion(spaceDir, path, doc.Body)
+	preparedBody, err := syncflow.PrepareMarkdownForAttachmentConversion(spaceDir, path, doc.Body, strictAttachmentIndex)
 	if err != nil {
 		issues = append(issues, fs.ValidationIssue{
 			Code:    "conversion_error",
@@ -384,4 +391,40 @@ func validateFile(ctx context.Context, path, spaceDir string, linkHook mdconvert
 	}
 
 	return issues
+}
+
+// detectDuplicatePageIDs returns an error message for each Confluence page ID
+// that appears in more than one file within the index.
+// A duplicate ID typically means a file was copy-pasted (rename trap) and
+// both copies now claim the same remote page.
+func detectDuplicatePageIDs(index syncflow.PageIndex) []string {
+	pathsByID := make(map[string][]string)
+	for relPath, pageID := range index {
+		if strings.TrimSpace(pageID) == "" {
+			continue
+		}
+		pathsByID[pageID] = append(pathsByID[pageID], relPath)
+	}
+
+	// Collect sorted keys so output is deterministic
+	ids := make([]string, 0, len(pathsByID))
+	for id := range pathsByID {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+
+	var errs []string
+	for _, id := range ids {
+		paths := pathsByID[id]
+		if len(paths) <= 1 {
+			continue
+		}
+		sort.Strings(paths)
+		errs = append(errs, fmt.Sprintf(
+			"page id %q is used by multiple files: %s — remove the duplicate id from all but one file",
+			id,
+			strings.Join(paths, ", "),
+		))
+	}
+	return errs
 }

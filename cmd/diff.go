@@ -207,6 +207,10 @@ func runDiffFileMode(
 	if err != nil {
 		return fmt.Errorf("read local file for diff: %w", err)
 	}
+	localRaw, err = normalizeDiffMarkdown(localRaw)
+	if err != nil {
+		return fmt.Errorf("normalize local file for diff: %w", err)
+	}
 	if err := os.WriteFile(localFile, localRaw, 0o600); err != nil {
 		return fmt.Errorf("write local diff file: %w", err)
 	}
@@ -395,6 +399,10 @@ func copyLocalMarkdownSnapshot(spaceDir, snapshotDir string) error {
 		if err != nil {
 			return err
 		}
+		raw, err = normalizeDiffMarkdown(raw)
+		if err != nil {
+			return err
+		}
 
 		relPath, err := filepath.Rel(spaceDir, path)
 		if err != nil {
@@ -416,6 +424,24 @@ func copyLocalMarkdownSnapshot(spaceDir, snapshotDir string) error {
 		return fmt.Errorf("prepare local markdown snapshot: %w", err)
 	}
 	return nil
+}
+
+func normalizeDiffMarkdown(raw []byte) ([]byte, error) {
+	doc, err := fs.ParseMarkdownDocument(raw)
+	if err != nil {
+		return raw, nil
+	}
+
+	doc.Frontmatter.CreatedBy = ""
+	doc.Frontmatter.CreatedAt = ""
+	doc.Frontmatter.UpdatedBy = ""
+	doc.Frontmatter.UpdatedAt = ""
+
+	normalized, err := fs.FormatMarkdownDocument(doc)
+	if err != nil {
+		return nil, err
+	}
+	return normalized, nil
 }
 
 func buildDiffAttachmentPathByID(spaceDir string, attachmentIndex map[string]string) map[string]string {

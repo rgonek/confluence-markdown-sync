@@ -108,8 +108,35 @@ func NewForwardMediaHook(sourcePath string, attachmentPathByID map[string]string
 			sourceDir := filepath.Dir(sourcePath)
 			relPath, err := filepath.Rel(sourceDir, targetPath)
 			if err == nil {
+				relPath = filepath.ToSlash(relPath)
+				if resolveForwardMediaType(in, targetPath) == "file" {
+					label := strings.TrimSpace(in.Meta.Filename)
+					if label == "" {
+						label = strings.TrimSpace(in.Alt)
+					}
+					if label == "" {
+						label = strings.TrimSpace(filepath.Base(targetPath))
+					}
+					if label == "" {
+						label = "Attachment"
+					}
+
+					return adfconv.MediaRenderOutput{
+						Markdown: fmt.Sprintf("[%s](%s)", escapeMarkdownLinkLabel(label), relPath),
+						Handled:  true,
+					}, nil
+				}
+
+				alt := strings.TrimSpace(in.Alt)
+				if alt == "" {
+					alt = strings.TrimSpace(in.Meta.Filename)
+				}
+				if alt == "" {
+					alt = "Image"
+				}
+
 				return adfconv.MediaRenderOutput{
-					Markdown: fmt.Sprintf("![%s](%s)", in.Alt, filepath.ToSlash(relPath)),
+					Markdown: fmt.Sprintf("![%s](%s)", escapeMarkdownLinkLabel(alt), relPath),
 					Handled:  true,
 				}, nil
 			}
@@ -121,6 +148,47 @@ func NewForwardMediaHook(sourcePath string, attachmentPathByID map[string]string
 
 		return adfconv.MediaRenderOutput{Handled: false}, nil
 	}
+}
+
+func resolveForwardMediaType(in adfconv.MediaRenderInput, resolvedPath string) string {
+	mediaType := strings.ToLower(strings.TrimSpace(in.MediaType))
+	if mediaType == "" {
+		mediaType = strings.ToLower(strings.TrimSpace(stringValue(in.Attrs["type"])))
+	}
+	if mediaType == "image" {
+		return "image"
+	}
+	if mediaType == "file" {
+		return "file"
+	}
+	// Type not provided — infer from filename/path extension
+	name := strings.TrimSpace(in.Meta.Filename)
+	if name == "" {
+		name = strings.TrimSpace(in.ID)
+	}
+	if name == "" {
+		name = resolvedPath
+	}
+	if isImageFilename(name) {
+		return "image"
+	}
+	return "file"
+}
+
+var imageExtensions = map[string]bool{
+	".png": true, ".jpg": true, ".jpeg": true, ".gif": true,
+	".webp": true, ".svg": true, ".bmp": true, ".ico": true,
+	".tiff": true, ".tif": true, ".avif": true,
+}
+
+func isImageFilename(name string) bool {
+	ext := strings.ToLower(filepath.Ext(name))
+	return ext != "" && imageExtensions[ext]
+}
+
+func escapeMarkdownLinkLabel(value string) string {
+	replacer := strings.NewReplacer(`\\`, `\\\\`, `[`, `\\[`, `]`, `\\]`)
+	return replacer.Replace(value)
 }
 
 func resolveAttachmentPathByID(in adfconv.MediaRenderInput, attachmentPathByID map[string]string) (string, bool) {

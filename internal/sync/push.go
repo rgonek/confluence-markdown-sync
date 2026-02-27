@@ -621,7 +621,7 @@ func pushUpsertPage(
 		}
 		return PushCommitPlan{}, preflightErr
 	}
-	preparedBody, err := PrepareMarkdownForAttachmentConversion(opts.SpaceDir, absPath, doc.Body)
+	preparedBody, err := PrepareMarkdownForAttachmentConversion(opts.SpaceDir, absPath, doc.Body, strictAttachmentIndex)
 	if err != nil {
 		preflightErr := fmt.Errorf("prepare attachment conversion for %s: %w", relPath, err)
 		if hasPrecreated {
@@ -763,6 +763,11 @@ func pushUpsertPage(
 		delete(state.AttachmentIndex, stalePath)
 		delete(attachmentIDByPath, stalePath)
 		touchedAssets = append(touchedAssets, stalePath)
+	}
+
+	preparedBody, err = PrepareMarkdownForAttachmentConversion(opts.SpaceDir, absPath, doc.Body, attachmentIDByPath)
+	if err != nil {
+		return failWithRollback(fmt.Errorf("prepare attachment conversion for %s with resolved attachment IDs: %w", relPath, err))
 	}
 
 	mediaHook = NewReverseMediaHook(opts.SpaceDir, attachmentIDByPath)
@@ -1506,7 +1511,7 @@ func runPushUpsertPreflight(
 		if err != nil {
 			return fmt.Errorf("resolve assets for %s: %w", relPath, err)
 		}
-		preparedBody, err := PrepareMarkdownForAttachmentConversion(opts.SpaceDir, absPath, doc.Body)
+		preparedBody, err := PrepareMarkdownForAttachmentConversion(opts.SpaceDir, absPath, doc.Body, strictAttachmentIndex)
 		if err != nil {
 			return fmt.Errorf("prepare attachment conversion for %s: %w", relPath, err)
 		}
@@ -1727,6 +1732,7 @@ type localAssetReference struct {
 type markdownDestinationRewrite struct {
 	Occurrence             markdownDestinationOccurrence
 	ReplacementDestination string
+	ReplacementToken       string
 	AddImagePrefix         bool
 }
 
@@ -1749,9 +1755,10 @@ func CollectReferencedAssetPaths(spaceDir, sourcePath, body string) ([]string, e
 	return sortedStringKeys(paths), nil
 }
 
-// PrepareMarkdownForAttachmentConversion rewrites local file links ([]()) to
-// media syntax (![]()) for strict reverse conversion.
-func PrepareMarkdownForAttachmentConversion(spaceDir, sourcePath, body string) (string, error) {
+// PrepareMarkdownForAttachmentConversion rewrites local file links ([]()) into
+// inline media spans so strict reverse conversion can preserve attachment
+// references without dropping inline context.
+func PrepareMarkdownForAttachmentConversion(spaceDir, sourcePath, body string, attachmentIndex map[string]string) (string, error) {
 	references, err := collectLocalAssetReferences(spaceDir, sourcePath, body)
 	if err != nil {
 		return "", err
@@ -1762,9 +1769,17 @@ func PrepareMarkdownForAttachmentConversion(spaceDir, sourcePath, body string) (
 		if reference.Occurrence.kind != markdownReferenceKindLink {
 			continue
 		}
+
+		attachmentID := strings.TrimSpace(attachmentIndex[reference.RelPath])
+		if attachmentID == "" {
+			attachmentID = pendingAttachmentID(reference.RelPath)
+		}
+
+		displayName := attachmentDisplayNameForPath(reference.RelPath, attachmentID)
+		mediaType := mediaTypeForDestination(reference.RelPath)
 		rewrites = append(rewrites, markdownDestinationRewrite{
-			Occurrence:     reference.Occurrence,
-			AddImagePrefix: true,
+			Occurrence:       reference.Occurrence,
+			ReplacementToken: formatPandocInlineMediaToken(displayName, attachmentID, mediaType),
 		})
 	}
 
@@ -1773,6 +1788,59 @@ func PrepareMarkdownForAttachmentConversion(spaceDir, sourcePath, body string) (
 	}
 
 	return applyMarkdownDestinationRewrites(body, rewrites), nil
+}
+
+func attachmentDisplayNameForPath(relPath, attachmentID string) string {
+	name := strings.TrimSpace(filepath.Base(relPath))
+	if name == "" || name == "." {
+		name = "attachment"
+	}
+
+	idPrefix := fs.SanitizePathSegment(strings.TrimSpace(attachmentID))
+	if idPrefix != "" {
+		prefix := idPrefix + "-"
+		if strings.HasPrefix(name, prefix) {
+			trimmed := strings.TrimSpace(strings.TrimPrefix(name, prefix))
+			if trimmed != "" {
+				name = trimmed
+			}
+		}
+	}
+
+	return escapeMarkdownSpanText(name)
+}
+
+func formatPandocInlineMediaToken(displayName, attachmentID, mediaType string) string {
+	displayName = strings.TrimSpace(displayName)
+	if displayName == "" {
+		displayName = "attachment"
+	}
+
+	attachmentID = strings.TrimSpace(attachmentID)
+	if attachmentID == "" {
+		attachmentID = "UNKNOWN_MEDIA_ID"
+	}
+
+	mediaType = strings.ToLower(strings.TrimSpace(mediaType))
+	if mediaType != "image" && mediaType != "file" {
+		mediaType = "file"
+	}
+
+	return fmt.Sprintf(`[%s]{.media-inline media-id="%s" media-type="%s"}`,
+		displayName,
+		escapePandocAttrValue(attachmentID),
+		mediaType,
+	)
+}
+
+func escapeMarkdownSpanText(value string) string {
+	replacer := strings.NewReplacer(`\`, `\\`, `[`, `\[`, `]`, `\]`)
+	return replacer.Replace(value)
+}
+
+func escapePandocAttrValue(value string) string {
+	replacer := strings.NewReplacer(`\`, `\\`, `"`, `\"`)
+	return replacer.Replace(value)
 }
 
 func collectLocalAssetReferences(spaceDir, sourcePath, body string) ([]localAssetReference, error) {
@@ -1955,6 +2023,12 @@ func applyMarkdownDestinationRewrites(body string, rewrites []markdownDestinatio
 		}
 
 		builder.Write(content[last:tokenStart])
+		if strings.TrimSpace(rewrite.ReplacementToken) != "" {
+			builder.WriteString(rewrite.ReplacementToken)
+			last = tokenEnd
+			continue
+		}
+
 		if rewrite.AddImagePrefix {
 			builder.WriteByte('!')
 		}

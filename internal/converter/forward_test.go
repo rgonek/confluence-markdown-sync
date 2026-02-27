@@ -64,6 +64,33 @@ func TestNormalizeForwardMarkdown_LeavesNonLinksEscaped(t *testing.T) {
 	}
 }
 
+func TestNormalizeForwardMarkdown_UnescapesPlainParentheses(t *testing.T) {
+	input := "(User 1) and \\(User 2\\).\n"
+	want := "(User 1) and (User 2).\n"
+
+	if got := normalizeForwardMarkdown(input); got != want {
+		t.Fatalf("normalizeForwardMarkdown() = %q, want %q", got, want)
+	}
+}
+
+func TestNormalizeForwardMarkdown_KeepsEscapedParenthesesInLinkDestinations(t *testing.T) {
+	input := "[Spec](https://example.com/a\\(b\\)) and \\(User\\).\n"
+	want := "[Spec](https://example.com/a\\(b\\)) and (User).\n"
+
+	if got := normalizeForwardMarkdown(input); got != want {
+		t.Fatalf("normalizeForwardMarkdown() = %q, want %q", got, want)
+	}
+}
+
+func TestNormalizeForwardMarkdown_KeepsEscapedParenthesesInCode(t *testing.T) {
+	input := "Use `\\(x\\)` in code and \\(y\\) in prose.\n"
+	want := "Use `\\(x\\)` in code and (y) in prose.\n"
+
+	if got := normalizeForwardMarkdown(input); got != want {
+		t.Fatalf("normalizeForwardMarkdown() = %q, want %q", got, want)
+	}
+}
+
 func TestForwardWithMediaHook(t *testing.T) {
 	ctx := context.Background()
 	// ADF with media

@@ -38,6 +38,7 @@ func Reverse(ctx context.Context, markdown []byte, cfg ReverseConfig, sourcePath
 		MentionDetection:       mdconv.MentionDetectPandoc,
 		ExpandDetection:        mdconv.ExpandDetectPandoc,
 		InlineCardDetection:    mdconv.InlineCardDetectPandoc,
+		MediaInlineDetection:   mdconv.MediaInlineDetectPandoc,
 		LayoutSectionDetection: mdconv.LayoutSectionDetectPandoc,
 		TableGridDetection:     true,
 		ExtensionHandlers: map[string]adfconv.ExtensionHandler{
