@@ -109,7 +109,7 @@ func NewForwardMediaHook(sourcePath string, attachmentPathByID map[string]string
 			relPath, err := filepath.Rel(sourceDir, targetPath)
 			if err == nil {
 				relPath = filepath.ToSlash(relPath)
-				if resolveForwardMediaType(in) == "file" {
+				if resolveForwardMediaType(in, targetPath) == "file" {
 					label := strings.TrimSpace(in.Meta.Filename)
 					if label == "" {
 						label = strings.TrimSpace(in.Alt)
@@ -150,7 +150,7 @@ func NewForwardMediaHook(sourcePath string, attachmentPathByID map[string]string
 	}
 }
 
-func resolveForwardMediaType(in adfconv.MediaRenderInput) string {
+func resolveForwardMediaType(in adfconv.MediaRenderInput, resolvedPath string) string {
 	mediaType := strings.ToLower(strings.TrimSpace(in.MediaType))
 	if mediaType == "" {
 		mediaType = strings.ToLower(strings.TrimSpace(stringValue(in.Attrs["type"])))
@@ -158,7 +158,32 @@ func resolveForwardMediaType(in adfconv.MediaRenderInput) string {
 	if mediaType == "image" {
 		return "image"
 	}
+	if mediaType == "file" {
+		return "file"
+	}
+	// Type not provided — infer from filename/path extension
+	name := strings.TrimSpace(in.Meta.Filename)
+	if name == "" {
+		name = strings.TrimSpace(in.ID)
+	}
+	if name == "" {
+		name = resolvedPath
+	}
+	if isImageFilename(name) {
+		return "image"
+	}
 	return "file"
+}
+
+var imageExtensions = map[string]bool{
+	".png": true, ".jpg": true, ".jpeg": true, ".gif": true,
+	".webp": true, ".svg": true, ".bmp": true, ".ico": true,
+	".tiff": true, ".tif": true, ".avif": true,
+}
+
+func isImageFilename(name string) bool {
+	ext := strings.ToLower(filepath.Ext(name))
+	return ext != "" && imageExtensions[ext]
 }
 
 func escapeMarkdownLinkLabel(value string) string {
