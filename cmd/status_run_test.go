@@ -152,7 +152,7 @@ func TestRunStatus_Integration(t *testing.T) {
 
 func runGitForStatus(t *testing.T, dir string, args ...string) {
 	t.Helper()
-	cmd := exec.Command("git", args...)
+	cmd := exec.Command("git", args...) //nolint:gosec // Intentionally running git in test
 	cmd.Dir = dir
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("git %s failed: %v\n%s", args, err, string(out))

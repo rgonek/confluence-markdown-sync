@@ -33,7 +33,7 @@ func setupGitRepo(t *testing.T, repo string) {
 
 func runGitForTest(t *testing.T, dir string, args ...string) string {
 	t.Helper()
-	cmd := exec.Command("git", args...)
+	cmd := exec.Command("git", args...) //nolint:gosec // Intentionally running git in test
 	cmd.Dir = dir
 	out, err := cmd.CombinedOutput()
 	if err != nil {

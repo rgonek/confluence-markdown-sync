@@ -178,7 +178,7 @@ func TestRunClean_Integration(t *testing.T) {
 
 	// Create a dummy worktree dir
 	wtDir := filepath.Join(repo, ".confluence-worktrees", "test-wt")
-	if err := os.MkdirAll(wtDir, 0755); err != nil {
+	if err := os.MkdirAll(wtDir, 0750); err != nil {
 		t.Fatalf("failed to create worktree dir: %v", err)
 	}
 
@@ -244,7 +244,7 @@ func setupGitRepoForClean(t *testing.T) string {
 
 func runGitForClean(t *testing.T, dir string, args ...string) {
 	t.Helper()
-	cmd := exec.Command("git", args...)
+	cmd := exec.Command("git", args...) //nolint:gosec // Intentionally running git in test
 	cmd.Dir = dir
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("git %s failed: %v\n%s", args, err, string(out))

@@ -416,7 +416,7 @@ func setupGitRepoForHelpers(t *testing.T) string {
 
 func runGitForHelpers(t *testing.T, dir string, args ...string) string {
 	t.Helper()
-	cmd := exec.Command("git", args...)
+	cmd := exec.Command("git", args...) //nolint:gosec // Intentionally running git in test
 	cmd.Dir = dir
 	out, err := cmd.CombinedOutput()
 	if err != nil {

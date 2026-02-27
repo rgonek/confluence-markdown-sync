@@ -1179,7 +1179,7 @@ func makeConflictBackupPath(repoRoot, repoPath, label string) (string, error) {
 }
 
 func gitHasScopedStagedChanges(repoRoot, scopePath string) (bool, error) {
-	cmd := exec.Command("git", "diff", "--cached", "--quiet", "--", scopePath)
+	cmd := exec.Command("git", "diff", "--cached", "--quiet", "--", scopePath) //nolint:gosec // Intentionally running git
 	cmd.Dir = repoRoot
 	err := cmd.Run()
 	if err == nil {
@@ -1375,7 +1375,7 @@ func listAllPullChangesForEstimate(
 }
 
 func runGit(workdir string, args ...string) (string, error) {
-	cmd := exec.Command("git", args...)
+	cmd := exec.Command("git", args...) //nolint:gosec // Intentionally running git
 	if strings.TrimSpace(workdir) != "" {
 		cmd.Dir = workdir
 	}

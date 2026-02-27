@@ -27,7 +27,7 @@ func TestRunPrune_Integration(t *testing.T) {
 
 	// Create a managed space dir
 	spaceDir := filepath.Join(repo, "TEST")
-	if err := os.MkdirAll(filepath.Join(spaceDir, "assets"), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Join(spaceDir, "assets"), 0750); err != nil {
 		t.Fatalf("failed to create assets dir: %v", err)
 	}
 
@@ -108,7 +108,7 @@ func setupGitRepoForPrune(t *testing.T) string {
 
 func runGitForPrune(t *testing.T, dir string, args ...string) {
 	t.Helper()
-	cmd := exec.Command("git", args...)
+	cmd := exec.Command("git", args...) //nolint:gosec // Intentionally running git in test
 	cmd.Dir = dir
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("git %s failed: %v\n%s", args, err, string(out))

@@ -464,13 +464,13 @@ func Pull(ctx context.Context, remote PullRemote, opts PullOptions) (PullResult,
 				closeErr := tempFile.Close()
 
 				if downloadErr == nil && closeErr == nil {
-					if err := os.Rename(tempName, assetPath); err != nil {
-						_ = os.Remove(tempName)
+					if err := os.Rename(tempName, assetPath); err != nil { //nolint:gosec // Path is controlled by application
+						_ = os.Remove(tempName) //nolint:gosec // Path is controlled by application
 						return fmt.Errorf("rename attachment file %s: %w", assetPath, err)
 					}
 					return nil
 				}
-				_ = os.Remove(tempName)
+				_ = os.Remove(tempName) //nolint:gosec // Path is controlled by application
 
 				if downloadErr == nil && closeErr != nil {
 					return fmt.Errorf("close temp attachment file %s: %w", assetPath, closeErr)

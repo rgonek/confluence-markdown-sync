@@ -15,7 +15,7 @@ import (
 type Config struct {
 	Domain   string
 	Email    string
-	APIToken string
+	APIToken string //nolint:gosec // Not a hardcoded secret
 }
 
 // ErrMissingConfig is returned when required config values cannot be resolved.

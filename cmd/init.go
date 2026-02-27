@@ -304,7 +304,7 @@ func ensureDotEnv(cmd *cobra.Command) (bool, error) {
 		fmt.Sprintf("ATLASSIAN_API_TOKEN=%s", token),
 	}
 
-	return true, os.WriteFile(".env", []byte(strings.Join(lines, "\n")+"\n"), 0o600)
+	return true, os.WriteFile(".env", []byte(strings.Join(lines, "\n")+"\n"), 0o600) //nolint:gosec // Writing static filename
 }
 
 func promptField(scanner *bufio.Scanner, out interface{ Write([]byte) (int, error) }, label string) string {
@@ -397,7 +397,7 @@ func hasStagedChanges() (bool, error) {
 }
 
 func isGitIgnored(path string) (bool, error) {
-	err := exec.Command("git", "check-ignore", "--quiet", "--", path).Run()
+	err := exec.Command("git", "check-ignore", "--quiet", "--", path).Run() //nolint:gosec // Intended use of git command
 	if err == nil {
 		return true, nil
 	}

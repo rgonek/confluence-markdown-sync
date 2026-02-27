@@ -49,7 +49,7 @@ var (
 type ClientConfig struct {
 	BaseURL    string
 	Email      string
-	APIToken   string
+	APIToken   string //nolint:gosec // Not a hardcoded secret
 	HTTPClient *http.Client
 	UserAgent  string
 
@@ -456,9 +456,9 @@ func (c *Client) DownloadAttachment(ctx context.Context, attachmentID string, pa
 	downloadReq.Header.Set("Accept", "*/*")
 	downloadReq.Header.Set("User-Agent", c.userAgent)
 
-	slog.Debug("http request", "method", downloadReq.Method, "url", downloadReq.URL.String())
+	slog.Debug("http request", "method", downloadReq.Method, "url", downloadReq.URL.String()) //nolint:gosec // Safe log of request URL
 
-	resp, err := c.downloadClient.Do(downloadReq)
+	resp, err := c.downloadClient.Do(downloadReq) //nolint:gosec // Intended SSRF for downloading user's content
 	if err != nil {
 		return err
 	}
@@ -957,18 +957,18 @@ func (c *Client) newRequest(
 }
 
 func (c *Client) do(req *http.Request, out any) error {
-	slog.Debug("http request", "method", req.Method, "url", req.URL.String())
+	slog.Debug("http request", "method", req.Method, "url", req.URL.String()) //nolint:gosec // Safe log
 
 	if err := c.limiter.wait(req.Context()); err != nil {
 		return err
 	}
 
 	for attempt := 0; ; attempt++ {
-		resp, err := c.httpClient.Do(req)
+		resp, err := c.httpClient.Do(req) //nolint:gosec // Target URL comes from API client internals
 		if err != nil {
 			if c.retry.shouldRetry(req, nil, err, attempt) {
 				delay := c.retry.retryDelay(attempt+1, nil)
-				slog.Info("http retry",
+				slog.Info("http retry", //nolint:gosec // Safe log
 					"method", req.Method,
 					"url", req.URL.String(),
 					"attempt", attempt+1,
@@ -997,7 +997,7 @@ func (c *Client) do(req *http.Request, out any) error {
 
 			if c.retry.shouldRetry(req, resp, nil, attempt) {
 				delay := c.retry.retryDelay(attempt+1, resp)
-				slog.Info("http retry",
+				slog.Info("http retry", //nolint:gosec // Safe log
 					"method", req.Method,
 					"url", req.URL.String(),
 					"attempt", attempt+1,

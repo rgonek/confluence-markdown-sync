@@ -84,7 +84,7 @@ func evalFinalPath(p string) string {
 }
 
 func RunGit(workdir string, args ...string) (string, error) {
-	cmd := exec.Command("git", args...)
+	cmd := exec.Command("git", args...) //nolint:gosec // Intentionally running git
 	if strings.TrimSpace(workdir) != "" {
 		cmd.Dir = workdir
 	}
