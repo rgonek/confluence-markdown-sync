@@ -12,6 +12,7 @@ import (
 )
 
 func TestBuildUserAgent(t *testing.T) {
+	runParallelCommandTest(t)
 	tests := []struct {
 		name    string
 		version string
@@ -32,6 +33,7 @@ func TestBuildUserAgent(t *testing.T) {
 }
 
 func TestNewConfluenceClientFromConfig_UsesVersionedUserAgent(t *testing.T) {
+	runParallelCommandTest(t)
 	var seenUserAgent string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		seenUserAgent = r.Header.Get("User-Agent")

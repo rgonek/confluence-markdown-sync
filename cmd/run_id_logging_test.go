@@ -19,6 +19,7 @@ import (
 var runIDPattern = regexp.MustCompile(`run_id=([^\s]+)`)
 
 func TestRunPush_LifecycleLogsIncludeStableRunID(t *testing.T) {
+	runParallelCommandTest(t)
 	previousPreflight := flagPushPreflight
 	flagPushPreflight = true
 	t.Cleanup(func() { flagPushPreflight = previousPreflight })
@@ -64,6 +65,7 @@ func TestRunPull_LifecycleLogsIncludeStableRunID(t *testing.T) {
 }
 
 func TestRunDiff_LifecycleLogsIncludeStableRunID(t *testing.T) {
+	runParallelCommandTest(t)
 	logs, restore := captureInfoLogs(t)
 	defer restore()
 

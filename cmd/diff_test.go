@@ -282,6 +282,7 @@ func TestRunDiff_FolderListFailureFallsBackToPageHierarchy(t *testing.T) {
 }
 
 func TestRunDiff_RespectsCanceledContext(t *testing.T) {
+	runParallelCommandTest(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
@@ -296,6 +297,7 @@ func TestRunDiff_RespectsCanceledContext(t *testing.T) {
 }
 
 func TestRecoverMissingPagesForDiff_SkipsTrashedPages(t *testing.T) {
+	runParallelCommandTest(t)
 	fake := &cmdFakePullRemote{
 		pagesByID: map[string]confluence.Page{
 			"10": {

@@ -70,6 +70,7 @@ func TestResolveCleanTargetBranch_Fallback(t *testing.T) {
 }
 
 func TestConfirmCleanActions_UI(t *testing.T) {
+	runParallelCommandTest(t)
 	// Let's test non-interactive yes by manually replacing the global
 	flagYes = true
 	defer func() { flagYes = false }()

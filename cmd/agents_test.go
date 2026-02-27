@@ -3,6 +3,7 @@ package cmd
 import "testing"
 
 func TestNewInitCmd_RegistersAgentsSubcommand(t *testing.T) {
+	runParallelCommandTest(t)
 	initCmd := newInitCmd()
 
 	foundCmd, _, err := initCmd.Find([]string{"agents"})
@@ -15,6 +16,7 @@ func TestNewInitCmd_RegistersAgentsSubcommand(t *testing.T) {
 }
 
 func TestRootCommand_DoesNotRegisterTopLevelAgents(t *testing.T) {
+	runParallelCommandTest(t)
 	for _, subcommand := range rootCmd.Commands() {
 		if subcommand.Name() == "agents" {
 			t.Fatalf("unexpected top-level agents command registration")
@@ -23,6 +25,7 @@ func TestRootCommand_DoesNotRegisterTopLevelAgents(t *testing.T) {
 }
 
 func TestRootCommand_RegistersInitAgentsSubcommand(t *testing.T) {
+	runParallelCommandTest(t)
 	var initCmdName string
 	for _, subcommand := range rootCmd.Commands() {
 		if subcommand.Name() == "init" {
