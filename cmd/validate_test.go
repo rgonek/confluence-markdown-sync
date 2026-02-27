@@ -437,3 +437,92 @@ func TestRunValidateTargetWithContext_ReturnsCancellation(t *testing.T) {
 		t.Fatalf("expected context canceled error, got: %v", err)
 	}
 }
+
+func TestRunValidateTarget_BlocksDuplicatePageIDs(t *testing.T) {
+	runParallelCommandTest(t)
+	repo := t.TempDir()
+	setupGitRepo(t, repo)
+	setupEnv(t)
+
+	spaceDir := filepath.Join(repo, "Engineering (ENG)")
+	if err := os.MkdirAll(spaceDir, 0o750); err != nil {
+		t.Fatalf("mkdir space dir: %v", err)
+	}
+
+	// Two different files claiming the same Confluence page ID
+	writeMarkdown(t, filepath.Join(spaceDir, "page-a.md"), fs.MarkdownDocument{
+		Frontmatter: fs.Frontmatter{Title: "Page A", ID: "42", Space: "ENG", Version: 1},
+		Body:        "content a\n",
+	})
+	writeMarkdown(t, filepath.Join(spaceDir, "page-b.md"), fs.MarkdownDocument{
+		Frontmatter: fs.Frontmatter{Title: "Page B", ID: "42", Space: "ENG", Version: 1},
+		Body:        "content b\n",
+	})
+	if err := fs.SaveState(spaceDir, fs.SpaceState{
+		SpaceKey:      "ENG",
+		PagePathIndex: map[string]string{"page-a.md": "42"},
+	}); err != nil {
+		t.Fatalf("save state: %v", err)
+	}
+
+	runGitForTest(t, repo, "add", ".")
+	runGitForTest(t, repo, "commit", "-m", "baseline")
+
+	chdirRepo(t, repo)
+	out := &bytes.Buffer{}
+	err := runValidateTargetWithContext(context.Background(), out, config.Target{Mode: config.TargetModeSpace, Value: "Engineering (ENG)"})
+	if err == nil {
+		t.Fatal("expected validate to fail for duplicate page IDs")
+	}
+	got := out.String()
+	if !strings.Contains(got, `"42"`) {
+		t.Fatalf("expected duplicate id %q in output, got:\n%s", "42", got)
+	}
+	if !strings.Contains(got, "page-a.md") || !strings.Contains(got, "page-b.md") {
+		t.Fatalf("expected both duplicate file paths in output, got:\n%s", got)
+	}
+}
+
+func TestDetectDuplicatePageIDs_ReturnsNilForUniqueIDs(t *testing.T) {
+	t.Parallel()
+	index := map[string]string{
+		"a.md": "1",
+		"b.md": "2",
+		"c.md": "3",
+	}
+	errs := detectDuplicatePageIDs(index)
+	if len(errs) != 0 {
+		t.Fatalf("expected no errors for unique IDs, got: %v", errs)
+	}
+}
+
+func TestDetectDuplicatePageIDs_ReturnsDuplicates(t *testing.T) {
+	t.Parallel()
+	index := map[string]string{
+		"a.md": "99",
+		"b.md": "99",
+		"c.md": "100",
+	}
+	errs := detectDuplicatePageIDs(index)
+	if len(errs) != 1 {
+		t.Fatalf("expected 1 error, got: %v", errs)
+	}
+	if !strings.Contains(errs[0], `"99"`) {
+		t.Errorf("expected error to mention id 99, got: %s", errs[0])
+	}
+	if !strings.Contains(errs[0], "a.md") || !strings.Contains(errs[0], "b.md") {
+		t.Errorf("expected both file paths in error, got: %s", errs[0])
+	}
+}
+
+func TestDetectDuplicatePageIDs_SkipsEmptyIDs(t *testing.T) {
+	t.Parallel()
+	index := map[string]string{
+		"a.md": "",
+		"b.md": "",
+	}
+	errs := detectDuplicatePageIDs(index)
+	if len(errs) != 0 {
+		t.Fatalf("expected no errors for empty IDs, got: %v", errs)
+	}
+}
