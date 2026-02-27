@@ -19,10 +19,14 @@ func TestResolveCleanTargetBranchHelper(t *testing.T) {
 	}
 
 	// Init empty commit so branch exists
-	client.Run("commit", "--allow-empty", "-m", "init")
+	if _, err := client.Run("commit", "--allow-empty", "-m", "init"); err != nil {
+		t.Fatalf("failed to commit: %v", err)
+	}
 
 	// Force rename to main first to test that logic.
-	client.Run("branch", "-M", "main")
+	if _, err := client.Run("branch", "-M", "main"); err != nil {
+		t.Fatalf("failed to rename branch: %v", err)
+	}
 
 	branch, err := resolveCleanTargetBranch(client)
 	if err != nil {
@@ -53,11 +57,17 @@ func TestResolveCleanTargetBranch_Fallback(t *testing.T) {
 		t.Fatalf("failed to create client: %v", err)
 	}
 
-	client.Run("commit", "--allow-empty", "-m", "init")
-	client.Run("branch", "-M", "other-branch") // no main or master
+	if _, err := client.Run("commit", "--allow-empty", "-m", "init"); err != nil {
+		t.Fatalf("failed to commit: %v", err)
+	}
+	if _, err := client.Run("branch", "-M", "other-branch"); err != nil { // no main or master
+		t.Fatalf("failed to rename branch: %v", err)
+	}
 
 	// Create fake symbolic-ref response
-	client.Run("remote", "add", "origin", "https://github.com/fake/fake.git")
+	if _, err := client.Run("remote", "add", "origin", "https://github.com/fake/fake.git"); err != nil {
+		t.Fatalf("failed to add remote: %v", err)
+	}
 
 	// It should fallback properly if origin exists or fallback to nothing
 	branch, err := resolveCleanTargetBranch(client)
@@ -65,7 +75,7 @@ func TestResolveCleanTargetBranch_Fallback(t *testing.T) {
 		t.Fatalf("expected no error, got %v", err)
 	}
 	if branch != "" && branch != "other-branch" {
-		// Depending on defaultRef logic it might be empty or find it
+		t.Logf("resolved branch: %q", branch)
 	}
 }
 

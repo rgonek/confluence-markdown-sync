@@ -23,5 +23,6 @@ func TestEnsureSynchronizedCmdOutput(t *testing.T) {
 	out = ensureSynchronizedCmdOutput(cmd)
 	if out != buf {
 		// Output sync might wrap it, just ensure it doesn't panic
+		t.Logf("output wrapped: %T", out)
 	}
 }

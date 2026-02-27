@@ -26,20 +26,36 @@ func TestCollectLocalStatusChanges_Success(t *testing.T) {
 	}
 
 	spaceDir := filepath.Join(tempDir, "TEST")
-	os.MkdirAll(spaceDir, 0755)
+	if err := os.MkdirAll(spaceDir, 0755); err != nil {
+		t.Fatalf("failed to create space dir: %v", err)
+	}
 
-	os.WriteFile(filepath.Join(spaceDir, "page1.md"), []byte("---\nid: \"1\"\nversion: 1\n---\ntest\n"), 0644)
+	if err := os.WriteFile(filepath.Join(spaceDir, "page1.md"), []byte("---\nid: \"1\"\nversion: 1\n---\ntest\n"), 0644); err != nil { //nolint:gosec // test data
+		t.Fatalf("failed to write page1.md: %v", err)
+	}
 
-	client.Run("add", ".")
-	client.Run("commit", "-m", "init")
+	if _, err := client.Run("add", "."); err != nil {
+		t.Fatalf("failed to add: %v", err)
+	}
+	if _, err := client.Run("commit", "-m", "init"); err != nil {
+		t.Fatalf("failed to commit: %v", err)
+	}
 
 	tagTime := time.Now().UTC().Format("20060102T150405Z")
-	client.Run("tag", "-a", "confluence-sync/pull/TEST/"+tagTime, "-m", "pull")
+	if _, err := client.Run("tag", "-a", "confluence-sync/pull/TEST/"+tagTime, "-m", "pull"); err != nil {
+		t.Fatalf("failed to tag: %v", err)
+	}
 
-	os.WriteFile(filepath.Join(spaceDir, "page2.md"), []byte("---\nid: \"2\"\nversion: 1\n---\ntest2\n"), 0644)
-	client.Run("add", filepath.Join("TEST", "page2.md"))
+	if err := os.WriteFile(filepath.Join(spaceDir, "page2.md"), []byte("---\nid: \"2\"\nversion: 1\n---\ntest2\n"), 0644); err != nil { //nolint:gosec // test data
+		t.Fatalf("failed to write page2.md: %v", err)
+	}
+	if _, err := client.Run("add", filepath.Join("TEST", "page2.md")); err != nil {
+		t.Fatalf("failed to add page2.md: %v", err)
+	}
 
-	os.WriteFile(filepath.Join(spaceDir, "page1.md"), []byte("---\nid: \"1\"\nversion: 1\n---\nmodified\n"), 0644)
+	if err := os.WriteFile(filepath.Join(spaceDir, "page1.md"), []byte("---\nid: \"1\"\nversion: 1\n---\nmodified\n"), 0644); err != nil { //nolint:gosec // test data
+		t.Fatalf("failed to write modified page1.md: %v", err)
+	}
 
 	target := config.Target{Value: "TEST", Mode: config.TargetModeSpace}
 	added, modified, deleted, err := collectLocalStatusChanges(target, spaceDir, "TEST")
@@ -73,15 +89,25 @@ func TestBuildStatusReport_Success(t *testing.T) {
 	}
 
 	spaceDir := filepath.Join(tempDir, "TEST")
-	os.MkdirAll(spaceDir, 0755)
+	if err := os.MkdirAll(spaceDir, 0755); err != nil {
+		t.Fatalf("failed to create space dir: %v", err)
+	}
 
-	os.WriteFile(filepath.Join(spaceDir, "page1.md"), []byte("---\nid: \"1\"\nversion: 1\n---\ntest\n"), 0644)
+	if err := os.WriteFile(filepath.Join(spaceDir, "page1.md"), []byte("---\nid: \"1\"\nversion: 1\n---\ntest\n"), 0644); err != nil { //nolint:gosec // test data
+		t.Fatalf("failed to write page1.md: %v", err)
+	}
 
-	client.Run("add", ".")
-	client.Run("commit", "-m", "init")
+	if _, err := client.Run("add", "."); err != nil {
+		t.Fatalf("failed to add: %v", err)
+	}
+	if _, err := client.Run("commit", "-m", "init"); err != nil {
+		t.Fatalf("failed to commit: %v", err)
+	}
 
 	tagTime := time.Now().UTC().Format("20060102T150405Z")
-	client.Run("tag", "-a", "confluence-sync/pull/TEST/"+tagTime, "-m", "pull")
+	if _, err := client.Run("tag", "-a", "confluence-sync/pull/TEST/"+tagTime, "-m", "pull"); err != nil {
+		t.Fatalf("failed to tag: %v", err)
+	}
 
 	mock := &mockStatusRemote{
 		space: confluence.Space{ID: "space-1", Key: "TEST"},
