@@ -596,6 +596,55 @@ func TestRunPush_DryRunDoesNotMutateExistingFrontmatter(t *testing.T) {
 	}
 }
 
+func TestRunPush_DryRunShowsMarkdownPreviewNotRawADF(t *testing.T) {
+	runParallelCommandTest(t)
+
+	repo := t.TempDir()
+	spaceDir := preparePushRepoWithBaseline(t, repo)
+
+	newFile := filepath.Join(spaceDir, "preview-page.md")
+	writeMarkdown(t, newFile, fs.MarkdownDocument{
+		Frontmatter: fs.Frontmatter{
+			Title: "Preview page",
+			Space: "ENG",
+		},
+		Body: "hello dry-run\n",
+	})
+
+	fake := newCmdFakePushRemote(1)
+	oldPushFactory := newPushRemote
+	oldPullFactory := newPullRemote
+	newPushRemote = func(_ *config.Config) (syncflow.PushRemote, error) { return fake, nil }
+	newPullRemote = func(_ *config.Config) (syncflow.PullRemote, error) { return fake, nil }
+	t.Cleanup(func() {
+		newPushRemote = oldPushFactory
+		newPullRemote = oldPullFactory
+	})
+
+	setupEnv(t)
+	chdirRepo(t, spaceDir)
+	setAutomationFlags(t, true, true)
+
+	out := &bytes.Buffer{}
+	cmd := &cobra.Command{}
+	cmd.SetOut(out)
+
+	if err := runPush(cmd, config.Target{Mode: config.TargetModeSpace, Value: ""}, OnConflictPullMerge, true); err != nil {
+		t.Fatalf("runPush dry-run error: %v", err)
+	}
+
+	got := out.String()
+	if !strings.Contains(got, "Body (Markdown preview)") {
+		t.Fatalf("expected Markdown preview in dry-run output, got:\n%s", got)
+	}
+	if strings.Contains(got, "\"type\": \"doc\"") {
+		t.Fatalf("dry-run output should not contain raw ADF JSON, got:\n%s", got)
+	}
+	if !strings.Contains(got, "hello dry-run") {
+		t.Fatalf("expected body content in dry-run Markdown preview, got:\n%s", got)
+	}
+}
+
 func TestRunPush_IncludesUntrackedAssetsFromWorkspaceSnapshot(t *testing.T) {
 	runParallelCommandTest(t)
 

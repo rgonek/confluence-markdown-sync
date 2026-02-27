@@ -7,8 +7,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/rgonek/confluence-markdown-sync/internal/confluence"
+	"github.com/rgonek/confluence-markdown-sync/internal/converter"
 	syncflow "github.com/rgonek/confluence-markdown-sync/internal/sync"
 )
 
@@ -67,13 +69,7 @@ func (d *dryRunPushRemote) CreatePage(ctx context.Context, input confluence.Page
 		fmt.Fprintf(d.out, "  ParentPageID: %s\n", input.ParentPageID)
 	}
 	fmt.Fprintf(d.out, "  Status: %s\n", input.Status)
-
-	var formattedADF bytes.Buffer
-	if err := json.Indent(&formattedADF, input.BodyADF, "  ", "  "); err == nil {
-		fmt.Fprintf(d.out, "  BodyADF:\n  %s\n", formattedADF.String())
-	} else {
-		fmt.Fprintf(d.out, "  BodyADF: %s\n", string(input.BodyADF))
-	}
+	printDryRunBodyPreview(ctx, d.out, input.BodyADF)
 	_, _ = fmt.Fprintln(d.out)
 
 	return confluence.Page{
@@ -95,13 +91,7 @@ func (d *dryRunPushRemote) UpdatePage(ctx context.Context, pageID string, input 
 		fmt.Fprintf(d.out, "  ParentPageID: %s\n", input.ParentPageID)
 	}
 	fmt.Fprintf(d.out, "  Version: %d\n", input.Version)
-
-	var formattedADF bytes.Buffer
-	if err := json.Indent(&formattedADF, input.BodyADF, "  ", "  "); err == nil {
-		fmt.Fprintf(d.out, "  BodyADF:\n  %s\n", formattedADF.String())
-	} else {
-		fmt.Fprintf(d.out, "  BodyADF: %s\n", string(input.BodyADF))
-	}
+	printDryRunBodyPreview(ctx, d.out, input.BodyADF)
 	_, _ = fmt.Fprintln(d.out)
 
 	return confluence.Page{
@@ -113,6 +103,32 @@ func (d *dryRunPushRemote) UpdatePage(ctx context.Context, pageID string, input 
 		Version:      input.Version,
 		WebURL:       fmt.Sprintf("%s/spaces/%s/pages/%s", d.domain, input.SpaceID, pageID),
 	}, nil
+}
+
+// printDryRunBodyPreview renders ADF as Markdown for human-readable dry-run output.
+// Falls back to indented JSON if conversion fails.
+func printDryRunBodyPreview(ctx context.Context, out io.Writer, adfJSON []byte) {
+	res, err := converter.Forward(ctx, adfJSON, converter.ForwardConfig{}, "")
+	if err == nil {
+		body := strings.TrimSpace(res.Markdown)
+		if body == "" {
+			fmt.Fprintf(out, "  Body (Markdown preview): (empty)\n")
+		} else {
+			fmt.Fprintf(out, "  Body (Markdown preview):\n")
+			for _, line := range strings.Split(strings.TrimRight(res.Markdown, "\n"), "\n") {
+				fmt.Fprintf(out, "  | %s\n", line)
+			}
+		}
+		return
+	}
+
+	// Fallback: pretty-print the raw ADF JSON
+	var formattedADF bytes.Buffer
+	if err := json.Indent(&formattedADF, adfJSON, "  ", "  "); err == nil {
+		fmt.Fprintf(out, "  BodyADF:\n  %s\n", formattedADF.String())
+	} else {
+		fmt.Fprintf(out, "  BodyADF: %s\n", string(adfJSON))
+	}
 }
 
 func (d *dryRunPushRemote) ArchivePages(ctx context.Context, pageIDs []string) (confluence.ArchiveResult, error) {
