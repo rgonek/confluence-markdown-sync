@@ -381,7 +381,9 @@ func TestWorktreePrune(t *testing.T) {
 func TestNewClient(t *testing.T) {
 	repo := setupGitRepoForHelpers(t)
 	oldWD, _ := os.Getwd()
-	defer os.Chdir(oldWD)
+	defer func() {
+		_ = os.Chdir(oldWD)
+	}()
 
 	if err := os.Chdir(repo); err != nil {
 		t.Fatalf("chdir repo: %v", err)

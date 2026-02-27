@@ -160,7 +160,9 @@ func TestRunClean_Integration(t *testing.T) {
 	repo := setupGitRepoForClean(t)
 
 	oldWD, _ := os.Getwd()
-	defer os.Chdir(oldWD)
+	defer func() {
+		_ = os.Chdir(oldWD)
+	}()
 	if err := os.Chdir(repo); err != nil {
 		t.Fatalf("chdir repo: %v", err)
 	}
