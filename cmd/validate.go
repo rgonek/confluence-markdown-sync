@@ -64,10 +64,6 @@ If omitted, the space is inferred from the current directory name.`,
 	}
 }
 
-func runValidateTarget(out io.Writer, target config.Target) error {
-	return runValidateTargetWithContext(context.Background(), out, target)
-}
-
 func runValidateCommand(cmd *cobra.Command, target config.Target) (runErr error) {
 	_, restoreLogger := beginCommandRun("validate")
 	defer restoreLogger()
