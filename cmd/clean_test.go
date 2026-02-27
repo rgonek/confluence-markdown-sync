@@ -14,17 +14,17 @@ func TestCleanCmd(t *testing.T) {
 	runParallelCommandTest(t)
 	tempDir := t.TempDir()
 
-	err := os.MkdirAll(filepath.Join(tempDir, ".git"), 0755)
+	err := os.MkdirAll(filepath.Join(tempDir, ".git"), 0700)
 	if err != nil {
 		t.Fatalf("failed to create fake git dir: %v", err)
 	}
 
 	worktreesDir := filepath.Join(tempDir, ".confluence-worktrees")
-	err = os.MkdirAll(filepath.Join(worktreesDir, "wt1"), 0755)
+	err = os.MkdirAll(filepath.Join(worktreesDir, "wt1"), 0700)
 	if err != nil {
 		t.Fatalf("failed to create worktree: %v", err)
 	}
-	err = os.MkdirAll(filepath.Join(worktreesDir, "wt2"), 0755)
+	err = os.MkdirAll(filepath.Join(worktreesDir, "wt2"), 0700)
 	if err != nil {
 		t.Fatalf("failed to create worktree: %v", err)
 	}
@@ -51,7 +51,7 @@ func TestCleanCmd(t *testing.T) {
 
 	t.Run("normalizeCleanStates", func(t *testing.T) {
 		stateFile := filepath.Join(tempDir, "SPACE", ".confluence-state.json")
-		err = os.MkdirAll(filepath.Dir(stateFile), 0755)
+		err = os.MkdirAll(filepath.Dir(stateFile), 0700)
 		if err != nil {
 			t.Fatalf("failed to create state dir: %v", err)
 		}

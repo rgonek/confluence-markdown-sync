@@ -1146,7 +1146,7 @@ func TestRunPull_HealsCorruptedStateFileWithConflictMarkers(t *testing.T) {
 		t.Fatalf("healed page_path_index[root.md] = %q, want 1", got)
 	}
 
-	rawState, err := os.ReadFile(filepath.Join(spaceDir, fs.StateFileName))
+	rawState, err := os.ReadFile(filepath.Join(spaceDir, fs.StateFileName)) //nolint:gosec // test data
 	if err != nil {
 		t.Fatalf("read state file: %v", err)
 	}
