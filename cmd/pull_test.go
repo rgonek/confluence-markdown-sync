@@ -1211,3 +1211,93 @@ func TestWarnSkippedDirtyDeletions_PrintsWarningForIntersectingPaths(t *testing.
 		t.Fatalf("did not expect warning for root.md, got:\n%s", text)
 	}
 }
+
+func TestFixPulledVersionsAfterStashRestore(t *testing.T) {
+	runParallelCommandTest(t)
+
+	repo := t.TempDir()
+	setupGitRepo(t, repo)
+
+	spaceDir := filepath.Join(repo, "ENG")
+	if err := os.MkdirAll(spaceDir, 0o750); err != nil {
+		t.Fatalf("mkdir spaceDir: %v", err)
+	}
+
+	// Write a file with version 3 (simulating what pull committed to HEAD)
+	pullContent := "---\nid: \"42\"\nversion: 3\n---\n\nPulled content\n"
+	pagePath := filepath.Join(spaceDir, "page.md")
+	if err := os.WriteFile(pagePath, []byte(pullContent), 0o600); err != nil {
+		t.Fatalf("write pull content: %v", err)
+	}
+
+	if err := os.WriteFile(filepath.Join(repo, ".gitignore"), []byte(".confluence-state.json\n"), 0o600); err != nil {
+		t.Fatalf("write .gitignore: %v", err)
+	}
+
+	runGitForTest(t, repo, "add", ".")
+	runGitForTest(t, repo, "commit", "-m", "pull commit with version 3")
+
+	// Now simulate stash restore reintroducing version 1 on disk
+	oldContent := "---\nid: \"42\"\nversion: 1\n---\n\nLocal edits\n"
+	if err := os.WriteFile(pagePath, []byte(oldContent), 0o600); err != nil {
+		t.Fatalf("write old content: %v", err)
+	}
+
+	// Verify the disk has version 1 before fix
+	doc, err := fs.ReadMarkdownDocument(pagePath)
+	if err != nil {
+		t.Fatalf("read doc: %v", err)
+	}
+	if doc.Frontmatter.Version != 1 {
+		t.Fatalf("expected version 1 on disk before fix, got %d", doc.Frontmatter.Version)
+	}
+
+	out := new(bytes.Buffer)
+	fixPulledVersionsAfterStashRestore(repo, spaceDir, []string{"page.md"}, out)
+
+	// Verify the disk now has version 3
+	docAfter, err := fs.ReadMarkdownDocument(pagePath)
+	if err != nil {
+		t.Fatalf("read doc after fix: %v", err)
+	}
+	if docAfter.Frontmatter.Version != 3 {
+		t.Fatalf("expected version 3 after fix, got %d", docAfter.Frontmatter.Version)
+	}
+
+	if !strings.Contains(out.String(), "Auto-updated version field") {
+		t.Fatalf("expected auto-update message, got: %s", out.String())
+	}
+}
+
+func TestFixPulledVersionsAfterStashRestore_NoOp(t *testing.T) {
+	runParallelCommandTest(t)
+
+	// When the disk version already matches the committed version, no fix needed
+	repo := t.TempDir()
+	setupGitRepo(t, repo)
+
+	spaceDir := filepath.Join(repo, "ENG")
+	if err := os.MkdirAll(spaceDir, 0o750); err != nil {
+		t.Fatalf("mkdir spaceDir: %v", err)
+	}
+
+	content := "---\nid: \"42\"\nversion: 5\n---\n\nContent\n"
+	pagePath := filepath.Join(spaceDir, "page.md")
+	if err := os.WriteFile(pagePath, []byte(content), 0o600); err != nil {
+		t.Fatalf("write content: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, ".gitignore"), []byte(".confluence-state.json\n"), 0o600); err != nil {
+		t.Fatalf("write .gitignore: %v", err)
+	}
+
+	runGitForTest(t, repo, "add", ".")
+	runGitForTest(t, repo, "commit", "-m", "commit version 5")
+
+	out := new(bytes.Buffer)
+	fixPulledVersionsAfterStashRestore(repo, spaceDir, []string{"page.md"}, out)
+
+	// Should not print update message — nothing changed
+	if strings.Contains(out.String(), "Auto-updated") {
+		t.Fatalf("expected no update message for already-matching version, got: %s", out.String())
+	}
+}

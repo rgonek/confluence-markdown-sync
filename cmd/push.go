@@ -552,7 +552,14 @@ func runPushInWorktree(
 					}
 					*stashRef = ""
 				}
-				if pullErr := runPullForPush(cmd, target); pullErr != nil {
+				// During pull-merge, automatically discard local changes for files
+				// that were deleted remotely, so pull can apply those deletions cleanly
+				// instead of warning and skipping them.
+				prevDiscardLocal := flagPullDiscardLocal
+				flagPullDiscardLocal = true
+				pullErr := runPullForPush(cmd, target)
+				flagPullDiscardLocal = prevDiscardLocal
+				if pullErr != nil {
 					return fmt.Errorf("automatic pull-merge failed: %w", pullErr)
 				}
 				retryCmd := "conf push"

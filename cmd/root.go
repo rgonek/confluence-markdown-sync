@@ -101,6 +101,7 @@ func init() {
 		newDiffCmd(),
 		newRelinkCmd(),
 		newVersionCmd(),
+		newDoctorCmd(),
 	)
 }
 

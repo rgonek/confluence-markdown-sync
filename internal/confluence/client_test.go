@@ -1058,3 +1058,94 @@ func TestClient_VerboseDoesNotLeakToken(t *testing.T) {
 		t.Errorf("verbose output missing HTTP method: %q", output)
 	}
 }
+
+func TestConfluenceStatusHint(t *testing.T) {
+	cases := []struct {
+		code int
+		want string // empty means no hint expected
+	}{
+		{http.StatusUnauthorized, "authentication failed"},
+		{http.StatusForbidden, "permission denied"},
+		{http.StatusConflict, "version conflict"},
+		{http.StatusUnprocessableEntity, "rejected by confluence"},
+		{http.StatusTooManyRequests, "rate limited"},
+		{http.StatusServiceUnavailable, "temporarily unavailable"},
+		{http.StatusRequestEntityTooLarge, "too large"},
+		{http.StatusOK, ""},
+		{http.StatusInternalServerError, ""},
+	}
+	for _, tc := range cases {
+		hint := confluenceStatusHint(tc.code)
+		if tc.want == "" {
+			if hint != "" {
+				t.Errorf("confluenceStatusHint(%d) = %q, want empty", tc.code, hint)
+			}
+			continue
+		}
+		if !strings.Contains(strings.ToLower(hint), tc.want) {
+			t.Errorf("confluenceStatusHint(%d) = %q, want to contain %q", tc.code, hint, tc.want)
+		}
+	}
+}
+
+func TestMapConfluenceErrorCode(t *testing.T) {
+	cases := []struct {
+		input string
+		want  string // substring expected in result
+	}{
+		{"INVALID_IMAGE", "image"},
+		{"invalid_image", "image"}, // case-insensitive
+		{"MACRO_NOT_FOUND", "macro"},
+		{"MACRONOTFOUND", "macro"},
+		{"TITLE_ALREADY_EXISTS", "title"},
+		{"PERMISSION_DENIED", "permission"},
+		{"CONTENT_STALE", "pull"},
+		{"PARENT_PAGE_NOT_FOUND", "parent"},
+		{"INVALID_REQUEST_PARAMETER", "invalid"},
+		{"UNKNOWN_CODE_XYZ", ""},
+		{"", ""},
+	}
+	for _, tc := range cases {
+		got := mapConfluenceErrorCode(tc.input)
+		if tc.want == "" {
+			if got != "" {
+				t.Errorf("mapConfluenceErrorCode(%q) = %q, want empty", tc.input, got)
+			}
+			continue
+		}
+		if !strings.Contains(strings.ToLower(got), tc.want) {
+			t.Errorf("mapConfluenceErrorCode(%q) = %q, want to contain %q", tc.input, got, tc.want)
+		}
+	}
+}
+
+func TestDecodeAPIErrorMessage_ErrorCodeKey(t *testing.T) {
+	// Body with a known "code" key should return the enriched hint.
+	body := []byte(`{"code": "INVALID_IMAGE", "message": ""}`)
+	got := decodeAPIErrorMessage(body)
+	if !strings.Contains(strings.ToLower(got), "image") {
+		t.Errorf("decodeAPIErrorMessage with code=INVALID_IMAGE = %q, want to contain 'image'", got)
+	}
+}
+
+func TestDecodeAPIErrorMessage_TitleAlreadyExists(t *testing.T) {
+	body := []byte(`{"message": "TITLE_ALREADY_EXISTS"}`)
+	got := decodeAPIErrorMessage(body)
+	if !strings.Contains(strings.ToLower(got), "title") {
+		t.Errorf("decodeAPIErrorMessage TITLE_ALREADY_EXISTS = %q, want to contain 'title'", got)
+	}
+}
+
+func TestAPIError_FallsBackToStatusHint(t *testing.T) {
+	err := &APIError{
+		StatusCode: http.StatusForbidden,
+		Method:     "PUT",
+		URL:        "https://example.test/page/1",
+		Message:    "",
+		Body:       "",
+	}
+	msg := err.Error()
+	if !strings.Contains(strings.ToLower(msg), "permission") {
+		t.Errorf("APIError.Error() = %q, want to contain 'permission'", msg)
+	}
+}

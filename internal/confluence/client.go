@@ -86,6 +86,9 @@ func (e *APIError) Error() string {
 		msg = strings.TrimSpace(e.Body)
 	}
 	if msg == "" {
+		msg = confluenceStatusHint(e.StatusCode)
+	}
+	if msg == "" {
 		msg = http.StatusText(e.StatusCode)
 	}
 	if msg == "" {
@@ -1107,18 +1110,37 @@ func decodeAPIErrorMessage(body []byte) string {
 		return ""
 	}
 
+	// Check for a known error code first and return an enriched description.
+	for _, codeKey := range []string{"code", "errorKey", "status"} {
+		if v, ok := payload[codeKey].(string); ok {
+			if hint := mapConfluenceErrorCode(v); hint != "" {
+				return hint
+			}
+		}
+	}
+
 	for _, key := range []string{"message", "error", "reason"} {
 		if v, ok := payload[key].(string); ok {
+			// Try to enrich a terse message via the code mapper.
+			if hint := mapConfluenceErrorCode(v); hint != "" {
+				return hint
+			}
 			return v
 		}
 	}
 
 	if msg := decodeErrorsFieldMessage(payload["errors"]); msg != "" {
+		if hint := mapConfluenceErrorCode(msg); hint != "" {
+			return hint
+		}
 		return msg
 	}
 
 	if data, ok := payload["data"].(map[string]any); ok {
 		if msg := decodeErrorsFieldMessage(data["errors"]); msg != "" {
+			if hint := mapConfluenceErrorCode(msg); hint != "" {
+				return hint
+			}
 			return msg
 		}
 	}
@@ -1176,6 +1198,50 @@ func decodeErrorItemMessage(value any) string {
 		if detail != "" {
 			return detail
 		}
+	}
+	return ""
+}
+
+// confluenceStatusHint returns a Confluence-specific human-readable hint for
+// common HTTP status codes where the default http.StatusText is too generic.
+func confluenceStatusHint(code int) string {
+	switch code {
+	case http.StatusUnauthorized:
+		return "authentication failed — check ATLASSIAN_API_TOKEN and ATLASSIAN_USER_EMAIL"
+	case http.StatusForbidden:
+		return "permission denied — the API token may lack write access to this space"
+	case http.StatusConflict:
+		return "version conflict — another edit was published since your last pull; run `conf pull` first"
+	case http.StatusUnprocessableEntity:
+		return "the page content was rejected by Confluence — check for unsupported macros or invalid ADF"
+	case http.StatusTooManyRequests:
+		return "rate limited by Confluence — reduce --rate-limit-rps or wait before retrying"
+	case http.StatusServiceUnavailable:
+		return "Confluence is temporarily unavailable — retry after a short wait"
+	case http.StatusRequestEntityTooLarge:
+		return "request payload too large — consider splitting large attachments"
+	}
+	return ""
+}
+
+// mapConfluenceErrorCode maps known Confluence API error codes/titles to
+// more descriptive human-readable explanations.
+func mapConfluenceErrorCode(code string) string {
+	switch strings.ToUpper(strings.TrimSpace(code)) {
+	case "INVALID_IMAGE":
+		return "invalid or inaccessible image reference (the image URL may be broken or the file type unsupported)"
+	case "MACRO_NOT_FOUND", "MACRONOTFOUND":
+		return "unrecognized Confluence macro — the macro may not be installed in this Confluence instance"
+	case "INVALID_REQUEST_PARAMETER":
+		return "one or more request parameters are invalid — verify page IDs, space keys, and content"
+	case "PERMISSION_DENIED":
+		return "permission denied — check that the API token has the required space permissions"
+	case "TITLE_ALREADY_EXISTS":
+		return "a page with this title already exists in the space — choose a unique title"
+	case "PARENT_PAGE_NOT_FOUND":
+		return "the specified parent page does not exist or is not accessible"
+	case "CONTENT_STALE":
+		return "page content is stale — a newer version exists on Confluence; run `conf pull` to refresh"
 	}
 	return ""
 }

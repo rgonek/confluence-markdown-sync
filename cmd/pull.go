@@ -194,6 +194,7 @@ func runPull(cmd *cobra.Command, target config.Target) (runErr error) {
 
 	pullStartedAt := nowUTC()
 	stashRef := ""
+	var result syncflow.PullResult
 	if scopeDirExisted {
 		stashRef, err = stashScopeIfDirty(repoRoot, scopePath, pullCtx.spaceKey, pullStartedAt)
 		if err != nil {
@@ -220,7 +221,16 @@ func runPull(cmd *cobra.Command, target config.Target) (runErr error) {
 				}
 
 				restoreLocalChanges := func() error {
-					return applyAndDropStash(repoRoot, stashRef, scopePath, cmd.InOrStdin(), out)
+					if err := applyAndDropStash(repoRoot, stashRef, scopePath, cmd.InOrStdin(), out); err != nil {
+						return err
+					}
+					// After a successful stash restore, ensure the version field in
+					// any pulled file reflects the remote version rather than the
+					// pre-pull local version that the stash may have reintroduced.
+					if runErr == nil {
+						fixPulledVersionsAfterStashRestore(repoRoot, pullCtx.spaceDir, result.UpdatedMarkdown, out)
+					}
+					return nil
 				}
 
 				var restoreErr error
@@ -244,7 +254,7 @@ func runPull(cmd *cobra.Command, target config.Target) (runErr error) {
 		}()
 	}
 
-	result, err := syncflow.Pull(ctx, remote, syncflow.PullOptions{
+	result, err = syncflow.Pull(ctx, remote, syncflow.PullOptions{
 		SpaceKey:          pullCtx.spaceKey,
 		SpaceDir:          pullCtx.spaceDir,
 		State:             state,
@@ -1393,4 +1403,68 @@ func runGit(workdir string, args ...string) (string, error) {
 func dirExists(path string) bool {
 	info, err := os.Stat(path)
 	return err == nil && info.IsDir()
+}
+
+// fixPulledVersionsAfterStashRestore ensures the `version` frontmatter field
+// in each updated-by-pull file matches the version that was committed by pull,
+// even if the stash restore reintroduced the older local version.
+// Any file that cannot be read or written is silently skipped — this is
+// best-effort and must not fail the overall pull operation.
+func fixPulledVersionsAfterStashRestore(repoRoot, spaceDir string, updatedRelPaths []string, out io.Writer) {
+	if len(updatedRelPaths) == 0 {
+		return
+	}
+	scopeRelPath, err := filepath.Rel(repoRoot, spaceDir)
+	if err != nil {
+		return
+	}
+	scopeRelPath = filepath.ToSlash(filepath.Clean(scopeRelPath))
+
+	fixed := 0
+	for _, relPath := range updatedRelPaths {
+		relPath = normalizeRepoRelPath(relPath)
+		if relPath == "" {
+			continue
+		}
+
+		// The committed (pulled) version lives at HEAD in the repo-relative path.
+		repoRelPath := relPath
+		if scopeRelPath != "" && scopeRelPath != "." {
+			repoRelPath = scopeRelPath + "/" + relPath
+		}
+
+		raw, gitErr := runGit(repoRoot, "show", "HEAD:"+repoRelPath)
+		if gitErr != nil {
+			continue
+		}
+
+		committedDoc, parseErr := fs.ParseMarkdownDocument([]byte(raw))
+		if parseErr != nil {
+			continue
+		}
+		pulledVersion := committedDoc.Frontmatter.Version
+		if pulledVersion <= 0 {
+			continue
+		}
+
+		absPath := filepath.Join(spaceDir, filepath.FromSlash(relPath))
+		diskDoc, readErr := fs.ReadMarkdownDocument(absPath)
+		if readErr != nil {
+			continue
+		}
+
+		if diskDoc.Frontmatter.Version == pulledVersion {
+			continue // already correct
+		}
+
+		diskDoc.Frontmatter.Version = pulledVersion
+		if writeErr := fs.WriteMarkdownDocument(absPath, diskDoc); writeErr != nil {
+			continue
+		}
+		fixed++
+	}
+
+	if fixed > 0 {
+		_, _ = fmt.Fprintf(out, "Auto-updated version field in %d file(s) to match pulled remote version.\n", fixed)
+	}
 }

@@ -89,3 +89,49 @@ func TestListAllPagesForStatus(t *testing.T) {
 		t.Fatalf("expected 2 pages, got %d", len(pages))
 	}
 }
+
+func TestComputeConflictAhead(t *testing.T) {
+	t.Run("no overlap", func(t *testing.T) {
+		result := computeConflictAhead(
+			[]string{"a.md", "b.md"},
+			[]string{"c.md", "d.md"},
+		)
+		if len(result) != 0 {
+			t.Fatalf("expected no conflicts, got %v", result)
+		}
+	})
+
+	t.Run("full overlap", func(t *testing.T) {
+		result := computeConflictAhead(
+			[]string{"a.md", "b.md"},
+			[]string{"a.md", "b.md"},
+		)
+		if len(result) != 2 {
+			t.Fatalf("expected 2 conflicts, got %v", result)
+		}
+	})
+
+	t.Run("partial overlap", func(t *testing.T) {
+		result := computeConflictAhead(
+			[]string{"a.md", "b.md", "c.md"},
+			[]string{"b.md", "d.md"},
+		)
+		if len(result) != 1 || result[0] != "b.md" {
+			t.Fatalf("expected [b.md], got %v", result)
+		}
+	})
+
+	t.Run("empty local modified", func(t *testing.T) {
+		result := computeConflictAhead(nil, []string{"a.md"})
+		if len(result) != 0 {
+			t.Fatalf("expected no conflicts with empty localModified, got %v", result)
+		}
+	})
+
+	t.Run("empty remote modified", func(t *testing.T) {
+		result := computeConflictAhead([]string{"a.md"}, nil)
+		if len(result) != 0 {
+			t.Fatalf("expected no conflicts with empty remoteModified, got %v", result)
+		}
+	})
+}
