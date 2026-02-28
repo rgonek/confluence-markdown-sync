@@ -12,7 +12,7 @@ import (
 
 func TestRunDoctor(t *testing.T) {
 	runParallelCommandTest(t)
-	
+
 	cmd := newDoctorCmd()
 	if cmd == nil {
 		t.Fatal("expected command not to be nil")
@@ -27,9 +27,9 @@ func TestRunDoctor(t *testing.T) {
 	state := fs.NewSpaceState()
 	state.SpaceKey = "TEST"
 	state.PagePathIndex = map[string]string{
-		"page.md": "1",
+		"page.md":    "1",
 		"missing.md": "2",
-		"empty.md": "",
+		"empty.md":   "",
 	}
 	if err := fs.SaveState(spaceDir, state); err != nil {
 		t.Fatalf("write state: %v", err)
@@ -39,7 +39,7 @@ func TestRunDoctor(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(spaceDir, "page.md"), []byte(pageContent), 0o600); err != nil {
 		t.Fatalf("write page: %v", err)
 	}
-	
+
 	orphanContent := "---\nid: 3\nversion: 1\n---\norphan"
 	if err := os.WriteFile(filepath.Join(spaceDir, "orphan.md"), []byte(orphanContent), 0o600); err != nil {
 		t.Fatalf("write orphan: %v", err)

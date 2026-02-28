@@ -151,14 +151,14 @@ func TestRunGlobalRelink(t *testing.T) {
 	runGitForTest(t, repo, "commit", "-m", "seed relink fixtures")
 
 	chdirRepo(t, repo)
-	
+
 	oldYes := flagYes
 	flagYes = true
 	defer func() { flagYes = oldYes }()
 
 	cmd := &cobra.Command{}
 	cmd.SetOut(&bytes.Buffer{})
-	
+
 	// Target "" means global relink
 	err := runRelink(cmd, "")
 	if err != nil {

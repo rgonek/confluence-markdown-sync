@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/rgonek/confluence-markdown-sync/internal/confluence"
 	"github.com/rgonek/confluence-markdown-sync/internal/config"
+	"github.com/rgonek/confluence-markdown-sync/internal/confluence"
 	"github.com/rgonek/confluence-markdown-sync/internal/fs"
 	syncflow "github.com/rgonek/confluence-markdown-sync/internal/sync"
 	"github.com/spf13/cobra"

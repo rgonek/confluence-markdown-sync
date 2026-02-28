@@ -32,7 +32,7 @@ func TestAskToContinueOnDownloadError(t *testing.T) {
 	if askToContinueOnDownloadError(in, out, "att1", "page1", nil) {
 		t.Error("expected false when answering no")
 	}
-	
+
 	inYes := strings.NewReader("y\n")
 	if !askToContinueOnDownloadError(inYes, out, "att1", "page1", nil) {
 		t.Error("expected true when answering yes")

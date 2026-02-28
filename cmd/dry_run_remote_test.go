@@ -1,9 +1,9 @@
 package cmd
 
 import (
+	"bytes"
 	"context"
 	"testing"
-    "bytes"
 
 	"github.com/rgonek/confluence-markdown-sync/internal/confluence"
 	syncflow "github.com/rgonek/confluence-markdown-sync/internal/sync"
@@ -26,7 +26,7 @@ func TestDryRunRemote(t *testing.T) {
 	if _, err := remote.GetPage(ctx, "123"); err != nil {
 		t.Error("GetPage failed")
 	}
-	
+
 	if err := remote.SetContentStatus(ctx, "123", "current"); err != nil {
 		t.Error("SetContentStatus failed")
 	}
@@ -70,7 +70,7 @@ func TestDryRunRemote(t *testing.T) {
 	if err := remote.MovePage(ctx, "123", "456"); err != nil {
 		t.Error("MovePage failed")
 	}
-	
+
 	if err := remote.Close(); err != nil {
 		t.Error("Close failed")
 	}

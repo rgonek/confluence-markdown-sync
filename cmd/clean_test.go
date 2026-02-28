@@ -258,7 +258,7 @@ func TestResolveCleanTargetBranch(t *testing.T) {
 	client := &git.Client{RootDir: repo}
 	runGitForTest(t, repo, "commit", "--allow-empty", "-m", "init")
 	runGitForTest(t, repo, "branch", "-m", "foo")
-	
+
 	target, err := resolveCleanTargetBranch(client)
 	if err != nil || target != "" {
 		t.Errorf("expected empty target branch, got %q, %v", target, err)

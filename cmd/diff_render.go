@@ -1,9 +1,9 @@
 package cmd
 
 import (
-	syncflow "github.com/rgonek/confluence-markdown-sync/internal/sync"
 	"context"
 	"fmt"
+	syncflow "github.com/rgonek/confluence-markdown-sync/internal/sync"
 	"os"
 	"path/filepath"
 	"sort"
