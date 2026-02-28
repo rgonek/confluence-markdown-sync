@@ -526,3 +526,35 @@ func TestDetectDuplicatePageIDs_SkipsEmptyIDs(t *testing.T) {
 		t.Fatalf("expected no errors for empty IDs, got: %v", errs)
 	}
 }
+
+func TestRunValidateCommand(t *testing.T) {
+	runParallelCommandTest(t)
+	repo := t.TempDir()
+	setupGitRepo(t, repo)
+
+	spaceDir := filepath.Join(repo, "Engineering (ENG)")
+	if err := os.MkdirAll(spaceDir, 0o750); err != nil {
+		t.Fatalf("mkdir space dir: %v", err)
+	}
+
+	writeMarkdown(t, filepath.Join(spaceDir, "root.md"), fs.MarkdownDocument{
+		Frontmatter: fs.Frontmatter{Title: "Root", ID: "1", Space: "ENG", Version: 1},
+		Body:        "content\n",
+	})
+	if err := fs.SaveState(spaceDir, fs.SpaceState{SpaceKey: "ENG", PagePathIndex: map[string]string{"root.md": "1"}}); err != nil {
+		t.Fatalf("save state: %v", err)
+	}
+
+	runGitForTest(t, repo, "add", ".")
+	runGitForTest(t, repo, "commit", "-m", "baseline")
+
+	chdirRepo(t, repo)
+
+	cmd := newValidateCmd()
+	cmd.SetOut(&bytes.Buffer{})
+
+	err := runValidateCommand(cmd, config.Target{Mode: config.TargetModeSpace, Value: spaceDir})
+	if err != nil {
+		t.Errorf("expected no error, got %v", err)
+	}
+}

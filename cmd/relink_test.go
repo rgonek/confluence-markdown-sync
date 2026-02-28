@@ -106,3 +106,70 @@ func TestGetSpaceKeyFromState_FallsBackToDirectorySuffix(t *testing.T) {
 		t.Fatalf("space key = %q, want OPS", got)
 	}
 }
+
+func TestRunGlobalRelink(t *testing.T) {
+	runParallelCommandTest(t)
+	repo := t.TempDir()
+	setupGitRepo(t, repo)
+
+	targetDir := filepath.Join(repo, "Target (TGT)")
+	sourceDir := filepath.Join(repo, "Source (SRC)")
+	if err := os.MkdirAll(targetDir, 0o750); err != nil {
+		t.Fatalf("mkdir target dir: %v", err)
+	}
+	if err := os.MkdirAll(sourceDir, 0o750); err != nil {
+		t.Fatalf("mkdir source dir: %v", err)
+	}
+
+	writeMarkdown(t, filepath.Join(targetDir, "target.md"), fs.MarkdownDocument{
+		Frontmatter: fs.Frontmatter{Title: "Target", ID: "42", Space: "TGT", Version: 1},
+		Body:        "target body\n",
+	})
+	if err := fs.SaveState(targetDir, fs.SpaceState{
+		SpaceKey: "TGT",
+		PagePathIndex: map[string]string{
+			"target.md": "42",
+		},
+	}); err != nil {
+		t.Fatalf("save target state: %v", err)
+	}
+
+	writeMarkdown(t, filepath.Join(sourceDir, "doc.md"), fs.MarkdownDocument{
+		Frontmatter: fs.Frontmatter{Title: "Doc", ID: "101", Space: "SRC", Version: 1},
+		Body:        "[Target](https://example.atlassian.net/wiki/pages/viewpage.action?pageId=42)\n",
+	})
+	if err := fs.SaveState(sourceDir, fs.SpaceState{
+		SpaceKey: "SRC",
+		PagePathIndex: map[string]string{
+			"doc.md": "101",
+		},
+	}); err != nil {
+		t.Fatalf("save source state: %v", err)
+	}
+
+	runGitForTest(t, repo, "add", ".")
+	runGitForTest(t, repo, "commit", "-m", "seed relink fixtures")
+
+	chdirRepo(t, repo)
+	
+	oldYes := flagYes
+	flagYes = true
+	defer func() { flagYes = oldYes }()
+
+	cmd := &cobra.Command{}
+	cmd.SetOut(&bytes.Buffer{})
+	
+	// Target "" means global relink
+	err := runRelink(cmd, "")
+	if err != nil {
+		t.Fatalf("runRelink(global) failed: %v", err)
+	}
+
+	raw, err := os.ReadFile(filepath.Join(sourceDir, "doc.md"))
+	if err != nil {
+		t.Fatalf("read source doc: %v", err)
+	}
+	if !strings.Contains(string(raw), "../Target%20%28TGT%29/target.md") {
+		t.Fatalf("expected source doc to be relinked, got:\n%s", string(raw))
+	}
+}
