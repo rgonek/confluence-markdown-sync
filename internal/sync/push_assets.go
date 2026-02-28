@@ -1,7 +1,6 @@
 package sync
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"mime"
@@ -12,7 +11,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/rgonek/confluence-markdown-sync/internal/confluence"
 	"github.com/rgonek/confluence-markdown-sync/internal/fs"
 )
 
@@ -677,101 +675,6 @@ func dedupeSortedPaths(paths []string) []string {
 	return normalized
 }
 
-func resolveLocalTitle(doc fs.MarkdownDocument, relPath string) string {
-	title := strings.TrimSpace(doc.Frontmatter.Title)
-	if title != "" {
-		return title
-	}
-
-	for _, line := range strings.Split(doc.Body, "\n") {
-		line = strings.TrimSpace(line)
-		if strings.HasPrefix(line, "# ") {
-			title = strings.TrimSpace(strings.TrimPrefix(line, "# "))
-			if title != "" {
-				return title
-			}
-		}
-	}
-
-	base := filepath.Base(relPath)
-	return strings.TrimSuffix(base, filepath.Ext(base))
-}
-
-func buildLocalPageTitleIndex(spaceDir string) (map[string]string, error) {
-	out := map[string]string{}
-	err := filepath.WalkDir(spaceDir, func(path string, d os.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			return walkErr
-		}
-		if d.IsDir() {
-			if d.Name() == "assets" || strings.HasPrefix(d.Name(), ".") {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		if !strings.HasSuffix(strings.ToLower(d.Name()), ".md") {
-			return nil
-		}
-
-		relPath, err := filepath.Rel(spaceDir, path)
-		if err != nil {
-			return nil
-		}
-		relPath = normalizeRelPath(relPath)
-		if relPath == "" {
-			return nil
-		}
-
-		doc, err := fs.ReadMarkdownDocument(path)
-		if err != nil {
-			return nil
-		}
-
-		title := strings.TrimSpace(resolveLocalTitle(doc, relPath))
-		if title == "" {
-			return nil
-		}
-		out[relPath] = title
-		return nil
-	})
-	return out, err
-}
-
-func findTrackedTitleConflict(relPath, title string, pagePathIndex map[string]string, pageTitleByPath map[string]string) (string, string) {
-	titleKey := strings.ToLower(strings.TrimSpace(title))
-	if titleKey == "" {
-		return "", ""
-	}
-
-	normalizedPath := normalizeRelPath(relPath)
-	currentDir := normalizeRelPath(filepath.ToSlash(filepath.Dir(filepath.FromSlash(normalizedPath))))
-
-	for trackedPath, trackedPageID := range pagePathIndex {
-		trackedPath = normalizeRelPath(trackedPath)
-		trackedPageID = strings.TrimSpace(trackedPageID)
-		if trackedPath == "" || trackedPageID == "" {
-			continue
-		}
-		if trackedPath == normalizedPath {
-			continue
-		}
-
-		trackedTitle := strings.ToLower(strings.TrimSpace(pageTitleByPath[trackedPath]))
-		if trackedTitle == "" || trackedTitle != titleKey {
-			continue
-		}
-
-		trackedDir := normalizeRelPath(filepath.ToSlash(filepath.Dir(filepath.FromSlash(trackedPath))))
-		if trackedDir != currentDir {
-			continue
-		}
-
-		return trackedPath, trackedPageID
-	}
-
-	return "", ""
-}
-
 func detectAssetContentType(filename string, raw []byte) string {
 	extType := mime.TypeByExtension(strings.ToLower(filepath.Ext(filename)))
 	if strings.TrimSpace(extType) != "" {
@@ -786,30 +689,4 @@ func detectAssetContentType(filename string, raw []byte) string {
 		sniffLen = 512
 	}
 	return http.DetectContentType(raw[:sniffLen])
-}
-
-func normalizePageLifecycleState(state string) string {
-	normalized := strings.TrimSpace(strings.ToLower(state))
-	if normalized == "" {
-		return "current"
-	}
-	return normalized
-}
-
-func listAllPushPages(ctx context.Context, remote PushRemote, opts confluence.PageListOptions) ([]confluence.Page, error) {
-	result := []confluence.Page{}
-	cursor := opts.Cursor
-	for {
-		opts.Cursor = cursor
-		pageResult, err := remote.ListPages(ctx, opts)
-		if err != nil {
-			return nil, err
-		}
-		result = append(result, pageResult.Pages...)
-		if strings.TrimSpace(pageResult.NextCursor) == "" || pageResult.NextCursor == cursor {
-			break
-		}
-		cursor = pageResult.NextCursor
-	}
-	return result, nil
 }
