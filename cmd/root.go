@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/charmbracelet/lipgloss"
 	"github.com/rgonek/confluence-markdown-sync/internal/confluence"
 	"github.com/spf13/cobra"
 )
@@ -65,6 +66,10 @@ func getCommandContext(cmd *cobra.Command) context.Context {
 }
 
 func init() {
+	// Disable background color detection which can hang on some terminals (e.g., Windows conhost or mintty).
+	// This forces lipgloss to assume a dark background, skipping the blocking terminal query.
+	lipgloss.SetHasDarkBackground(true)
+
 	rootCmd.PersistentFlags().BoolVarP(&flagVerbose, "verbose", "v", false, "Enable verbose output (log HTTP requests)")
 	rootCmd.PersistentFlags().IntVar(&flagRateLimitRPS, "rate-limit-rps", confluence.DefaultRateLimitRPS, "Confluence API request rate limit (requests/second)")
 	rootCmd.PersistentFlags().IntVar(&flagRetryMaxAttempts, "retry-max-attempts", confluence.DefaultRetryMaxAttempts, "Maximum retries for retryable Confluence API requests")
