@@ -25,7 +25,7 @@ func TestResolveValidateTargetContext_ResolvesSanitizedSpaceDirectoryByKey(t *te
 		Frontmatter: fs.Frontmatter{
 			Title:                  "Root",
 			ID:                     "1",
-			Space:                  "TD",
+
 			Version:                1,
 			ConfluenceLastModified: "2026-02-01T10:00:00Z",
 		},
@@ -64,7 +64,7 @@ func TestRunValidateTarget_BlocksTamperedIDAgainstState(t *testing.T) {
 
 	rootPath := filepath.Join(spaceDir, "root.md")
 	writeMarkdown(t, rootPath, fs.MarkdownDocument{
-		Frontmatter: fs.Frontmatter{Title: "Root", ID: "1", Space: "ENG", Version: 1},
+		Frontmatter: fs.Frontmatter{Title: "Root", ID: "1", Version: 1},
 		Body:        "content\n",
 	})
 	if err := fs.SaveState(spaceDir, fs.SpaceState{SpaceKey: "ENG", PagePathIndex: map[string]string{"root.md": "1"}}); err != nil {
@@ -75,7 +75,7 @@ func TestRunValidateTarget_BlocksTamperedIDAgainstState(t *testing.T) {
 	runGitForTest(t, repo, "commit", "-m", "baseline")
 
 	writeMarkdown(t, rootPath, fs.MarkdownDocument{
-		Frontmatter: fs.Frontmatter{Title: "Root", ID: "2", Space: "ENG", Version: 1},
+		Frontmatter: fs.Frontmatter{Title: "Root", ID: "2", Version: 1},
 		Body:        "content\n",
 	})
 
@@ -103,7 +103,7 @@ func TestRunValidateTarget_IgnoresSpaceFrontmatter(t *testing.T) {
 
 	rootPath := filepath.Join(spaceDir, "root.md")
 	writeMarkdown(t, rootPath, fs.MarkdownDocument{
-		Frontmatter: fs.Frontmatter{Title: "Root", ID: "1", Space: "ENG", Version: 1},
+		Frontmatter: fs.Frontmatter{Title: "Root", ID: "1", Version: 1},
 		Body:        "content\n",
 	})
 	if err := fs.SaveState(spaceDir, fs.SpaceState{SpaceKey: "ENG", PagePathIndex: map[string]string{"root.md": "1"}}); err != nil {
@@ -114,7 +114,7 @@ func TestRunValidateTarget_IgnoresSpaceFrontmatter(t *testing.T) {
 	runGitForTest(t, repo, "commit", "-m", "baseline")
 
 	writeMarkdown(t, rootPath, fs.MarkdownDocument{
-		Frontmatter: fs.Frontmatter{Title: "Root", ID: "1", Space: "OPS", Version: 1},
+		Frontmatter: fs.Frontmatter{Title: "Root", ID: "1", Version: 1},
 		Body:        "content\n",
 	})
 
@@ -139,7 +139,7 @@ func TestRunValidateTarget_BlocksCurrentToDraftTransition(t *testing.T) {
 
 	rootPath := filepath.Join(spaceDir, "root.md")
 	writeMarkdown(t, rootPath, fs.MarkdownDocument{
-		Frontmatter: fs.Frontmatter{Title: "Root", ID: "1", Space: "ENG", Version: 1, State: "current"},
+		Frontmatter: fs.Frontmatter{Title: "Root", ID: "1", Version: 1, State: "current"},
 		Body:        "content\n",
 	})
 	if err := fs.SaveState(spaceDir, fs.SpaceState{SpaceKey: "ENG", PagePathIndex: map[string]string{"root.md": "1"}}); err != nil {
@@ -150,7 +150,7 @@ func TestRunValidateTarget_BlocksCurrentToDraftTransition(t *testing.T) {
 	runGitForTest(t, repo, "commit", "-m", "baseline")
 
 	writeMarkdown(t, rootPath, fs.MarkdownDocument{
-		Frontmatter: fs.Frontmatter{Title: "Root", ID: "1", Space: "ENG", Version: 1, State: "draft"},
+		Frontmatter: fs.Frontmatter{Title: "Root", ID: "1", Version: 1, State: "draft"},
 		Body:        "content\n",
 	})
 
@@ -178,7 +178,7 @@ func TestRunValidateTarget_AllowsDraftToDraftForExistingDraftPage(t *testing.T) 
 
 	rootPath := filepath.Join(spaceDir, "root.md")
 	writeMarkdown(t, rootPath, fs.MarkdownDocument{
-		Frontmatter: fs.Frontmatter{Title: "Root", ID: "1", Space: "ENG", Version: 1, State: "draft"},
+		Frontmatter: fs.Frontmatter{Title: "Root", ID: "1", Version: 1, State: "draft"},
 		Body:        "content\n",
 	})
 	if err := fs.SaveState(spaceDir, fs.SpaceState{SpaceKey: "ENG", PagePathIndex: map[string]string{"root.md": "1"}}); err != nil {
@@ -189,7 +189,7 @@ func TestRunValidateTarget_AllowsDraftToDraftForExistingDraftPage(t *testing.T) 
 	runGitForTest(t, repo, "commit", "-m", "baseline")
 
 	writeMarkdown(t, rootPath, fs.MarkdownDocument{
-		Frontmatter: fs.Frontmatter{Title: "Root", ID: "1", Space: "ENG", Version: 1, State: "draft"},
+		Frontmatter: fs.Frontmatter{Title: "Root", ID: "1", Version: 1, State: "draft"},
 		Body:        "updated content\n",
 	})
 
@@ -216,7 +216,7 @@ func TestRunValidateTarget_AllowsNonAssetsMediaReferenceWithinSpace(t *testing.T
 	}
 
 	writeMarkdown(t, filepath.Join(spaceDir, "root.md"), fs.MarkdownDocument{
-		Frontmatter: fs.Frontmatter{Title: "Root", Space: "ENG"},
+		Frontmatter: fs.Frontmatter{Title: "Root"},
 		Body:        "![image](images/outside.png)\n",
 	})
 	if err := fs.SaveState(spaceDir, fs.SpaceState{SpaceKey: "ENG"}); err != nil {
@@ -248,7 +248,7 @@ func TestRunValidateTarget_AllowsLocalFileLinkAttachment(t *testing.T) {
 	}
 
 	writeMarkdown(t, filepath.Join(spaceDir, "root.md"), fs.MarkdownDocument{
-		Frontmatter: fs.Frontmatter{Title: "Root", Space: "ENG"},
+		Frontmatter: fs.Frontmatter{Title: "Root"},
 		Body:        "[Manual](assets/manual.pdf)\n",
 	})
 	if err := fs.SaveState(spaceDir, fs.SpaceState{SpaceKey: "ENG"}); err != nil {
@@ -277,7 +277,7 @@ func TestRunValidateTarget_FailsForMissingAssetFile(t *testing.T) {
 	}
 
 	writeMarkdown(t, filepath.Join(spaceDir, "root.md"), fs.MarkdownDocument{
-		Frontmatter: fs.Frontmatter{Title: "Root", Space: "ENG"},
+		Frontmatter: fs.Frontmatter{Title: "Root"},
 		Body:        "![missing](assets/missing.png)\n",
 	})
 	if err := fs.SaveState(spaceDir, fs.SpaceState{SpaceKey: "ENG"}); err != nil {
@@ -310,7 +310,7 @@ func TestRunValidateTarget_OutsideAssetPathShowsActionableMessage(t *testing.T) 
 	}
 
 	writeMarkdown(t, filepath.Join(spaceDir, "root.md"), fs.MarkdownDocument{
-		Frontmatter: fs.Frontmatter{Title: "Root", Space: "ENG"},
+		Frontmatter: fs.Frontmatter{Title: "Root"},
 		Body:        "![outside](../outside.png)\n",
 	})
 	if err := fs.SaveState(spaceDir, fs.SpaceState{SpaceKey: "ENG"}); err != nil {
@@ -350,7 +350,7 @@ func TestRunValidateTarget_AllowsCrossSpaceEncodedRelativeLink(t *testing.T) {
 	}
 
 	writeMarkdown(t, filepath.Join(tdDir, "target.md"), fs.MarkdownDocument{
-		Frontmatter: fs.Frontmatter{Title: "Target", ID: "200", Space: "TD", Version: 1},
+		Frontmatter: fs.Frontmatter{Title: "Target", ID: "200", Version: 1},
 		Body:        "target\n",
 	})
 	if err := fs.SaveState(tdDir, fs.SpaceState{SpaceKey: "TD", PagePathIndex: map[string]string{"target.md": "200"}}); err != nil {
@@ -358,7 +358,7 @@ func TestRunValidateTarget_AllowsCrossSpaceEncodedRelativeLink(t *testing.T) {
 	}
 
 	writeMarkdown(t, filepath.Join(engDir, "root.md"), fs.MarkdownDocument{
-		Frontmatter: fs.Frontmatter{Title: "Root", ID: "100", Space: "ENG", Version: 1},
+		Frontmatter: fs.Frontmatter{Title: "Root", ID: "100", Version: 1},
 		Body:        "[cross](../Technical%20Docs%20(TD)/target.md)\n",
 	})
 	if err := fs.SaveState(engDir, fs.SpaceState{SpaceKey: "ENG", PagePathIndex: map[string]string{"root.md": "100"}}); err != nil {
@@ -387,11 +387,11 @@ func TestRunValidateTarget_AllowsLinkToSimultaneousNewPageInSpaceScope(t *testin
 	}
 
 	writeMarkdown(t, filepath.Join(spaceDir, "Fancy-Extensions.md"), fs.MarkdownDocument{
-		Frontmatter: fs.Frontmatter{Title: "Fancy Extensions", Space: "ENG"},
+		Frontmatter: fs.Frontmatter{Title: "Fancy Extensions"},
 		Body:        "[New page](New-Page.md)\n",
 	})
 	writeMarkdown(t, filepath.Join(spaceDir, "New-Page.md"), fs.MarkdownDocument{
-		Frontmatter: fs.Frontmatter{Title: "New Page", Space: "ENG"},
+		Frontmatter: fs.Frontmatter{Title: "New Page"},
 		Body:        "hello\n",
 	})
 	if err := fs.SaveState(spaceDir, fs.SpaceState{SpaceKey: "ENG"}); err != nil {
@@ -420,7 +420,7 @@ func TestRunValidateTargetWithContext_ReturnsCancellation(t *testing.T) {
 	}
 
 	writeMarkdown(t, filepath.Join(spaceDir, "root.md"), fs.MarkdownDocument{
-		Frontmatter: fs.Frontmatter{Title: "Root", ID: "1", Space: "ENG", Version: 1},
+		Frontmatter: fs.Frontmatter{Title: "Root", ID: "1", Version: 1},
 		Body:        "content\n",
 	})
 	if err := fs.SaveState(spaceDir, fs.SpaceState{SpaceKey: "ENG", PagePathIndex: map[string]string{"root.md": "1"}}); err != nil {
@@ -451,11 +451,11 @@ func TestRunValidateTarget_BlocksDuplicatePageIDs(t *testing.T) {
 
 	// Two different files claiming the same Confluence page ID
 	writeMarkdown(t, filepath.Join(spaceDir, "page-a.md"), fs.MarkdownDocument{
-		Frontmatter: fs.Frontmatter{Title: "Page A", ID: "42", Space: "ENG", Version: 1},
+		Frontmatter: fs.Frontmatter{Title: "Page A", ID: "42", Version: 1},
 		Body:        "content a\n",
 	})
 	writeMarkdown(t, filepath.Join(spaceDir, "page-b.md"), fs.MarkdownDocument{
-		Frontmatter: fs.Frontmatter{Title: "Page B", ID: "42", Space: "ENG", Version: 1},
+		Frontmatter: fs.Frontmatter{Title: "Page B", ID: "42", Version: 1},
 		Body:        "content b\n",
 	})
 	if err := fs.SaveState(spaceDir, fs.SpaceState{
@@ -538,7 +538,7 @@ func TestRunValidateCommand(t *testing.T) {
 	}
 
 	writeMarkdown(t, filepath.Join(spaceDir, "root.md"), fs.MarkdownDocument{
-		Frontmatter: fs.Frontmatter{Title: "Root", ID: "1", Space: "ENG", Version: 1},
+		Frontmatter: fs.Frontmatter{Title: "Root", ID: "1", Version: 1},
 		Body:        "content\n",
 	})
 	if err := fs.SaveState(spaceDir, fs.SpaceState{SpaceKey: "ENG", PagePathIndex: map[string]string{"root.md": "1"}}); err != nil {

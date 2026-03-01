@@ -22,7 +22,6 @@ func TestRunPush_DryRunDoesNotMutateFrontmatter(t *testing.T) {
 	writeMarkdown(t, newFile, fs.MarkdownDocument{
 		Frontmatter: fs.Frontmatter{
 			Title: "New page",
-			Space: "ENG",
 		},
 		Body: "new content\n",
 	})
@@ -105,7 +104,6 @@ func TestRunPush_DryRunShowsMarkdownPreviewNotRawADF(t *testing.T) {
 	writeMarkdown(t, newFile, fs.MarkdownDocument{
 		Frontmatter: fs.Frontmatter{
 			Title: "Preview page",
-			Space: "ENG",
 		},
 		Body: "hello dry-run\n",
 	})
@@ -154,7 +152,7 @@ func TestRunPush_PreflightShowsPlanWithoutRemoteWrites(t *testing.T) {
 		Frontmatter: fs.Frontmatter{
 			Title:                  "Root",
 			ID:                     "1",
-			Space:                  "ENG",
+
 			Version:                1,
 			ConfluenceLastModified: "2026-02-01T10:00:00Z",
 		},

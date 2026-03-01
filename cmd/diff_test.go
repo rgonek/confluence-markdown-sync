@@ -30,7 +30,7 @@ func TestRunDiff_FileModeShowsContentChanges(t *testing.T) {
 		Frontmatter: fs.Frontmatter{
 			Title:                  "Root",
 			ID:                     "1",
-			Space:                  "ENG",
+
 			Version:                1,
 			ConfluenceLastModified: "2026-02-01T10:00:00Z",
 		},
@@ -97,7 +97,7 @@ func TestRunDiff_SpaceModeNoDifferences(t *testing.T) {
 		Frontmatter: fs.Frontmatter{
 			Title:                  "Root",
 			ID:                     "1",
-			Space:                  "ENG",
+
 			Version:                2,
 			ConfluenceLastModified: "2026-02-01T11:00:00Z",
 		},
@@ -165,7 +165,7 @@ func TestRunDiff_ReportsBestEffortWarnings(t *testing.T) {
 		Frontmatter: fs.Frontmatter{
 			Title:                  "Root",
 			ID:                     "1",
-			Space:                  "ENG",
+
 			Version:                1,
 			ConfluenceLastModified: "2026-02-01T10:00:00Z",
 		},
@@ -224,7 +224,7 @@ func TestRunDiff_FolderListFailureFallsBackToPageHierarchy(t *testing.T) {
 		Frontmatter: fs.Frontmatter{
 			Title:                  "Root",
 			ID:                     "1",
-			Space:                  "ENG",
+
 			Version:                1,
 			ConfluenceLastModified: "2026-02-01T10:00:00Z",
 		},
@@ -330,7 +330,7 @@ func TestNormalizeDiffMarkdown_StripsReadOnlyMetadata(t *testing.T) {
 		Frontmatter: fs.Frontmatter{
 			Title:     "My Page",
 			ID:        "42",
-			Space:     "ENG",
+
 			Version:   3,
 			CreatedBy: "alice@example.com",
 			CreatedAt: "2026-01-01T00:00:00Z",
@@ -395,7 +395,7 @@ func TestRunDiff_FileModeIgnoresMetadataOnlyChanges(t *testing.T) {
 		Frontmatter: fs.Frontmatter{
 			Title:     "Root",
 			ID:        "1",
-			Space:     "ENG",
+
 			Version:   2,
 			UpdatedBy: "old-user@example.com",
 			UpdatedAt: "2026-01-01T00:00:00Z",

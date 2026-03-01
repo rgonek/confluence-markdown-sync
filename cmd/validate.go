@@ -284,9 +284,6 @@ func (r *validateImmutableFrontmatterResolver) validate(absPath string) []fs.Val
 		if id := strings.TrimSpace(baselineFrontmatter.ID); id != "" {
 			previous.ID = id
 		}
-		if space := strings.TrimSpace(baselineFrontmatter.Space); space != "" {
-			previous.Space = space
-		}
 		previous.State = baselineFrontmatter.State
 	}
 
@@ -294,16 +291,8 @@ func (r *validateImmutableFrontmatterResolver) validate(absPath string) []fs.Val
 		return nil
 	}
 
-	if strings.TrimSpace(previous.Space) == "" {
-		if key := strings.TrimSpace(r.state.SpaceKey); key != "" {
-			previous.Space = key
-		} else {
-			previous.Space = r.spaceKey
-		}
-	}
-
 	if !baselineFound {
-		// Without reliable prior lifecycle state, enforce ID/space immutability only.
+		// Without reliable prior lifecycle state, enforce ID immutability only.
 		previous.State = current.State
 	}
 

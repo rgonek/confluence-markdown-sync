@@ -30,7 +30,7 @@ func TestRunPush_UnresolvedValidationStopsBeforeRemoteWrites(t *testing.T) {
 		Frontmatter: fs.Frontmatter{
 			Title:                  "Root",
 			ID:                     "1",
-			Space:                  "ENG",
+
 			Version:                1,
 			ConfluenceLastModified: "2026-02-01T10:00:00Z",
 		},
@@ -88,7 +88,7 @@ func TestRunPush_WritesStructuredCommitTrailers(t *testing.T) {
 		Frontmatter: fs.Frontmatter{
 			Title:                  "Root",
 			ID:                     "1",
-			Space:                  "ENG",
+
 			Version:                1,
 			ConfluenceLastModified: "2026-02-01T10:00:00Z",
 		},
@@ -156,7 +156,7 @@ func TestRunPush_KeepsStateFileUntracked(t *testing.T) {
 		Frontmatter: fs.Frontmatter{
 			Title:                  "Root",
 			ID:                     "1",
-			Space:                  "ENG",
+
 			Version:                1,
 			ConfluenceLastModified: "2026-02-01T10:00:00Z",
 		},
@@ -266,7 +266,7 @@ func TestRunPush_WorksWithoutGitRemoteConfigured(t *testing.T) {
 		Frontmatter: fs.Frontmatter{
 			Title:                  "Root",
 			ID:                     "1",
-			Space:                  "ENG",
+
 			Version:                1,
 			ConfluenceLastModified: "2026-02-01T10:00:00Z",
 		},
@@ -321,7 +321,7 @@ func preparePushRepoWithBaseline(t *testing.T, repo string) string {
 		Frontmatter: fs.Frontmatter{
 			Title:                  "Root",
 			ID:                     "1",
-			Space:                  "ENG",
+
 			Version:                1,
 			ConfluenceLastModified: "2026-02-01T10:00:00Z",
 		},

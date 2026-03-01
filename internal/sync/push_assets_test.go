@@ -19,7 +19,7 @@ func TestPush_KeepOrphanAssetsPreservesUnreferencedAttachment(t *testing.T) {
 		Frontmatter: fs.Frontmatter{
 			Title:   "Root",
 			ID:      "1",
-			Space:   "ENG",
+
 			Version: 1,
 		},
 		Body: "content\n",
@@ -85,7 +85,7 @@ func TestPush_MigratesLocalRelativeAssetIntoPageHierarchy(t *testing.T) {
 		Frontmatter: fs.Frontmatter{
 			Title:   "Root",
 			ID:      "1",
-			Space:   "ENG",
+
 			Version: 1,
 		},
 		Body: "![diagram](./diagram.png)\n",
@@ -154,7 +154,7 @@ func TestPush_UploadsLocalFileLinksAsAttachments(t *testing.T) {
 		Frontmatter: fs.Frontmatter{
 			Title:   "Root",
 			ID:      "1",
-			Space:   "ENG",
+
 			Version: 1,
 		},
 		Body: "[Manual](assets/manual.pdf)\n",
@@ -230,7 +230,7 @@ func TestPush_UploadsInlineLocalFileLinksWithoutEmbeddedPlaceholder(t *testing.T
 		Frontmatter: fs.Frontmatter{
 			Title:   "Root",
 			ID:      "1",
-			Space:   "ENG",
+
 			Version: 1,
 		},
 		Body: "Please review [Manual](assets/manual.pdf) before sign-off.\n",

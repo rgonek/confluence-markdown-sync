@@ -26,7 +26,6 @@ func TestPush_RollbackDeletesCreatedPageAndAttachmentsOnUpdateFailure(t *testing
 	if err := fs.WriteMarkdownDocument(mdPath, fs.MarkdownDocument{
 		Frontmatter: fs.Frontmatter{
 			Title: "New",
-			Space: "ENG",
 		},
 		Body: "![asset](assets/new.png)\n",
 	}); err != nil {
@@ -93,7 +92,7 @@ func TestPush_RollbackRestoresMetadataOnSyncFailure(t *testing.T) {
 		Frontmatter: fs.Frontmatter{
 			Title:   "Root",
 			ID:      "1",
-			Space:   "ENG",
+
 			Version: 1,
 			Status:  "Ready",
 			Labels:  []string{"team"},
@@ -161,7 +160,7 @@ func TestPush_RollbackRestoresPageContentOnPostUpdateFailure(t *testing.T) {
 		Frontmatter: fs.Frontmatter{
 			Title:   "Updated Title",
 			ID:      "1",
-			Space:   "ENG",
+
 			Version: 1,
 			Labels:  []string{"team"},
 		},
@@ -246,7 +245,6 @@ func TestPush_DryRunSkipsRollbackAttempts(t *testing.T) {
 	if err := fs.WriteMarkdownDocument(mdPath, fs.MarkdownDocument{
 		Frontmatter: fs.Frontmatter{
 			Title: "New",
-			Space: "ENG",
 		},
 		Body: "![asset](assets/new.png)\n",
 	}); err != nil {

@@ -25,7 +25,7 @@ func TestPull_IncrementalRewriteDeleteAndWatermark(t *testing.T) {
 			Frontmatter: fs.Frontmatter{
 				Title:                  strings.TrimSuffix(filepath.Base(relPath), ".md"),
 				ID:                     pageID,
-				Space:                  "ENG",
+
 				Version:                1,
 				ConfluenceLastModified: "2026-02-01T08:00:00Z",
 			},
@@ -282,7 +282,7 @@ func TestPull_ForceFullPullsAllPagesWithoutIncrementalChanges(t *testing.T) {
 		Frontmatter: fs.Frontmatter{
 			Title:                  "Root",
 			ID:                     "1",
-			Space:                  "ENG",
+
 			Version:                1,
 			ConfluenceLastModified: "2026-02-01T08:00:00Z",
 		},
@@ -521,7 +521,7 @@ func TestPull_TrashedRecoveryDeletesLocalPage(t *testing.T) {
 		Frontmatter: fs.Frontmatter{
 			Title:   "Trashed Page",
 			ID:      "10",
-			Space:   "ENG",
+
 			Version: 3,
 			State:   "trashed",
 		},

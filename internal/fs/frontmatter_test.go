@@ -71,12 +71,9 @@ Body text.
 		t.Fatalf("formatted output missing metadata keys, got:\n%s", string(out))
 	}
 
-	parsedAgain, err := ParseMarkdownDocument(out)
+	_, err = ParseMarkdownDocument(out)
 	if err != nil {
 		t.Fatalf("ParseMarkdownDocument(second pass) unexpected error: %v", err)
-	}
-	if parsedAgain.Frontmatter.Space != "" {
-		t.Fatalf("Space(second pass) = %q, want empty", parsedAgain.Frontmatter.Space)
 	}
 }
 
@@ -86,9 +83,9 @@ func TestReadWriteMarkdownDocument(t *testing.T) {
 
 	doc := MarkdownDocument{
 		Frontmatter: Frontmatter{
-			Title:   "Test",
-			ID:      "22",
-			Space:   "ENG",
+			Title: "Test",
+			ID:    "22",
+
 			Version: 3,
 		},
 		Body: "# Body\n",
@@ -158,7 +155,7 @@ func TestNormalizeLabels_DedupesAndSorts(t *testing.T) {
 
 func TestValidateFrontmatterSchema_InvalidLabels(t *testing.T) {
 	result := ValidateFrontmatterSchema(Frontmatter{
-		Space:  "ENG",
+
 		Labels: []string{"", "  ", "ready to review", "tab\tlabel"},
 	})
 	if result.IsValid() {
@@ -189,12 +186,10 @@ func TestValidateFrontmatterSchema_InvalidLabels(t *testing.T) {
 func TestValidateImmutableFrontmatter_State(t *testing.T) {
 	previous := Frontmatter{
 		ID:    "1",
-		Space: "ENG",
 		State: "current",
 	}
 	current := Frontmatter{
 		ID:    "1",
-		Space: "ENG",
 		State: "draft",
 	}
 
@@ -221,12 +216,10 @@ func TestValidateImmutableFrontmatter_State(t *testing.T) {
 
 func TestValidateImmutableFrontmatter(t *testing.T) {
 	previous := Frontmatter{
-		ID:    "1",
-		Space: "ENG",
+		ID: "1",
 	}
 	current := Frontmatter{
-		ID:    "2",
-		Space: "OPS",
+		ID: "2",
 	}
 
 	result := ValidateImmutableFrontmatter(previous, current)

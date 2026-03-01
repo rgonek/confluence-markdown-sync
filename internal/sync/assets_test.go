@@ -13,7 +13,7 @@ func TestFindOrphanAssets_ReturnsOnlyUnreferencedAssets(t *testing.T) {
 	spaceDir := t.TempDir()
 
 	if err := fs.WriteMarkdownDocument(filepath.Join(spaceDir, "root.md"), fs.MarkdownDocument{
-		Frontmatter: fs.Frontmatter{Title: "Root", Space: "ENG"},
+		Frontmatter: fs.Frontmatter{Title: "Root"},
 		Body:        "![Used](assets/used.png)\n[Doc](assets/used.pdf)\n",
 	}); err != nil {
 		t.Fatalf("write markdown: %v", err)

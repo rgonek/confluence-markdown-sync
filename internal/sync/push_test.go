@@ -19,7 +19,7 @@ func TestPush_BlocksImmutableIDTampering(t *testing.T) {
 		Frontmatter: fs.Frontmatter{
 			Title:   "Root",
 			ID:      "2",
-			Space:   "ENG",
+
 			Version: 1,
 		},
 		Body: "content\n",
@@ -57,7 +57,7 @@ func TestPush_IgnoresFrontmatterSpace(t *testing.T) {
 		Frontmatter: fs.Frontmatter{
 			Title:   "Root",
 			ID:      "1",
-			Space:   "OPS",
+
 			Version: 1,
 		},
 		Body: "content\n",
@@ -99,7 +99,7 @@ func TestPush_BlocksCurrentToDraftTransition(t *testing.T) {
 		Frontmatter: fs.Frontmatter{
 			Title:   "Root",
 			ID:      "1",
-			Space:   "ENG",
+
 			Version: 1,
 			State:   "draft",
 		},

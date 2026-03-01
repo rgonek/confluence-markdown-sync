@@ -31,7 +31,7 @@ func TestRunPull_RestoresScopedStashAndCreatesTag(t *testing.T) {
 		Frontmatter: fs.Frontmatter{
 			Title:                  "Root",
 			ID:                     "1",
-			Space:                  "ENG",
+
 			Version:                1,
 			ConfluenceLastModified: "2026-02-01T08:00:00Z",
 		},
@@ -133,7 +133,7 @@ func TestRunPull_FailureCleanupPreservesStateFile(t *testing.T) {
 		Frontmatter: fs.Frontmatter{
 			Title:                  "Root",
 			ID:                     "1",
-			Space:                  "ENG",
+
 			Version:                1,
 			ConfluenceLastModified: "2026-02-01T08:00:00Z",
 		},
@@ -230,7 +230,7 @@ func TestRunPull_NoopDoesNotCreateTag(t *testing.T) {
 		Frontmatter: fs.Frontmatter{
 			Title:                  "Root",
 			ID:                     "1",
-			Space:                  "ENG",
+
 			Version:                2,
 			CreatedBy:              "User author-1",
 			CreatedAt:              "2026-02-01T10:00:00Z",
@@ -324,7 +324,7 @@ func TestRunPull_RecreatesMissingSpaceDirWithoutRestoringDeletionStash(t *testin
 		Frontmatter: fs.Frontmatter{
 			Title:                  "Root",
 			ID:                     "1",
-			Space:                  "ENG",
+
 			Version:                1,
 			ConfluenceLastModified: "2026-02-01T08:00:00Z",
 		},
@@ -398,7 +398,7 @@ func TestRunPull_DraftSpaceListing(t *testing.T) {
 		Frontmatter: fs.Frontmatter{
 			Title:   "Draft Page",
 			ID:      "10",
-			Space:   "ENG",
+
 			Version: 1,
 			Status:  "draft",
 		},
