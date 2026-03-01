@@ -7,6 +7,118 @@ import (
 	"github.com/rgonek/confluence-markdown-sync/internal/confluence"
 )
 
+func TestResolveParentIDFromHierarchy_PrefersIndexPageOverFolder(t *testing.T) {
+	pageIndex := PageIndex{
+		"Root/Root.md": "page-root",
+	}
+	folderIndex := map[string]string{
+		"Root": "folder-123",
+	}
+
+	if got := resolveParentIDFromHierarchy("Root/Child.md", "page-child", "", pageIndex, folderIndex); got != "page-root" {
+		t.Fatalf("parent for Root/Child.md = %q, want page-root (index page takes precedence)", got)
+	}
+}
+
+func TestResolveParentIDFromHierarchy_NestedFolder(t *testing.T) {
+	pageIndex := PageIndex{}
+	folderIndex := map[string]string{
+		"Engineering":         "folder-eng",
+		"Engineering/Backend": "folder-be",
+	}
+
+	if got := resolveParentIDFromHierarchy("Engineering/Backend/Api.md", "page-api", "", pageIndex, folderIndex); got != "folder-be" {
+		t.Fatalf("parent = %q, want folder-be", got)
+	}
+}
+
+func TestEnsureFolderHierarchy_CreatesMissingFolders(t *testing.T) {
+	remote := &fakeFolderPushRemote{
+		foldersByID: make(map[string]confluence.Folder),
+	}
+	folderIndex := map[string]string{}
+
+	result, err := ensureFolderHierarchy(
+		context.Background(),
+		remote,
+		"space-1",
+		"Engineering/Backend",
+		"",
+		nil,
+		folderIndex,
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("ensureFolderHierarchy() error: %v", err)
+	}
+
+	if result["Engineering"] == "" {
+		t.Error("expected folder Engineering to be created")
+	}
+	if result["Engineering/Backend"] == "" {
+		t.Error("expected folder Engineering/Backend to be created")
+	}
+}
+
+func TestEnsureFolderHierarchy_SkipsExistingFolders(t *testing.T) {
+	remote := &fakeFolderPushRemote{
+		foldersByID: make(map[string]confluence.Folder),
+	}
+	folderIndex := map[string]string{
+		"Engineering": "folder-existing",
+	}
+
+	result, err := ensureFolderHierarchy(
+		context.Background(),
+		remote,
+		"space-1",
+		"Engineering/Backend",
+		"",
+		nil,
+		folderIndex,
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("ensureFolderHierarchy() error: %v", err)
+	}
+
+	if result["Engineering"] != "folder-existing" {
+		t.Errorf("expected Engineering to remain folder-existing, got %q", result["Engineering"])
+	}
+}
+
+func TestEnsureFolderHierarchy_EmitsDiagnostics(t *testing.T) {
+	remote := &fakeFolderPushRemote{
+		foldersByID: make(map[string]confluence.Folder),
+	}
+	folderIndex := map[string]string{}
+	diagnostics := []PushDiagnostic{}
+
+	result, err := ensureFolderHierarchy(
+		context.Background(),
+		remote,
+		"space-1",
+		"NewFolder",
+		"",
+		nil,
+		folderIndex,
+		&diagnostics,
+	)
+	if err != nil {
+		t.Fatalf("ensureFolderHierarchy() error: %v", err)
+	}
+
+	if len(diagnostics) != 1 {
+		t.Fatalf("expected 1 diagnostic, got %d", len(diagnostics))
+	}
+	if diagnostics[0].Code != "FOLDER_CREATED" {
+		t.Errorf("expected diagnostic code FOLDER_CREATED, got %s", diagnostics[0].Code)
+	}
+	if result["NewFolder"] == "" {
+		t.Error("expected folder to be created")
+	}
+}
+
 func TestResolveParentIDFromHierarchy_UsesNearestAncestorIndexPage(t *testing.T) {
 	pageIndex := PageIndex{
 		"Root/Root.md":        "page-root",

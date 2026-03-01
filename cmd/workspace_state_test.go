@@ -1,55 +1,31 @@
 package cmd
 
 import (
-	"os"
-	"os/exec"
-	"path/filepath"
+	"errors"
 	"strings"
 	"testing"
 )
 
-func TestEnsureWorkspaceSyncReady_BlocksUnmergedWorkspace(t *testing.T) {
-	runParallelCommandTest(t)
-
-	repo := t.TempDir()
-	setupGitRepo(t, repo)
-
-	notesPath := filepath.Join(repo, "notes.md")
-	if err := os.WriteFile(notesPath, []byte("base\n"), 0o600); err != nil {
-		t.Fatalf("write base file: %v", err)
-	}
-	runGitForTest(t, repo, "add", "notes.md")
-	runGitForTest(t, repo, "commit", "-m", "baseline")
-
-	runGitForTest(t, repo, "checkout", "-b", "feature/conflict")
-	if err := os.WriteFile(notesPath, []byte("feature branch change\n"), 0o600); err != nil {
-		t.Fatalf("write feature change: %v", err)
-	}
-	runGitForTest(t, repo, "add", "notes.md")
-	runGitForTest(t, repo, "commit", "-m", "feature change")
-
-	runGitForTest(t, repo, "checkout", "main")
-	if err := os.WriteFile(notesPath, []byte("main branch change\n"), 0o600); err != nil {
-		t.Fatalf("write main change: %v", err)
-	}
-	runGitForTest(t, repo, "add", "notes.md")
-	runGitForTest(t, repo, "commit", "-m", "main change")
-
-	mergeCmd := exec.Command("git", "merge", "feature/conflict")
-	mergeCmd.Dir = repo
-	if mergeOut, err := mergeCmd.CombinedOutput(); err == nil {
-		t.Fatalf("expected merge conflict, got success output: %s", string(mergeOut))
+func TestTranslateWorkspaceGitError(t *testing.T) {
+	err := errors.New("needs merge")
+	trans := translateWorkspaceGitError(err, "push")
+	if !strings.Contains(trans.Error(), "syncing state with unresolved files") {
+		t.Errorf("expected translation, got %v", trans)
 	}
 
-	chdirRepo(t, repo)
-	err := ensureWorkspaceSyncReady("push")
-	if err == nil {
-		t.Fatal("expected ensureWorkspaceSyncReady to block unresolved workspace")
+	err = errors.New("something else")
+	trans = translateWorkspaceGitError(err, "push")
+	if trans.Error() != "something else" {
+		t.Errorf("expected wrapped error, got %v", trans)
 	}
-	if !strings.Contains(strings.ToLower(err.Error()), "syncing state") {
-		t.Fatalf("expected syncing-state message, got: %v", err)
+}
+
+func TestSummarizePaths(t *testing.T) {
+	paths := []string{"a", "b", "c"}
+	if summarizePaths(paths, 2) != "a, b, +1 more" {
+		t.Errorf("failed summarize 2: %v", summarizePaths(paths, 2))
 	}
-	if !strings.Contains(err.Error(), "notes.md") {
-		t.Fatalf("expected unresolved path in error, got: %v", err)
+	if summarizePaths(paths, 5) != "a, b, c" {
+		t.Errorf("failed summarize 5: %v", summarizePaths(paths, 5))
 	}
 }

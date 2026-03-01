@@ -32,6 +32,7 @@ type StatusReport struct {
 	RemoteAdded     []string
 	RemoteModified  []string
 	RemoteDeleted   []string
+	ConflictAhead   []string // pages that are both locally modified AND ahead on remote
 	MaxVersionDrift int
 }
 
@@ -129,6 +130,13 @@ func runStatus(cmd *cobra.Command, target config.Target) error {
 
 	printStatusSection(out, "Local not pushed", report.LocalAdded, report.LocalModified, report.LocalDeleted)
 	printStatusSection(out, "Remote not pulled", report.RemoteAdded, report.RemoteModified, report.RemoteDeleted)
+
+	if len(report.ConflictAhead) > 0 {
+		_, _ = fmt.Fprintf(out, "\nConflict ahead (%d) — locally modified AND remote is ahead:\n", len(report.ConflictAhead))
+		for _, p := range report.ConflictAhead {
+			_, _ = fmt.Fprintf(out, "  ! %s\n", p)
+		}
+	}
 
 	if report.MaxVersionDrift > 0 {
 		_, _ = fmt.Fprintf(out, "\nVersion drift: local markdown is up to %d version(s) behind remote\n", report.MaxVersionDrift)
@@ -241,6 +249,10 @@ func buildStatusReport(
 	sort.Strings(remoteModified)
 	sort.Strings(remoteDeleted)
 
+	// ConflictAhead = pages that are BOTH locally modified AND ahead on remote.
+	conflictAhead := computeConflictAhead(localModified, remoteModified)
+	sort.Strings(conflictAhead)
+
 	return StatusReport{
 		LocalAdded:      localAdded,
 		LocalModified:   localModified,
@@ -248,6 +260,7 @@ func buildStatusReport(
 		RemoteAdded:     remoteAdded,
 		RemoteModified:  remoteModified,
 		RemoteDeleted:   remoteDeleted,
+		ConflictAhead:   conflictAhead,
 		MaxVersionDrift: maxVersionDrift,
 	}, nil
 }
@@ -350,4 +363,24 @@ func isNotFoundError(err error) bool {
 		return true
 	}
 	return false
+}
+
+// computeConflictAhead returns paths that appear in both localModified and
+// remoteModified — these pages have local uncommitted edits AND are behind
+// on the remote, making them prime conflict candidates.
+func computeConflictAhead(localModified, remoteModified []string) []string {
+	if len(localModified) == 0 || len(remoteModified) == 0 {
+		return nil
+	}
+	remoteSet := make(map[string]struct{}, len(remoteModified))
+	for _, p := range remoteModified {
+		remoteSet[p] = struct{}{}
+	}
+	var result []string
+	for _, p := range localModified {
+		if _, ok := remoteSet[p]; ok {
+			result = append(result, p)
+		}
+	}
+	return result
 }
