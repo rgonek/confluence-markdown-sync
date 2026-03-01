@@ -165,7 +165,7 @@ func TestRunGlobalRelink(t *testing.T) {
 		t.Fatalf("runRelink(global) failed: %v", err)
 	}
 
-	raw, err := os.ReadFile(filepath.Join(sourceDir, "doc.md"))
+	raw, err := os.ReadFile(filepath.Join(sourceDir, "doc.md")) //nolint:gosec // test path is controlled in temp repo
 	if err != nil {
 		t.Fatalf("read source doc: %v", err)
 	}
