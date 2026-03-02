@@ -21,8 +21,8 @@ func TestRunPush_IncludesUntrackedAssetsFromWorkspaceSnapshot(t *testing.T) {
 
 	writeMarkdown(t, filepath.Join(spaceDir, "root.md"), fs.MarkdownDocument{
 		Frontmatter: fs.Frontmatter{
-			Title:                  "Root",
-			ID:                     "1",
+			Title: "Root",
+			ID:    "1",
 
 			Version:                1,
 			ConfluenceLastModified: "2026-02-01T10:00:00Z",
@@ -70,8 +70,8 @@ func TestRunPush_FailureRetainsSnapshotAndSyncBranch(t *testing.T) {
 
 	writeMarkdown(t, filepath.Join(spaceDir, "root.md"), fs.MarkdownDocument{
 		Frontmatter: fs.Frontmatter{
-			Title:                  "Root",
-			ID:                     "1",
+			Title: "Root",
+			ID:    "1",
 
 			Version:                1,
 			ConfluenceLastModified: "2026-02-01T10:00:00Z",
@@ -135,8 +135,8 @@ func TestRunPush_PreservesOutOfScopeChanges(t *testing.T) {
 
 	writeMarkdown(t, filepath.Join(spaceDir, "root.md"), fs.MarkdownDocument{
 		Frontmatter: fs.Frontmatter{
-			Title:                  "Root",
-			ID:                     "1",
+			Title: "Root",
+			ID:    "1",
 
 			Version:                1,
 			ConfluenceLastModified: "2026-02-01T10:00:00Z",
@@ -250,8 +250,8 @@ func TestRunPush_FileTargetRestoresUnsyncedScopedTrackedChangesFromStash(t *test
 	secondaryPath := filepath.Join(spaceDir, "secondary.md")
 	writeMarkdown(t, secondaryPath, fs.MarkdownDocument{
 		Frontmatter: fs.Frontmatter{
-			Title:                  "Secondary",
-			ID:                     "2",
+			Title: "Secondary",
+			ID:    "2",
 
 			Version:                1,
 			ConfluenceLastModified: "2026-02-01T10:00:00Z",
@@ -274,8 +274,8 @@ func TestRunPush_FileTargetRestoresUnsyncedScopedTrackedChangesFromStash(t *test
 	rootPath := filepath.Join(spaceDir, "root.md")
 	writeMarkdown(t, rootPath, fs.MarkdownDocument{
 		Frontmatter: fs.Frontmatter{
-			Title:                  "Root",
-			ID:                     "1",
+			Title: "Root",
+			ID:    "1",
 
 			Version:                1,
 			ConfluenceLastModified: "2026-02-01T10:00:00Z",
@@ -285,8 +285,8 @@ func TestRunPush_FileTargetRestoresUnsyncedScopedTrackedChangesFromStash(t *test
 
 	writeMarkdown(t, secondaryPath, fs.MarkdownDocument{
 		Frontmatter: fs.Frontmatter{
-			Title:                  "Secondary",
-			ID:                     "2",
+			Title: "Secondary",
+			ID:    "2",
 
 			Version:                1,
 			ConfluenceLastModified: "2026-02-01T10:00:00Z",

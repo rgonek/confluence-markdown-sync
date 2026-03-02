@@ -29,8 +29,8 @@ func TestRunPull_RestoresScopedStashAndCreatesTag(t *testing.T) {
 
 	writeMarkdown(t, filepath.Join(spaceDir, "root.md"), fs.MarkdownDocument{
 		Frontmatter: fs.Frontmatter{
-			Title:                  "Root",
-			ID:                     "1",
+			Title: "Root",
+			ID:    "1",
 
 			Version:                1,
 			ConfluenceLastModified: "2026-02-01T08:00:00Z",
@@ -131,8 +131,8 @@ func TestRunPull_FailureCleanupPreservesStateFile(t *testing.T) {
 
 	writeMarkdown(t, filepath.Join(spaceDir, "root.md"), fs.MarkdownDocument{
 		Frontmatter: fs.Frontmatter{
-			Title:                  "Root",
-			ID:                     "1",
+			Title: "Root",
+			ID:    "1",
 
 			Version:                1,
 			ConfluenceLastModified: "2026-02-01T08:00:00Z",
@@ -228,8 +228,8 @@ func TestRunPull_NoopDoesNotCreateTag(t *testing.T) {
 
 	baselineDoc := fs.MarkdownDocument{
 		Frontmatter: fs.Frontmatter{
-			Title:                  "Root",
-			ID:                     "1",
+			Title: "Root",
+			ID:    "1",
 
 			Version:                2,
 			CreatedBy:              "User author-1",
@@ -322,8 +322,8 @@ func TestRunPull_RecreatesMissingSpaceDirWithoutRestoringDeletionStash(t *testin
 	}
 	writeMarkdown(t, filepath.Join(spaceDir, "Root.md"), fs.MarkdownDocument{
 		Frontmatter: fs.Frontmatter{
-			Title:                  "Root",
-			ID:                     "1",
+			Title: "Root",
+			ID:    "1",
 
 			Version:                1,
 			ConfluenceLastModified: "2026-02-01T08:00:00Z",
@@ -396,8 +396,8 @@ func TestRunPull_DraftSpaceListing(t *testing.T) {
 	// Page 10 is known locally as a draft
 	writeMarkdown(t, filepath.Join(spaceDir, "draft.md"), fs.MarkdownDocument{
 		Frontmatter: fs.Frontmatter{
-			Title:   "Draft Page",
-			ID:      "10",
+			Title: "Draft Page",
+			ID:    "10",
 
 			Version: 1,
 			Status:  "draft",

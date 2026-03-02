@@ -79,8 +79,8 @@ func TestPush_PreflightStrictResolvesCrossSpaceLinkWithGlobalIndex(t *testing.T)
 	targetPath := filepath.Join(tdDir, "target.md")
 	if err := fs.WriteMarkdownDocument(targetPath, fs.MarkdownDocument{
 		Frontmatter: fs.Frontmatter{
-			Title:   "Target",
-			ID:      "200",
+			Title: "Target",
+			ID:    "200",
 
 			Version: 1,
 		},

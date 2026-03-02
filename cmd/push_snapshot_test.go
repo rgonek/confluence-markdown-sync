@@ -22,8 +22,8 @@ func TestRunPush_UsesStagedTrackedSnapshotContent(t *testing.T) {
 
 	writeMarkdown(t, rootPath, fs.MarkdownDocument{
 		Frontmatter: fs.Frontmatter{
-			Title:                  "Root",
-			ID:                     "1",
+			Title: "Root",
+			ID:    "1",
 
 			Version:                1,
 			ConfluenceLastModified: "2026-02-01T10:00:00Z",
@@ -68,8 +68,8 @@ func TestRunPush_UsesUnstagedTrackedSnapshotContent(t *testing.T) {
 
 	writeMarkdown(t, rootPath, fs.MarkdownDocument{
 		Frontmatter: fs.Frontmatter{
-			Title:                  "Root",
-			ID:                     "1",
+			Title: "Root",
+			ID:    "1",
 
 			Version:                1,
 			ConfluenceLastModified: "2026-02-01T10:00:00Z",

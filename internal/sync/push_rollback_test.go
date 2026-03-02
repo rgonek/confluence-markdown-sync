@@ -90,8 +90,8 @@ func TestPush_RollbackRestoresMetadataOnSyncFailure(t *testing.T) {
 
 	if err := fs.WriteMarkdownDocument(mdPath, fs.MarkdownDocument{
 		Frontmatter: fs.Frontmatter{
-			Title:   "Root",
-			ID:      "1",
+			Title: "Root",
+			ID:    "1",
 
 			Version: 1,
 			Status:  "Ready",
@@ -158,8 +158,8 @@ func TestPush_RollbackRestoresPageContentOnPostUpdateFailure(t *testing.T) {
 
 	if err := fs.WriteMarkdownDocument(mdPath, fs.MarkdownDocument{
 		Frontmatter: fs.Frontmatter{
-			Title:   "Updated Title",
-			ID:      "1",
+			Title: "Updated Title",
+			ID:    "1",
 
 			Version: 1,
 			Labels:  []string{"team"},

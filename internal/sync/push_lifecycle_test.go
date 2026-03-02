@@ -16,8 +16,8 @@ func TestPush_NewPageFailsWhenTrackedPageWithSameTitleExistsInSameDirectory(t *t
 	existingPath := filepath.Join(spaceDir, "Conflict-Test-Page.md")
 	if err := fs.WriteMarkdownDocument(existingPath, fs.MarkdownDocument{
 		Frontmatter: fs.Frontmatter{
-			Title:   "Conflict Test Page",
-			ID:      "1",
+			Title: "Conflict Test Page",
+			ID:    "1",
 
 			Version: 1,
 		},
@@ -114,8 +114,8 @@ func TestPush_ArchivedRemotePageReturnsActionableError(t *testing.T) {
 
 	if err := fs.WriteMarkdownDocument(mdPath, fs.MarkdownDocument{
 		Frontmatter: fs.Frontmatter{
-			Title:   "Root",
-			ID:      "1",
+			Title: "Root",
+			ID:    "1",
 
 			Version: 1,
 		},

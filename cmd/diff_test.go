@@ -28,8 +28,8 @@ func TestRunDiff_FileModeShowsContentChanges(t *testing.T) {
 	localFile := filepath.Join(spaceDir, "root.md")
 	writeMarkdown(t, localFile, fs.MarkdownDocument{
 		Frontmatter: fs.Frontmatter{
-			Title:                  "Root",
-			ID:                     "1",
+			Title: "Root",
+			ID:    "1",
 
 			Version:                1,
 			ConfluenceLastModified: "2026-02-01T10:00:00Z",
@@ -95,8 +95,8 @@ func TestRunDiff_SpaceModeNoDifferences(t *testing.T) {
 
 	writeMarkdown(t, filepath.Join(spaceDir, "root.md"), fs.MarkdownDocument{
 		Frontmatter: fs.Frontmatter{
-			Title:                  "Root",
-			ID:                     "1",
+			Title: "Root",
+			ID:    "1",
 
 			Version:                2,
 			ConfluenceLastModified: "2026-02-01T11:00:00Z",
@@ -163,8 +163,8 @@ func TestRunDiff_ReportsBestEffortWarnings(t *testing.T) {
 	localFile := filepath.Join(spaceDir, "root.md")
 	writeMarkdown(t, localFile, fs.MarkdownDocument{
 		Frontmatter: fs.Frontmatter{
-			Title:                  "Root",
-			ID:                     "1",
+			Title: "Root",
+			ID:    "1",
 
 			Version:                1,
 			ConfluenceLastModified: "2026-02-01T10:00:00Z",
@@ -222,8 +222,8 @@ func TestRunDiff_FolderListFailureFallsBackToPageHierarchy(t *testing.T) {
 	localFile := filepath.Join(spaceDir, "root.md")
 	writeMarkdown(t, localFile, fs.MarkdownDocument{
 		Frontmatter: fs.Frontmatter{
-			Title:                  "Root",
-			ID:                     "1",
+			Title: "Root",
+			ID:    "1",
 
 			Version:                1,
 			ConfluenceLastModified: "2026-02-01T10:00:00Z",
@@ -328,8 +328,8 @@ func TestNormalizeDiffMarkdown_StripsReadOnlyMetadata(t *testing.T) {
 	t.Parallel()
 	doc := fs.MarkdownDocument{
 		Frontmatter: fs.Frontmatter{
-			Title:     "My Page",
-			ID:        "42",
+			Title: "My Page",
+			ID:    "42",
 
 			Version:   3,
 			CreatedBy: "alice@example.com",
@@ -393,8 +393,8 @@ func TestRunDiff_FileModeIgnoresMetadataOnlyChanges(t *testing.T) {
 	localFile := filepath.Join(spaceDir, "root.md")
 	writeMarkdown(t, localFile, fs.MarkdownDocument{
 		Frontmatter: fs.Frontmatter{
-			Title:     "Root",
-			ID:        "1",
+			Title: "Root",
+			ID:    "1",
 
 			Version:   2,
 			UpdatedBy: "old-user@example.com",

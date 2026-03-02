@@ -17,8 +17,8 @@ func TestPush_KeepOrphanAssetsPreservesUnreferencedAttachment(t *testing.T) {
 
 	if err := fs.WriteMarkdownDocument(mdPath, fs.MarkdownDocument{
 		Frontmatter: fs.Frontmatter{
-			Title:   "Root",
-			ID:      "1",
+			Title: "Root",
+			ID:    "1",
 
 			Version: 1,
 		},
@@ -83,8 +83,8 @@ func TestPush_MigratesLocalRelativeAssetIntoPageHierarchy(t *testing.T) {
 
 	if err := fs.WriteMarkdownDocument(mdPath, fs.MarkdownDocument{
 		Frontmatter: fs.Frontmatter{
-			Title:   "Root",
-			ID:      "1",
+			Title: "Root",
+			ID:    "1",
 
 			Version: 1,
 		},
@@ -152,8 +152,8 @@ func TestPush_UploadsLocalFileLinksAsAttachments(t *testing.T) {
 
 	if err := fs.WriteMarkdownDocument(mdPath, fs.MarkdownDocument{
 		Frontmatter: fs.Frontmatter{
-			Title:   "Root",
-			ID:      "1",
+			Title: "Root",
+			ID:    "1",
 
 			Version: 1,
 		},
@@ -228,8 +228,8 @@ func TestPush_UploadsInlineLocalFileLinksWithoutEmbeddedPlaceholder(t *testing.T
 
 	if err := fs.WriteMarkdownDocument(mdPath, fs.MarkdownDocument{
 		Frontmatter: fs.Frontmatter{
-			Title:   "Root",
-			ID:      "1",
+			Title: "Root",
+			ID:    "1",
 
 			Version: 1,
 		},

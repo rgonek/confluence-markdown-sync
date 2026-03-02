@@ -17,8 +17,8 @@ func TestPush_BlocksImmutableIDTampering(t *testing.T) {
 
 	if err := fs.WriteMarkdownDocument(mdPath, fs.MarkdownDocument{
 		Frontmatter: fs.Frontmatter{
-			Title:   "Root",
-			ID:      "2",
+			Title: "Root",
+			ID:    "2",
 
 			Version: 1,
 		},
@@ -55,8 +55,8 @@ func TestPush_IgnoresFrontmatterSpace(t *testing.T) {
 
 	if err := fs.WriteMarkdownDocument(mdPath, fs.MarkdownDocument{
 		Frontmatter: fs.Frontmatter{
-			Title:   "Root",
-			ID:      "1",
+			Title: "Root",
+			ID:    "1",
 
 			Version: 1,
 		},
@@ -97,8 +97,8 @@ func TestPush_BlocksCurrentToDraftTransition(t *testing.T) {
 
 	if err := fs.WriteMarkdownDocument(mdPath, fs.MarkdownDocument{
 		Frontmatter: fs.Frontmatter{
-			Title:   "Root",
-			ID:      "1",
+			Title: "Root",
+			ID:    "1",
 
 			Version: 1,
 			State:   "draft",
