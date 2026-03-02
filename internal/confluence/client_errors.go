@@ -95,6 +95,9 @@ func isArchivedAPIError(err error) bool {
 	if strings.Contains(combined, "cannot update archived") {
 		return true
 	}
+	if strings.Contains(combined, "unable to restore content") {
+		return true
+	}
 
 	return false
 }

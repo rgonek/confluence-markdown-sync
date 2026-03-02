@@ -37,6 +37,8 @@ type Service interface {
 	WaitForArchiveTask(ctx context.Context, taskID string, opts ArchiveTaskWaitOptions) (ArchiveTaskStatus, error)
 	DeletePage(ctx context.Context, pageID string, hardDelete bool) error
 	CreateFolder(ctx context.Context, input FolderCreateInput) (Folder, error)
+	ListFolders(ctx context.Context, opts FolderListOptions) (FolderListResult, error)
+	DeleteFolder(ctx context.Context, folderID string) error
 	MovePage(ctx context.Context, pageID string, targetID string) error
 }
 
@@ -84,6 +86,7 @@ type Page struct {
 type PageListOptions struct {
 	SpaceID  string
 	SpaceKey string
+	Title    string
 	Status   string
 	Limit    int
 	Cursor   string
@@ -102,6 +105,20 @@ type Folder struct {
 	Title      string
 	ParentID   string
 	ParentType string
+}
+
+// FolderListOptions configures folder listing.
+type FolderListOptions struct {
+	SpaceID string
+	Title   string
+	Limit   int
+	Cursor  string
+}
+
+// FolderListResult is a page of folder list results.
+type FolderListResult struct {
+	Folders    []Folder
+	NextCursor string
 }
 
 // PageUpsertInput is used for create/update operations.

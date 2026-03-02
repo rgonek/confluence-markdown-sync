@@ -52,15 +52,29 @@ func Push(ctx context.Context, remote PushRemote, opts PushOptions) (PushResult,
 		return PushResult{}, fmt.Errorf("list pages: %w", err)
 	}
 
+	// Try to list folders, but don't fail the whole push if it's broken (Confluence bug)
+	remoteFolders, err := listAllPushFolders(ctx, remote, confluence.FolderListOptions{
+		SpaceID: space.ID,
+	})
+	if err != nil {
+		slog.Warn("list_folders_failed_falling_back_to_pages", "error", err.Error())
+		remoteFolders = nil
+	}
+
 	pages, err = recoverMissingPages(ctx, remote, space.ID, state.PagePathIndex, pages)
 	if err != nil {
 		return PushResult{}, fmt.Errorf("recover missing pages: %w", err)
 	}
 
 	remotePageByID := make(map[string]confluence.Page, len(pages))
-
 	for _, page := range pages {
 		remotePageByID[page.ID] = page
+	}
+
+	// Also index folders by title for hierarchy reconciliation
+	remoteFolderByTitle := make(map[string]confluence.Folder)
+	for _, f := range remoteFolders {
+		remoteFolderByTitle[strings.ToLower(strings.TrimSpace(f.Title))] = f
 	}
 
 	pageIDByPath, err := BuildPageIndex(spaceDir)
@@ -511,7 +525,7 @@ func pushUpsertPage(
 			doc.Frontmatter.Version = precreatedPage.Version
 		} else {
 			if dirPath != "" && dirPath != "." {
-				folderIDByPath, err = ensureFolderHierarchy(ctx, remote, space.ID, dirPath, relPath, pageIDByPath, folderIDByPath, diagnostics)
+				folderIDByPath, err = ensureFolderHierarchy(ctx, remote, space.ID, dirPath, relPath, opts, pageIDByPath, folderIDByPath, diagnostics)
 				if err != nil {
 					return failWithRollback(fmt.Errorf("ensure folder hierarchy for %s: %w", relPath, err))
 				}

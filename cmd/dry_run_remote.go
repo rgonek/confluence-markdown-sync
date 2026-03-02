@@ -33,6 +33,9 @@ func (d *dryRunPushRemote) GetPage(ctx context.Context, pageID string) (confluen
 }
 
 func (d *dryRunPushRemote) GetContentStatus(ctx context.Context, pageID string) (string, error) {
+	if strings.HasPrefix(pageID, "dry-run-") {
+		return "", nil
+	}
 	return d.inner.GetContentStatus(ctx, pageID)
 }
 
@@ -48,6 +51,9 @@ func (d *dryRunPushRemote) DeleteContentStatus(ctx context.Context, pageID strin
 }
 
 func (d *dryRunPushRemote) GetLabels(ctx context.Context, pageID string) ([]string, error) {
+	if strings.HasPrefix(pageID, "dry-run-") {
+		return nil, nil
+	}
 	return d.inner.GetLabels(ctx, pageID)
 }
 
@@ -198,6 +204,10 @@ func (d *dryRunPushRemote) CreateFolder(ctx context.Context, input confluence.Fo
 		ParentID:   input.ParentID,
 		ParentType: input.ParentType,
 	}, nil
+}
+
+func (d *dryRunPushRemote) ListFolders(ctx context.Context, opts confluence.FolderListOptions) (confluence.FolderListResult, error) {
+	return d.inner.ListFolders(ctx, opts)
 }
 
 func (d *dryRunPushRemote) MovePage(ctx context.Context, pageID string, targetID string) error {

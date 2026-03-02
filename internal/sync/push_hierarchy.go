@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -55,6 +56,7 @@ func ensureFolderHierarchy(
 	remote PushRemote,
 	spaceID, dirPath string,
 	currentRelPath string,
+	opts PushOptions,
 	pageIDByPath PageIndex,
 	folderIDByPath map[string]string,
 	diagnostics *[]PushDiagnostic,
@@ -78,6 +80,13 @@ func ensureFolderHierarchy(
 			currentPath = filepath.ToSlash(filepath.Join(currentPath, seg))
 		}
 
+		if isIndexFile(currentRelPath) {
+			dirOfCurrent := normalizeRelPath(filepath.ToSlash(filepath.Dir(filepath.FromSlash(currentRelPath))))
+			if currentPath == dirOfCurrent {
+				continue
+			}
+		}
+
 		if indexParentID, hasIndexParent := indexPageParentIDForDir(currentPath, currentRelPath, pageIDByPath); hasIndexParent {
 			parentID = indexParentID
 			parentType = "page"
@@ -88,6 +97,17 @@ func ensureFolderHierarchy(
 			parentID = strings.TrimSpace(existingID)
 			parentType = "folder"
 			continue
+		}
+
+		// Check if folder already exists remotely by title
+		if f, ok := opts.RemoteFolderByTitle[strings.ToLower(strings.TrimSpace(seg))]; ok {
+			createdID := strings.TrimSpace(f.ID)
+			if createdID != "" {
+				folderIDByPath[currentPath] = createdID
+				parentID = createdID
+				parentType = "folder"
+				continue
+			}
 		}
 
 		createInput := confluence.FolderCreateInput{
@@ -101,7 +121,85 @@ func ensureFolderHierarchy(
 
 		created, err := remote.CreateFolder(ctx, createInput)
 		if err != nil {
-			return nil, fmt.Errorf("create folder %q: %w", currentPath, err)
+			slog.Info("folder_creation_failed", "path", currentPath, "error", err.Error())
+
+			foundExisting := false
+			// 1. Try to find it in pre-fetched folders
+			if f, ok := opts.RemoteFolderByTitle[strings.ToLower(strings.TrimSpace(seg))]; ok {
+				created = f
+				err = nil
+				foundExisting = true
+			}
+
+			// 2. If not found and it's a conflict, try robust listing
+			if !foundExisting && strings.Contains(err.Error(), "400") && (strings.Contains(strings.ToLower(err.Error()), "folder exists with the same title") || strings.Contains(strings.ToLower(err.Error()), "already exists with the same title")) {
+				folders, listErr := listAllPushFolders(ctx, remote, confluence.FolderListOptions{
+					SpaceID: spaceID,
+					Title:   seg,
+				})
+				if listErr == nil {
+					for _, f := range folders {
+						if strings.EqualFold(strings.TrimSpace(f.Title), strings.TrimSpace(seg)) {
+							created = f
+							err = nil
+							foundExisting = true
+							break
+						}
+					}
+				}
+			}
+
+			// 3. Fallback: if it's still failing, check if it exists as a PAGE
+			if !foundExisting {
+				pages, listErr := remote.ListPages(ctx, confluence.PageListOptions{
+					SpaceID: spaceID,
+					Title:   seg,
+					Status:  "current",
+				})
+				if listErr == nil {
+					for _, p := range pages.Pages {
+						if strings.EqualFold(strings.TrimSpace(p.Title), strings.TrimSpace(seg)) {
+							created = confluence.Folder{
+								ID:         p.ID,
+								SpaceID:    p.SpaceID,
+								Title:      p.Title,
+								ParentID:   p.ParentPageID,
+								ParentType: p.ParentType,
+							}
+							err = nil
+							foundExisting = true
+							break
+						}
+					}
+				}
+			}
+
+			// 4. Radical fallback: if it's STILL failing, create it as a PAGE
+			if !foundExisting {
+				slog.Warn("folder_api_broken_falling_back_to_page", "path", currentPath)
+				pageCreated, pageErr := remote.CreatePage(ctx, confluence.PageUpsertInput{
+					SpaceID:      spaceID,
+					ParentPageID: parentID,
+					Title:        seg,
+					Status:       "current",
+					BodyADF:      []byte(`{"version":1,"type":"doc","content":[]}`),
+				})
+				if pageErr == nil {
+					created = confluence.Folder{
+						ID:         pageCreated.ID,
+						SpaceID:    pageCreated.SpaceID,
+						Title:      pageCreated.Title,
+						ParentID:   pageCreated.ParentPageID,
+						ParentType: pageCreated.ParentType,
+					}
+					err = nil
+					foundExisting = true
+				}
+			}
+
+			if err != nil {
+				return nil, fmt.Errorf("create folder %q: %w", currentPath, err)
+			}
 		}
 
 		createdID := strings.TrimSpace(created.ID)
@@ -424,7 +522,7 @@ func precreatePendingPushPages(
 
 		dirPath := normalizeRelPath(filepath.ToSlash(filepath.Dir(filepath.FromSlash(relPath))))
 		if dirPath != "" && dirPath != "." {
-			folderIDByPath, err = ensureFolderHierarchy(ctx, remote, space.ID, dirPath, relPath, pageIDByPath, folderIDByPath, diagnostics)
+			folderIDByPath, err = ensureFolderHierarchy(ctx, remote, space.ID, dirPath, relPath, opts, pageIDByPath, folderIDByPath, diagnostics)
 			if err != nil {
 				return nil, fmt.Errorf("ensure folder hierarchy for %s: %w", relPath, err)
 			}
@@ -440,7 +538,27 @@ func precreatePendingPushPages(
 			BodyADF:      []byte(`{"version":1,"type":"doc","content":[]}`),
 		})
 		if err != nil {
-			return nil, fmt.Errorf("create placeholder page for %s: %w", relPath, err)
+			// If page with this title already exists, try to find it and use its ID
+			if strings.Contains(err.Error(), "400") && (strings.Contains(strings.ToLower(err.Error()), "title already exists") || strings.Contains(strings.ToLower(err.Error()), "already exists with the same title")) {
+				// Use specific title filter for efficiency and reliability
+				pages, listErr := remote.ListPages(ctx, confluence.PageListOptions{
+					SpaceID: space.ID,
+					Title:   title,
+					Status:  "current",
+				})
+				if listErr == nil {
+					for _, p := range pages.Pages {
+						if strings.EqualFold(strings.TrimSpace(p.Title), strings.TrimSpace(title)) {
+							created = p
+							err = nil
+							break
+						}
+					}
+				}
+			}
+			if err != nil {
+				return nil, fmt.Errorf("create placeholder page for %s: %w", relPath, err)
+			}
 		}
 
 		createdID := strings.TrimSpace(created.ID)

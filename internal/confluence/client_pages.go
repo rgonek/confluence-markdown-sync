@@ -176,6 +176,9 @@ func (c *Client) ListPages(ctx context.Context, opts PageListOptions) (PageListR
 	if opts.SpaceKey != "" {
 		query.Set("space-key", opts.SpaceKey)
 	}
+	if opts.Title != "" {
+		query.Set("title", opts.Title)
+	}
 	status := opts.Status
 	if status == "" {
 		status = "current"
