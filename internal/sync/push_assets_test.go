@@ -273,3 +273,35 @@ func TestPush_UploadsInlineLocalFileLinksWithoutEmbeddedPlaceholder(t *testing.T
 		t.Fatalf("expected inline file link conversion to avoid embedded placeholder, body=%s", body)
 	}
 }
+
+func TestOutsideSpaceAssetError_ContainsSuggestedPath(t *testing.T) {
+	spaceDir := t.TempDir()
+	sourcePath := filepath.Join(spaceDir, "docs", "page.md")
+	destination := "../../../somewhere/image.png"
+
+	err := outsideSpaceAssetError(spaceDir, sourcePath, destination)
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "image.png") {
+		t.Errorf("error message missing filename: %q", msg)
+	}
+	if !strings.Contains(msg, "assets/") {
+		t.Errorf("error message missing assets path hint: %q", msg)
+	}
+}
+
+func TestOutsideSpaceAssetError_EmptyDestination(t *testing.T) {
+	spaceDir := t.TempDir()
+	sourcePath := filepath.Join(spaceDir, "page.md")
+
+	err := outsideSpaceAssetError(spaceDir, sourcePath, "   ")
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	// empty destination should fall back to "file" placeholder
+	if !strings.Contains(err.Error(), "file") {
+		t.Errorf("expected 'file' placeholder in message: %q", err.Error())
+	}
+}

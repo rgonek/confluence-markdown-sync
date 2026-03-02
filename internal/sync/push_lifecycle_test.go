@@ -211,3 +211,18 @@ func TestPush_DeleteBlocksLocalStateWhenArchiveTaskDoesNotComplete(t *testing.T)
 		t.Fatalf("expected ARCHIVE_TASK_TIMEOUT diagnostic, got %+v", result.Diagnostics)
 	}
 }
+
+func TestPushConflictError_Error(t *testing.T) {
+	err := &PushConflictError{
+		Path:          "docs/page.md",
+		PageID:        "42",
+		LocalVersion:  3,
+		RemoteVersion: 5,
+		Policy:        PushConflictPolicyCancel,
+	}
+	got := err.Error()
+	want := "remote version conflict for docs/page.md (page 42): local=3 remote=5 policy=cancel"
+	if got != want {
+		t.Errorf("PushConflictError.Error() = %q, want %q", got, want)
+	}
+}
