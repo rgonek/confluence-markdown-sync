@@ -534,6 +534,148 @@ func TestSnippetIsPopulated(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// Author / date filter tests
+// ---------------------------------------------------------------------------
+
+func pageDocWithAuthors(id, path, space, createdBy, updatedBy, createdAt, updatedAt string) search.Document {
+	mt := time.Now().Truncate(time.Second)
+	return search.Document{
+		ID:        id,
+		Type:      search.DocTypePage,
+		Path:      path,
+		SpaceKey:  space,
+		Title:     id,
+		Content:   "author date test content",
+		ModTime:   &mt,
+		CreatedBy: createdBy,
+		UpdatedBy: updatedBy,
+		CreatedAt: createdAt,
+		UpdatedAt: updatedAt,
+	}
+}
+
+func TestBleve_FilterByCreatedBy(t *testing.T) {
+	s := openTestStore(t)
+
+	docs := []search.Document{
+		pageDocWithAuthors("page:a.md", "a.md", "S", "alice", "bob", "2024-01-10T00:00:00Z", "2024-06-01T00:00:00Z"),
+		pageDocWithAuthors("page:b.md", "b.md", "S", "bob", "alice", "2024-03-01T00:00:00Z", "2024-07-01T00:00:00Z"),
+		pageDocWithAuthors("page:c.md", "c.md", "S", "alice", "alice", "2024-05-01T00:00:00Z", "2024-08-01T00:00:00Z"),
+	}
+	mustIndex(t, s, docs...)
+
+	res, err := s.Search(search.SearchOptions{CreatedBy: "alice"})
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	ids := sortedIDs(res)
+	want := []string{"page:a.md", "page:c.md"}
+	if !equalStringSlice(ids, want) {
+		t.Errorf("FilterByCreatedBy alice: got %v, want %v", ids, want)
+	}
+}
+
+func TestBleve_FilterByUpdatedBy(t *testing.T) {
+	s := openTestStore(t)
+
+	docs := []search.Document{
+		pageDocWithAuthors("page:a.md", "a.md", "S", "alice", "bob", "2024-01-10T00:00:00Z", "2024-06-01T00:00:00Z"),
+		pageDocWithAuthors("page:b.md", "b.md", "S", "bob", "alice", "2024-03-01T00:00:00Z", "2024-07-01T00:00:00Z"),
+		pageDocWithAuthors("page:c.md", "c.md", "S", "alice", "alice", "2024-05-01T00:00:00Z", "2024-08-01T00:00:00Z"),
+	}
+	mustIndex(t, s, docs...)
+
+	res, err := s.Search(search.SearchOptions{UpdatedBy: "alice"})
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	ids := sortedIDs(res)
+	want := []string{"page:b.md", "page:c.md"}
+	if !equalStringSlice(ids, want) {
+		t.Errorf("FilterByUpdatedBy alice: got %v, want %v", ids, want)
+	}
+}
+
+func TestBleve_FilterByCreatedAfterAndBefore(t *testing.T) {
+	s := openTestStore(t)
+
+	docs := []search.Document{
+		pageDocWithAuthors("page:jan.md", "jan.md", "S", "alice", "alice", "2024-01-15T00:00:00Z", "2024-06-01T00:00:00Z"),
+		pageDocWithAuthors("page:mar.md", "mar.md", "S", "alice", "alice", "2024-03-15T00:00:00Z", "2024-06-01T00:00:00Z"),
+		pageDocWithAuthors("page:nov.md", "nov.md", "S", "alice", "alice", "2024-11-15T00:00:00Z", "2024-06-01T00:00:00Z"),
+	}
+	mustIndex(t, s, docs...)
+
+	// Window: Feb–Oct 2024 — should catch mar.md only.
+	res, err := s.Search(search.SearchOptions{
+		CreatedAfter:  "2024-02-01T00:00:00Z",
+		CreatedBefore: "2024-10-01T00:00:00Z",
+	})
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	ids := sortedIDs(res)
+	want := []string{"page:mar.md"}
+	if !equalStringSlice(ids, want) {
+		t.Errorf("FilterByCreatedAfterAndBefore: got %v, want %v", ids, want)
+	}
+}
+
+func TestBleve_FilterByUpdatedAfter(t *testing.T) {
+	s := openTestStore(t)
+
+	docs := []search.Document{
+		pageDocWithAuthors("page:old.md", "old.md", "S", "alice", "alice", "2024-01-01T00:00:00Z", "2024-01-01T00:00:00Z"),
+		pageDocWithAuthors("page:new.md", "new.md", "S", "alice", "alice", "2024-01-01T00:00:00Z", "2024-09-01T00:00:00Z"),
+	}
+	mustIndex(t, s, docs...)
+
+	res, err := s.Search(search.SearchOptions{
+		UpdatedAfter: "2024-06-01T00:00:00Z",
+	})
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	ids := sortedIDs(res)
+	want := []string{"page:new.md"}
+	if !equalStringSlice(ids, want) {
+		t.Errorf("FilterByUpdatedAfter: got %v, want %v", ids, want)
+	}
+}
+
+func TestBleve_AuthorFieldsRoundTrip(t *testing.T) {
+	s := openTestStore(t)
+
+	doc := pageDocWithAuthors(
+		"page:rt.md", "rt.md", "S",
+		"carol", "dave",
+		"2024-04-01T10:00:00Z", "2024-07-01T15:30:00Z",
+	)
+	mustIndex(t, s, doc)
+
+	res, err := s.Search(search.SearchOptions{CreatedBy: "carol"})
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	if len(res) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(res))
+	}
+	got := res[0].Document
+	if got.CreatedBy != "carol" {
+		t.Errorf("CreatedBy: got %q, want %q", got.CreatedBy, "carol")
+	}
+	if got.UpdatedBy != "dave" {
+		t.Errorf("UpdatedBy: got %q, want %q", got.UpdatedBy, "dave")
+	}
+	if got.CreatedAt != "2024-04-01T10:00:00Z" {
+		t.Errorf("CreatedAt: got %q, want %q", got.CreatedAt, "2024-04-01T10:00:00Z")
+	}
+	if got.UpdatedAt != "2024-07-01T15:30:00Z" {
+		t.Errorf("UpdatedAt: got %q, want %q", got.UpdatedAt, "2024-07-01T15:30:00Z")
+	}
+}
+
+// ---------------------------------------------------------------------------
 // Assertion helpers
 // ---------------------------------------------------------------------------
 
