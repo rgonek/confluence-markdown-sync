@@ -41,6 +41,7 @@ func TestNewSearchCmd_Flags(t *testing.T) {
 		"engine",
 		"list-labels",
 		"list-spaces",
+		"result-detail",
 	}
 
 	for _, name := range expectedFlags {
@@ -62,6 +63,7 @@ func TestNewSearchCmd_FlagDefaults(t *testing.T) {
 		{"limit", "20"},
 		{"space", ""},
 		{"heading", ""},
+		{"result-detail", ""},
 	}
 
 	for _, tc := range cases {
@@ -598,5 +600,36 @@ func TestProjectResult_UnknownDetailFallsBackToFull(t *testing.T) {
 	got := projectResult(r, "bogus")
 	if got.Document.Content != "body text" {
 		t.Errorf("unknown detail: should fall back to full, Content stripped")
+	}
+}
+
+func TestRunSearch_ConfigFileEngine(t *testing.T) {
+	runParallelCommandTest(t)
+
+	repo, store := setupSearchTestRepo(t)
+
+	// Pre-index with UpdateMeta so incremental update skips reindex.
+	if err := store.UpdateMeta(); err != nil {
+		t.Fatalf("update meta: %v", err)
+	}
+	_ = store.Close()
+
+	// Write a .conf.yaml specifying engine=sqlite (valid, should not error).
+	confContent := "search:\n  engine: sqlite\n  limit: 5\n  result_detail: minimal\n"
+	if err := os.WriteFile(filepath.Join(repo, ".conf.yaml"), []byte(confContent), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	chdirRepo(t, repo)
+
+	cmd := newSearchCmd()
+	out := new(bytes.Buffer)
+	cmd.SetOut(out)
+	cmd.SetErr(new(bytes.Buffer))
+	// No --engine flag — should be read from .conf.yaml.
+	cmd.SetArgs([]string{"--list-spaces", "--format", "text"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("command error: %v", err)
 	}
 }
