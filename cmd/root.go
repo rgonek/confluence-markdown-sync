@@ -107,6 +107,7 @@ func init() {
 		newRelinkCmd(),
 		newVersionCmd(),
 		newDoctorCmd(),
+		newSearchCmd(),
 	)
 }
 
