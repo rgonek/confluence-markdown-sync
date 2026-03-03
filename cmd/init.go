@@ -15,6 +15,7 @@ import (
 const gitignoreContent = `# Confluence Markdown Sync
 .confluence-state.json
 .confluence-search-index/
+.conf.yaml
 .env
 
 # OS artifacts
@@ -226,7 +227,7 @@ func ensureGitignore() error {
 
 	content := string(existing)
 	var missing []string
-	for _, entry := range []string{".confluence-state.json", ".confluence-search-index/", ".env"} {
+	for _, entry := range []string{".confluence-state.json", ".confluence-search-index/", ".conf.yaml", ".env"} {
 		if !containsLine(content, entry) {
 			missing = append(missing, entry)
 		}
