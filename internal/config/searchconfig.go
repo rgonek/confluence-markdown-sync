@@ -32,7 +32,7 @@ func LoadSearchConfig(repoRoot string) (SearchConfig, error) {
 		ResultDetail: "full",
 	}
 
-	data, err := os.ReadFile(filepath.Join(repoRoot, ".conf.yaml"))
+	data, err := os.ReadFile(filepath.Join(repoRoot, ".conf.yaml")) //nolint:gosec // path is repo root + fixed filename
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return defaults, nil

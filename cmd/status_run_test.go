@@ -19,6 +19,7 @@ func TestStatusCmdRun(t *testing.T) {
 		cmd := newStatusCmd()
 		if cmd == nil {
 			t.Fatal("expected command not to be nil")
+			return //nolint:staticcheck // unreachable — silences SA5011 nil dereference false positive
 		}
 		if cmd.Use != "status [TARGET]" {
 			t.Fatalf("expected use 'status [TARGET]', got %s", cmd.Use)
