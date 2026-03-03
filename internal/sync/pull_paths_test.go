@@ -17,14 +17,14 @@ func TestPlanPagePaths_MaintainsConfluenceHierarchy(t *testing.T) {
 
 	_, relByID := PlanPagePaths(spaceDir, nil, pages, nil)
 
-	if got := relByID["1"]; got != "Root.md" {
-		t.Fatalf("root path = %q, want Root.md", got)
+	if got := relByID["1"]; got != "Root/Root.md" {
+		t.Fatalf("root path = %q, want Root/Root.md", got)
 	}
-	if got := relByID["2"]; got != "Child.md" {
-		t.Fatalf("child path = %q, want Child.md", got)
+	if got := relByID["2"]; got != "Root/Child/Child.md" {
+		t.Fatalf("child path = %q, want Root/Child/Child.md", got)
 	}
-	if got := relByID["3"]; got != "Child/Grand-Child.md" {
-		t.Fatalf("grandchild path = %q, want Child/Grand-Child.md", got)
+	if got := relByID["3"]; got != "Root/Child/Grand-Child.md" {
+		t.Fatalf("grandchild path = %q, want Root/Child/Grand-Child.md", got)
 	}
 }
 
