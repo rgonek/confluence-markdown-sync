@@ -23,11 +23,26 @@ func PlanPagePaths(
 	folderByID map[string]confluence.Folder,
 ) (map[string]string, map[string]string) {
 	pageByID := map[string]confluence.Page{}
+	hasChildren := map[string]bool{}
 	for _, page := range pages {
 		pageByID[page.ID] = page
+		if page.ParentType == "page" || page.ParentType == "" {
+			parentID := strings.TrimSpace(page.ParentPageID)
+			if parentID != "" {
+				hasChildren[parentID] = true
+			}
+		}
 	}
 	if folderByID == nil {
 		folderByID = map[string]confluence.Folder{}
+	}
+	for _, folder := range folderByID {
+		if folder.ParentType == "page" {
+			parentID := strings.TrimSpace(folder.ParentID)
+			if parentID != "" {
+				hasChildren[parentID] = true
+			}
+		}
 	}
 	previousPathByID := map[string]string{}
 	for _, previousPath := range sortedStringKeys(previousPageIndex) {
@@ -54,7 +69,7 @@ func PlanPagePaths(
 	}
 	plans := make([]pagePathPlan, 0, len(pages))
 	for _, page := range pages {
-		baseRelPath := plannedPageRelPath(page, pageByID, folderByID)
+		baseRelPath := plannedPageRelPath(page, pageByID, folderByID, hasChildren)
 		if previousPath := previousPathByID[page.ID]; previousPath != "" && sameParentDirectory(previousPath, baseRelPath) {
 			baseRelPath = previousPath
 		}
@@ -82,7 +97,7 @@ func PlanPagePaths(
 	return absByID, relByID
 }
 
-func plannedPageRelPath(page confluence.Page, pageByID map[string]confluence.Page, folderByID map[string]confluence.Folder) string {
+func plannedPageRelPath(page confluence.Page, pageByID map[string]confluence.Page, folderByID map[string]confluence.Folder, hasChildren map[string]bool) string {
 	title := strings.TrimSpace(page.Title)
 	if title == "" {
 		title = "page-" + page.ID
@@ -96,6 +111,11 @@ func plannedPageRelPath(page confluence.Page, pageByID map[string]confluence.Pag
 	}
 
 	parts := append(ancestorSegments, filename)
+	if hasChildren[page.ID] {
+		// If the page has subpages, create a directory for it and place the page inside
+		dirSegment := fs.SanitizePathSegment(title)
+		parts = append(ancestorSegments, dirSegment, filename)
+	}
 	return normalizeRelPath(filepath.Join(parts...))
 }
 
@@ -151,12 +171,8 @@ func ancestorPathSegments(parentID string, parentType string, pageByID map[strin
 			}
 		}
 
-		// Folders always contribute a directory segment (even top-level folders).
-		// Pages only contribute a segment when they themselves have a parent; the
-		// space-root page (no parent) does not create its own subdirectory.
-		if currentType == "folder" || nextID != "" {
-			segmentsReversed = append(segmentsReversed, fs.SanitizePathSegment(title))
-		}
+		// All ancestors (folders and pages) contribute a directory segment to their descendants.
+		segmentsReversed = append(segmentsReversed, fs.SanitizePathSegment(title))
 
 		currentID = nextID
 		currentType = nextType

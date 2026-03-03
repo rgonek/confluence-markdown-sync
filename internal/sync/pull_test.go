@@ -36,8 +36,8 @@ func TestPull_IncrementalRewriteDeleteAndWatermark(t *testing.T) {
 		}
 	}
 
-	writeDoc("root.md", "1", "old root\n")
-	writeDoc("child.md", "2", "old child\n")
+	writeDoc("Root/Root.md", "1", "old root\n")
+	writeDoc("Root/Child.md", "2", "old child\n")
 	writeDoc("deleted.md", "999", "to be deleted\n")
 
 	legacyAssetPath := filepath.Join(spaceDir, "assets", "999", "att-old-legacy.png")
@@ -51,9 +51,9 @@ func TestPull_IncrementalRewriteDeleteAndWatermark(t *testing.T) {
 	state := fs.SpaceState{
 		LastPullHighWatermark: "2026-02-01T09:00:00Z",
 		PagePathIndex: map[string]string{
-			"root.md":    "1",
-			"child.md":   "2",
-			"deleted.md": "999",
+			"Root/Root.md":  "1",
+			"Root/Child.md": "2",
+			"deleted.md":    "999",
 		},
 		AttachmentIndex: map[string]string{
 			"assets/999/att-old-legacy.png": "att-old",
@@ -124,17 +124,17 @@ func TestPull_IncrementalRewriteDeleteAndWatermark(t *testing.T) {
 		t.Fatalf("ListChanges since = %s, want %s", fake.lastChangeSince.Format(time.RFC3339), expectedSince.Format(time.RFC3339))
 	}
 
-	rootDoc, err := fs.ReadMarkdownDocument(filepath.Join(spaceDir, "root.md"))
+	rootDoc, err := fs.ReadMarkdownDocument(filepath.Join(spaceDir, "Root/Root.md"))
 	if err != nil {
 		t.Fatalf("read Root/Root.md: %v", err)
 	}
-	if !strings.Contains(rootDoc.Body, "[Known](child.md#section-a)") {
+	if !strings.Contains(rootDoc.Body, "[Known](Child.md#section-a)") {
 		t.Fatalf("expected rewritten known link in root body, got:\n%s", rootDoc.Body)
 	}
 	if !strings.Contains(rootDoc.Body, "[Missing](https://example.atlassian.net/wiki/pages/viewpage.action?pageId=404)") {
 		t.Fatalf("expected unresolved fallback link in root body, got:\n%s", rootDoc.Body)
 	}
-	if !strings.Contains(rootDoc.Body, "![Diagram](assets/1/att-1-diagram.png)") {
+	if !strings.Contains(rootDoc.Body, "![Diagram](../assets/1/att-1-diagram.png)") {
 		t.Fatalf("expected rewritten media link in root body, got:\n%s", rootDoc.Body)
 	}
 	if rootDoc.Frontmatter.Version != 5 {
@@ -153,14 +153,11 @@ func TestPull_IncrementalRewriteDeleteAndWatermark(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(spaceDir, "deleted.md")); !os.IsNotExist(err) {
 		t.Fatalf("deleted.md should be deleted, stat error=%v", err)
 	}
-	if _, err := os.Stat(filepath.Join(spaceDir, "root.md")); err != nil {
+	if _, err := os.Stat(filepath.Join(spaceDir, "Root/Root.md")); err != nil {
 		t.Fatalf("root markdown should exist at space root, stat error=%v", err)
 	}
-	if _, err := os.Stat(filepath.Join(spaceDir, "child.md")); err != nil {
+	if _, err := os.Stat(filepath.Join(spaceDir, "Root/Child.md")); err != nil {
 		t.Fatalf("child markdown should exist at space root, stat error=%v", err)
-	}
-	if _, err := os.Stat(filepath.Join(spaceDir, "Root")); !os.IsNotExist(err) {
-		t.Fatalf("nested Root directory should not exist, stat error=%v", err)
 	}
 	if _, err := os.Stat(legacyAssetPath); !os.IsNotExist(err) {
 		t.Fatalf("legacy asset should be deleted, stat error=%v", err)
@@ -186,11 +183,11 @@ func TestPull_IncrementalRewriteDeleteAndWatermark(t *testing.T) {
 	if result.State.SpaceKey != "ENG" {
 		t.Fatalf("state space key = %q, want ENG", result.State.SpaceKey)
 	}
-	if got := result.State.PagePathIndex["root.md"]; got != "1" {
-		t.Fatalf("state page_path_index[root.md] = %q, want 1", got)
+	if got := result.State.PagePathIndex["Root/Root.md"]; got != "1" {
+		t.Fatalf("state page_path_index[Root/Root.md] = %q, want 1", got)
 	}
-	if got := result.State.PagePathIndex["child.md"]; got != "2" {
-		t.Fatalf("state page_path_index[child.md] = %q, want 2", got)
+	if got := result.State.PagePathIndex["Root/Child.md"]; got != "2" {
+		t.Fatalf("state page_path_index[Root/Child.md] = %q, want 2", got)
 	}
 	if _, exists := result.State.PagePathIndex["deleted.md"]; exists {
 		t.Fatalf("state page_path_index should not include deleted.md")
