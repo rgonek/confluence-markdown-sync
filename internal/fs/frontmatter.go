@@ -44,7 +44,6 @@ var (
 type Frontmatter struct {
 	Title     string
 	ID        string
-	Space     string
 	Version   int
 	State     string
 	Status    string
@@ -64,7 +63,6 @@ type Frontmatter struct {
 type frontmatterYAML struct {
 	Title     string   `yaml:"title,omitempty"`
 	ID        string   `yaml:"id,omitempty"`
-	Space     string   `yaml:"space,omitempty"`
 	Version   int      `yaml:"version,omitempty"`
 	State     string   `yaml:"state,omitempty"`
 	Status    string   `yaml:"status,omitempty"`
@@ -129,7 +127,6 @@ func (fm *Frontmatter) UnmarshalYAML(value *yaml.Node) error {
 
 	fm.Title = strings.TrimSpace(decoded.Title)
 	fm.ID = strings.TrimSpace(decoded.ID)
-	fm.Space = strings.TrimSpace(decoded.Space)
 	fm.Version = decoded.Version
 	fm.State = strings.TrimSpace(decoded.State)
 	fm.Status = strings.TrimSpace(decoded.Status)
@@ -141,9 +138,6 @@ func (fm *Frontmatter) UnmarshalYAML(value *yaml.Node) error {
 
 	if fm.ID == "" {
 		fm.ID = strings.TrimSpace(decoded.LegacyPageID)
-	}
-	if fm.Space == "" {
-		fm.Space = strings.TrimSpace(decoded.LegacySpaceKey)
 	}
 	if fm.Version == 0 {
 		fm.Version = decoded.LegacyVersion

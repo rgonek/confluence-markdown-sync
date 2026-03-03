@@ -23,9 +23,9 @@ func TestPull_IncrementalRewriteDeleteAndWatermark(t *testing.T) {
 	writeDoc := func(relPath string, pageID string, body string) {
 		doc := fs.MarkdownDocument{
 			Frontmatter: fs.Frontmatter{
-				Title:                  strings.TrimSuffix(filepath.Base(relPath), ".md"),
-				ID:                     pageID,
-				Space:                  "ENG",
+				Title: strings.TrimSuffix(filepath.Base(relPath), ".md"),
+				ID:    pageID,
+
 				Version:                1,
 				ConfluenceLastModified: "2026-02-01T08:00:00Z",
 			},
@@ -280,9 +280,9 @@ func TestPull_ForceFullPullsAllPagesWithoutIncrementalChanges(t *testing.T) {
 
 	initialDoc := fs.MarkdownDocument{
 		Frontmatter: fs.Frontmatter{
-			Title:                  "Root",
-			ID:                     "1",
-			Space:                  "ENG",
+			Title: "Root",
+			ID:    "1",
+
 			Version:                1,
 			ConfluenceLastModified: "2026-02-01T08:00:00Z",
 		},
@@ -519,9 +519,9 @@ func TestPull_TrashedRecoveryDeletesLocalPage(t *testing.T) {
 	trashedPath := filepath.Join(spaceDir, "trashed.md")
 	if err := fs.WriteMarkdownDocument(trashedPath, fs.MarkdownDocument{
 		Frontmatter: fs.Frontmatter{
-			Title:   "Trashed Page",
-			ID:      "10",
-			Space:   "ENG",
+			Title: "Trashed Page",
+			ID:    "10",
+
 			Version: 3,
 			State:   "trashed",
 		},

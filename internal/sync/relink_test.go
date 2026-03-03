@@ -278,3 +278,86 @@ func TestBuildGlobalPageIndex(t *testing.T) {
 		t.Errorf("missing or wrong path for 201: %s", p)
 	}
 }
+
+func TestResolveLinksInSpace(t *testing.T) {
+	spaceDir := t.TempDir()
+
+	targetPath := filepath.Join(spaceDir, "target.md")
+	if err := os.WriteFile(targetPath, []byte("target content"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	sourcePath := filepath.Join(spaceDir, "source.md")
+	content := "[link](https://example.atlassian.net/wiki/pages/viewpage.action?pageId=777)\n"
+	if err := os.WriteFile(sourcePath, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	// non-.md file should be ignored
+	if err := os.WriteFile(filepath.Join(spaceDir, "image.png"), []byte("data"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	index := GlobalPageIndex{"777": targetPath}
+	result, err := ResolveLinksInSpace(spaceDir, index, nil, false)
+	if err != nil {
+		t.Fatalf("ResolveLinksInSpace: %v", err)
+	}
+	if result.FilesSeen != 2 {
+		t.Errorf("FilesSeen = %d, want 2", result.FilesSeen)
+	}
+	if result.FilesChanged != 1 {
+		t.Errorf("FilesChanged = %d, want 1", result.FilesChanged)
+	}
+	if result.LinksConverted != 1 {
+		t.Errorf("LinksConverted = %d, want 1", result.LinksConverted)
+	}
+}
+
+func TestResolveLinksInSpace_FiltersByTargetPageIDs(t *testing.T) {
+	spaceDir := t.TempDir()
+
+	targetPath := filepath.Join(spaceDir, "target.md")
+	if err := os.WriteFile(targetPath, []byte("target"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	sourcePath := filepath.Join(spaceDir, "source.md")
+	content := "[link](https://example.atlassian.net/wiki/pages/viewpage.action?pageId=888)\n"
+	if err := os.WriteFile(sourcePath, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	index := GlobalPageIndex{"888": targetPath}
+
+	// filter to an ID that is NOT in the content — should result in no changes
+	result, err := ResolveLinksInSpace(spaceDir, index, map[string]struct{}{"999": {}}, false)
+	if err != nil {
+		t.Fatalf("ResolveLinksInSpace: %v", err)
+	}
+	if result.FilesChanged != 0 {
+		t.Errorf("expected no changes when target IDs don't match, got %d", result.FilesChanged)
+	}
+}
+
+func TestFindClosingBacktickRun(t *testing.T) {
+	tests := []struct {
+		name    string
+		content string
+		start   int
+		run     int
+		want    int
+	}{
+		{"finds single backtick", "hello `world` end", 7, 1, 12},
+		{"finds triple backtick", "pre ```code``` end", 7, 3, 11},
+		{"not found returns -1", "no closing here", 0, 3, -1},
+		{"start past end returns -1", "abc", 10, 1, -1},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := findClosingBacktickRun([]byte(tt.content), tt.start, tt.run)
+			if got != tt.want {
+				t.Errorf("findClosingBacktickRun(%q, %d, %d) = %d, want %d", tt.content, tt.start, tt.run, got, tt.want)
+			}
+		})
+	}
+}

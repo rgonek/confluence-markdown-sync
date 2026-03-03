@@ -31,6 +31,7 @@ type PushRemote interface {
 	UploadAttachment(ctx context.Context, input confluence.AttachmentUploadInput) (confluence.Attachment, error)
 	DeleteAttachment(ctx context.Context, attachmentID string, pageID string) error
 	CreateFolder(ctx context.Context, input confluence.FolderCreateInput) (confluence.Folder, error)
+	ListFolders(ctx context.Context, opts confluence.FolderListOptions) (confluence.FolderListResult, error)
 	MovePage(ctx context.Context, pageID string, targetID string) error
 }
 
@@ -67,6 +68,7 @@ type PushOptions struct {
 	State               fs.SpaceState
 	GlobalPageIndex     GlobalPageIndex
 	Changes             []PushFileChange
+	RemoteFolderByTitle map[string]confluence.Folder
 	ConflictPolicy      PushConflictPolicy
 	HardDelete          bool
 	KeepOrphanAssets    bool

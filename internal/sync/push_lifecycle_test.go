@@ -16,9 +16,9 @@ func TestPush_NewPageFailsWhenTrackedPageWithSameTitleExistsInSameDirectory(t *t
 	existingPath := filepath.Join(spaceDir, "Conflict-Test-Page.md")
 	if err := fs.WriteMarkdownDocument(existingPath, fs.MarkdownDocument{
 		Frontmatter: fs.Frontmatter{
-			Title:   "Conflict Test Page",
-			ID:      "1",
-			Space:   "ENG",
+			Title: "Conflict Test Page",
+			ID:    "1",
+
 			Version: 1,
 		},
 		Body: "existing\n",
@@ -30,7 +30,6 @@ func TestPush_NewPageFailsWhenTrackedPageWithSameTitleExistsInSameDirectory(t *t
 	if err := fs.WriteMarkdownDocument(newPath, fs.MarkdownDocument{
 		Frontmatter: fs.Frontmatter{
 			Title: "Conflict Test Page",
-			Space: "ENG",
 		},
 		Body: "new\n",
 	}); err != nil {
@@ -115,9 +114,9 @@ func TestPush_ArchivedRemotePageReturnsActionableError(t *testing.T) {
 
 	if err := fs.WriteMarkdownDocument(mdPath, fs.MarkdownDocument{
 		Frontmatter: fs.Frontmatter{
-			Title:   "Root",
-			ID:      "1",
-			Space:   "ENG",
+			Title: "Root",
+			ID:    "1",
+
 			Version: 1,
 		},
 		Body: "content\n",
@@ -210,5 +209,20 @@ func TestPush_DeleteBlocksLocalStateWhenArchiveTaskDoesNotComplete(t *testing.T)
 	}
 	if !hasTimeoutDiagnostic {
 		t.Fatalf("expected ARCHIVE_TASK_TIMEOUT diagnostic, got %+v", result.Diagnostics)
+	}
+}
+
+func TestPushConflictError_Error(t *testing.T) {
+	err := &PushConflictError{
+		Path:          "docs/page.md",
+		PageID:        "42",
+		LocalVersion:  3,
+		RemoteVersion: 5,
+		Policy:        PushConflictPolicyCancel,
+	}
+	got := err.Error()
+	want := "remote version conflict for docs/page.md (page 42): local=3 remote=5 policy=cancel"
+	if got != want {
+		t.Errorf("PushConflictError.Error() = %q, want %q", got, want)
 	}
 }

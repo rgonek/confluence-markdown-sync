@@ -17,9 +17,9 @@ func TestPush_KeepOrphanAssetsPreservesUnreferencedAttachment(t *testing.T) {
 
 	if err := fs.WriteMarkdownDocument(mdPath, fs.MarkdownDocument{
 		Frontmatter: fs.Frontmatter{
-			Title:   "Root",
-			ID:      "1",
-			Space:   "ENG",
+			Title: "Root",
+			ID:    "1",
+
 			Version: 1,
 		},
 		Body: "content\n",
@@ -83,9 +83,9 @@ func TestPush_MigratesLocalRelativeAssetIntoPageHierarchy(t *testing.T) {
 
 	if err := fs.WriteMarkdownDocument(mdPath, fs.MarkdownDocument{
 		Frontmatter: fs.Frontmatter{
-			Title:   "Root",
-			ID:      "1",
-			Space:   "ENG",
+			Title: "Root",
+			ID:    "1",
+
 			Version: 1,
 		},
 		Body: "![diagram](./diagram.png)\n",
@@ -152,9 +152,9 @@ func TestPush_UploadsLocalFileLinksAsAttachments(t *testing.T) {
 
 	if err := fs.WriteMarkdownDocument(mdPath, fs.MarkdownDocument{
 		Frontmatter: fs.Frontmatter{
-			Title:   "Root",
-			ID:      "1",
-			Space:   "ENG",
+			Title: "Root",
+			ID:    "1",
+
 			Version: 1,
 		},
 		Body: "[Manual](assets/manual.pdf)\n",
@@ -228,9 +228,9 @@ func TestPush_UploadsInlineLocalFileLinksWithoutEmbeddedPlaceholder(t *testing.T
 
 	if err := fs.WriteMarkdownDocument(mdPath, fs.MarkdownDocument{
 		Frontmatter: fs.Frontmatter{
-			Title:   "Root",
-			ID:      "1",
-			Space:   "ENG",
+			Title: "Root",
+			ID:    "1",
+
 			Version: 1,
 		},
 		Body: "Please review [Manual](assets/manual.pdf) before sign-off.\n",
@@ -271,5 +271,37 @@ func TestPush_UploadsInlineLocalFileLinksWithoutEmbeddedPlaceholder(t *testing.T
 	}
 	if strings.Contains(body, `[Embedded content]`) {
 		t.Fatalf("expected inline file link conversion to avoid embedded placeholder, body=%s", body)
+	}
+}
+
+func TestOutsideSpaceAssetError_ContainsSuggestedPath(t *testing.T) {
+	spaceDir := t.TempDir()
+	sourcePath := filepath.Join(spaceDir, "docs", "page.md")
+	destination := "../../../somewhere/image.png"
+
+	err := outsideSpaceAssetError(spaceDir, sourcePath, destination)
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "image.png") {
+		t.Errorf("error message missing filename: %q", msg)
+	}
+	if !strings.Contains(msg, "assets/") {
+		t.Errorf("error message missing assets path hint: %q", msg)
+	}
+}
+
+func TestOutsideSpaceAssetError_EmptyDestination(t *testing.T) {
+	spaceDir := t.TempDir()
+	sourcePath := filepath.Join(spaceDir, "page.md")
+
+	err := outsideSpaceAssetError(spaceDir, sourcePath, "   ")
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	// empty destination should fall back to "file" placeholder
+	if !strings.Contains(err.Error(), "file") {
+		t.Errorf("expected 'file' placeholder in message: %q", err.Error())
 	}
 }

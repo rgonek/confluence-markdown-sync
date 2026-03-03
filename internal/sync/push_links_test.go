@@ -18,7 +18,6 @@ func TestPush_PreflightStrictFailureSkipsRemoteMutations(t *testing.T) {
 	if err := fs.WriteMarkdownDocument(mdPath, fs.MarkdownDocument{
 		Frontmatter: fs.Frontmatter{
 			Title: "New",
-			Space: "ENG",
 		},
 		Body: "[Broken](missing.md)\n",
 	}); err != nil {
@@ -71,7 +70,6 @@ func TestPush_PreflightStrictResolvesCrossSpaceLinkWithGlobalIndex(t *testing.T)
 	if err := fs.WriteMarkdownDocument(mdPath, fs.MarkdownDocument{
 		Frontmatter: fs.Frontmatter{
 			Title: "New",
-			Space: "ENG",
 		},
 		Body: "[Cross Space](../Technical%20Docs%20(TD)/target.md)\n",
 	}); err != nil {
@@ -81,9 +79,9 @@ func TestPush_PreflightStrictResolvesCrossSpaceLinkWithGlobalIndex(t *testing.T)
 	targetPath := filepath.Join(tdDir, "target.md")
 	if err := fs.WriteMarkdownDocument(targetPath, fs.MarkdownDocument{
 		Frontmatter: fs.Frontmatter{
-			Title:   "Target",
-			ID:      "200",
-			Space:   "TD",
+			Title: "Target",
+			ID:    "200",
+
 			Version: 1,
 		},
 		Body: "target\n",
@@ -117,7 +115,6 @@ func TestPush_ResolvesLinksBetweenSimultaneousNewPages(t *testing.T) {
 	if err := fs.WriteMarkdownDocument(filepath.Join(spaceDir, "Fancy-Extensions.md"), fs.MarkdownDocument{
 		Frontmatter: fs.Frontmatter{
 			Title: "Fancy Extensions",
-			Space: "ENG",
 		},
 		Body: "[New page](New-Page.md)\n",
 	}); err != nil {
@@ -127,7 +124,6 @@ func TestPush_ResolvesLinksBetweenSimultaneousNewPages(t *testing.T) {
 	if err := fs.WriteMarkdownDocument(filepath.Join(spaceDir, "New-Page.md"), fs.MarkdownDocument{
 		Frontmatter: fs.Frontmatter{
 			Title: "New Page",
-			Space: "ENG",
 		},
 		Body: "new page body\n",
 	}); err != nil {

@@ -102,9 +102,17 @@ func (f *fakeFolderPushRemote) CreateFolder(_ context.Context, input confluence.
 		ParentID:   input.ParentID,
 		ParentType: input.ParentType,
 	}
-	f.folders = append(f.folders, created)
 	f.foldersByID[id] = created
+	f.folders = append(f.folders, created)
 	return created, nil
+}
+
+func (f *fakeFolderPushRemote) ListFolders(_ context.Context, _ confluence.FolderListOptions) (confluence.FolderListResult, error) {
+	return confluence.FolderListResult{Folders: append([]confluence.Folder(nil), f.folders...)}, nil
+}
+
+func (f *fakeFolderPushRemote) DeleteFolder(_ context.Context, _ string) error {
+	return nil
 }
 
 func (f *fakeFolderPushRemote) MovePage(_ context.Context, pageID string, targetID string) error {
@@ -310,6 +318,14 @@ func (f *rollbackPushRemote) DeleteAttachment(_ context.Context, attachmentID st
 
 func (f *rollbackPushRemote) CreateFolder(_ context.Context, input confluence.FolderCreateInput) (confluence.Folder, error) {
 	return confluence.Folder{ID: "folder-1", SpaceID: input.SpaceID, Title: input.Title, ParentID: input.ParentID}, nil
+}
+
+func (f *rollbackPushRemote) ListFolders(_ context.Context, _ confluence.FolderListOptions) (confluence.FolderListResult, error) {
+	return confluence.FolderListResult{}, nil
+}
+
+func (f *rollbackPushRemote) DeleteFolder(_ context.Context, _ string) error {
+	return nil
 }
 
 func (f *rollbackPushRemote) MovePage(_ context.Context, pageID string, targetID string) error {

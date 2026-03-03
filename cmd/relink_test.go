@@ -27,7 +27,7 @@ func TestRunRelink_NonInteractiveRequiresYesForHighImpactChanges(t *testing.T) {
 	}
 
 	writeMarkdown(t, filepath.Join(targetDir, "target.md"), fs.MarkdownDocument{
-		Frontmatter: fs.Frontmatter{Title: "Target", ID: "42", Space: "TGT", Version: 1},
+		Frontmatter: fs.Frontmatter{Title: "Target", ID: "42", Version: 1},
 		Body:        "target body\n",
 	})
 	if err := fs.SaveState(targetDir, fs.SpaceState{
@@ -46,7 +46,7 @@ func TestRunRelink_NonInteractiveRequiresYesForHighImpactChanges(t *testing.T) {
 	for i := 1; i <= 11; i++ {
 		name := fmt.Sprintf("doc-%02d.md", i)
 		writeMarkdown(t, filepath.Join(sourceDir, name), fs.MarkdownDocument{
-			Frontmatter: fs.Frontmatter{Title: fmt.Sprintf("Doc %d", i), ID: fmt.Sprintf("%d", 100+i), Space: "SRC", Version: 1},
+			Frontmatter: fs.Frontmatter{Title: fmt.Sprintf("Doc %d", i), ID: fmt.Sprintf("%d", 100+i), Version: 1},
 			Body:        "[Target](https://example.atlassian.net/wiki/pages/viewpage.action?pageId=42)\n",
 		})
 		sourceState.PagePathIndex[name] = fmt.Sprintf("%d", 100+i)
@@ -122,7 +122,7 @@ func TestRunGlobalRelink(t *testing.T) {
 	}
 
 	writeMarkdown(t, filepath.Join(targetDir, "target.md"), fs.MarkdownDocument{
-		Frontmatter: fs.Frontmatter{Title: "Target", ID: "42", Space: "TGT", Version: 1},
+		Frontmatter: fs.Frontmatter{Title: "Target", ID: "42", Version: 1},
 		Body:        "target body\n",
 	})
 	if err := fs.SaveState(targetDir, fs.SpaceState{
@@ -135,7 +135,7 @@ func TestRunGlobalRelink(t *testing.T) {
 	}
 
 	writeMarkdown(t, filepath.Join(sourceDir, "doc.md"), fs.MarkdownDocument{
-		Frontmatter: fs.Frontmatter{Title: "Doc", ID: "101", Space: "SRC", Version: 1},
+		Frontmatter: fs.Frontmatter{Title: "Doc", ID: "101", Version: 1},
 		Body:        "[Target](https://example.atlassian.net/wiki/pages/viewpage.action?pageId=42)\n",
 	})
 	if err := fs.SaveState(sourceDir, fs.SpaceState{

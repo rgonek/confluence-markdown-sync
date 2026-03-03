@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 )
 
@@ -161,6 +162,61 @@ func (c *Client) CreateFolder(ctx context.Context, input FolderCreateInput) (Fol
 		return Folder{}, err
 	}
 	return payload.toModel(), nil
+}
+
+func (c *Client) DeleteFolder(ctx context.Context, folderID string) error {
+	id := strings.TrimSpace(folderID)
+	if id == "" {
+		return errors.New("folder ID is required")
+	}
+
+	req, err := c.newRequest(ctx, http.MethodDelete, "/wiki/api/v2/folders/"+url.PathEscape(id), nil, nil)
+	if err != nil {
+		return err
+	}
+	if err := c.do(req, nil); err != nil {
+		if isHTTPStatus(err, http.StatusNotFound) {
+			return ErrNotFound
+		}
+		return err
+	}
+	return nil
+}
+
+// ListFolders returns a list of folders.
+func (c *Client) ListFolders(ctx context.Context, opts FolderListOptions) (FolderListResult, error) {
+	query := url.Values{}
+	if opts.SpaceID != "" {
+		query.Set("space-id", opts.SpaceID)
+	}
+	if opts.Title != "" {
+		query.Set("title", opts.Title)
+	}
+	if opts.Limit > 0 {
+		query.Set("limit", strconv.Itoa(opts.Limit))
+	}
+	if opts.Cursor != "" {
+		query.Set("cursor", opts.Cursor)
+	}
+
+	req, err := c.newRequest(ctx, http.MethodGet, "/wiki/api/v2/folders", query, nil)
+	if err != nil {
+		return FolderListResult{}, err
+	}
+
+	var payload v2ListResponse[folderDTO]
+	if err := c.do(req, &payload); err != nil {
+		return FolderListResult{}, err
+	}
+
+	out := FolderListResult{
+		Folders:    make([]Folder, 0, len(payload.Results)),
+		NextCursor: extractCursor(payload.Cursor, payload.Meta.Cursor, payload.Links.Next),
+	}
+	for _, item := range payload.Results {
+		out.Folders = append(out.Folders, item.toModel())
+	}
+	return out, nil
 }
 
 func (c *Client) MovePage(ctx context.Context, pageID string, targetID string) error {

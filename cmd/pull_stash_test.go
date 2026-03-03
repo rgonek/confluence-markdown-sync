@@ -98,9 +98,9 @@ func TestRunPull_DiscardLocalFailureRestoresLocalChanges(t *testing.T) {
 
 	writeMarkdown(t, filepath.Join(spaceDir, "root.md"), fs.MarkdownDocument{
 		Frontmatter: fs.Frontmatter{
-			Title:                  "Root",
-			ID:                     "1",
-			Space:                  "ENG",
+			Title: "Root",
+			ID:    "1",
+
 			Version:                1,
 			ConfluenceLastModified: "2026-02-01T08:00:00Z",
 		},

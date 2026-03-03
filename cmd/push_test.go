@@ -28,9 +28,9 @@ func TestRunPush_UnresolvedValidationStopsBeforeRemoteWrites(t *testing.T) {
 
 	writeMarkdown(t, filepath.Join(spaceDir, "root.md"), fs.MarkdownDocument{
 		Frontmatter: fs.Frontmatter{
-			Title:                  "Root",
-			ID:                     "1",
-			Space:                  "ENG",
+			Title: "Root",
+			ID:    "1",
+
 			Version:                1,
 			ConfluenceLastModified: "2026-02-01T10:00:00Z",
 		},
@@ -86,9 +86,9 @@ func TestRunPush_WritesStructuredCommitTrailers(t *testing.T) {
 
 	writeMarkdown(t, filepath.Join(spaceDir, "root.md"), fs.MarkdownDocument{
 		Frontmatter: fs.Frontmatter{
-			Title:                  "Root",
-			ID:                     "1",
-			Space:                  "ENG",
+			Title: "Root",
+			ID:    "1",
+
 			Version:                1,
 			ConfluenceLastModified: "2026-02-01T10:00:00Z",
 		},
@@ -154,9 +154,9 @@ func TestRunPush_KeepsStateFileUntracked(t *testing.T) {
 
 	writeMarkdown(t, filepath.Join(spaceDir, "root.md"), fs.MarkdownDocument{
 		Frontmatter: fs.Frontmatter{
-			Title:                  "Root",
-			ID:                     "1",
-			Space:                  "ENG",
+			Title: "Root",
+			ID:    "1",
+
 			Version:                1,
 			ConfluenceLastModified: "2026-02-01T10:00:00Z",
 		},
@@ -264,9 +264,9 @@ func TestRunPush_WorksWithoutGitRemoteConfigured(t *testing.T) {
 
 	writeMarkdown(t, filepath.Join(spaceDir, "root.md"), fs.MarkdownDocument{
 		Frontmatter: fs.Frontmatter{
-			Title:                  "Root",
-			ID:                     "1",
-			Space:                  "ENG",
+			Title: "Root",
+			ID:    "1",
+
 			Version:                1,
 			ConfluenceLastModified: "2026-02-01T10:00:00Z",
 		},
@@ -319,9 +319,9 @@ func preparePushRepoWithBaseline(t *testing.T, repo string) string {
 
 	writeMarkdown(t, filepath.Join(spaceDir, "root.md"), fs.MarkdownDocument{
 		Frontmatter: fs.Frontmatter{
-			Title:                  "Root",
-			ID:                     "1",
-			Space:                  "ENG",
+			Title: "Root",
+			ID:    "1",
+
 			Version:                1,
 			ConfluenceLastModified: "2026-02-01T10:00:00Z",
 		},
@@ -518,6 +518,14 @@ func (f *cmdFakePushRemote) CreateFolder(_ context.Context, input confluence.Fol
 		ParentID:   input.ParentID,
 		ParentType: input.ParentType,
 	}, nil
+}
+
+func (f *cmdFakePushRemote) ListFolders(_ context.Context, _ confluence.FolderListOptions) (confluence.FolderListResult, error) {
+	return confluence.FolderListResult{}, nil
+}
+
+func (f *cmdFakePushRemote) DeleteFolder(_ context.Context, _ string) error {
+	return nil
 }
 
 func (f *cmdFakePushRemote) MovePage(_ context.Context, pageID string, targetID string) error {
