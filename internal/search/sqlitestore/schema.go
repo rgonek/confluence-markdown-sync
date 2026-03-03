@@ -20,12 +20,18 @@ CREATE TABLE IF NOT EXISTS documents (
     heading_level INTEGER NOT NULL DEFAULT 0,
     language      TEXT NOT NULL DEFAULT '',
     line          INTEGER NOT NULL DEFAULT 0,
-    mod_time      TEXT NOT NULL DEFAULT ''
+    mod_time      TEXT NOT NULL DEFAULT '',
+    created_by    TEXT NOT NULL DEFAULT '',
+    created_at    TEXT NOT NULL DEFAULT '',
+    updated_by    TEXT NOT NULL DEFAULT '',
+    updated_at    TEXT NOT NULL DEFAULT ''
 );
 
 CREATE INDEX IF NOT EXISTS idx_documents_path      ON documents(path);
 CREATE INDEX IF NOT EXISTS idx_documents_type      ON documents(type);
 CREATE INDEX IF NOT EXISTS idx_documents_space_key ON documents(space_key);
+CREATE INDEX IF NOT EXISTS idx_documents_created_by ON documents(created_by);
+CREATE INDEX IF NOT EXISTS idx_documents_updated_by ON documents(updated_by);
 
 CREATE VIRTUAL TABLE IF NOT EXISTS documents_fts USING fts5(
     title,
