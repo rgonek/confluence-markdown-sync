@@ -25,6 +25,7 @@ func openTestStore(t *testing.T) *Store {
 }
 
 func pageDoc(id, path, space, title, content string, labels ...string) search.Document {
+	t := time.Now().Truncate(time.Second)
 	return search.Document{
 		ID:       id,
 		Type:     search.DocTypePage,
@@ -33,11 +34,12 @@ func pageDoc(id, path, space, title, content string, labels ...string) search.Do
 		Title:    title,
 		Content:  content,
 		Labels:   labels,
-		ModTime:  time.Now().Truncate(time.Second),
+		ModTime:  &t,
 	}
 }
 
 func sectionDoc(id, path, space, title, headingText, content string, headingLevel, line int) search.Document {
+	t := time.Now().Truncate(time.Second)
 	return search.Document{
 		ID:           id,
 		Type:         search.DocTypeSection,
@@ -48,7 +50,7 @@ func sectionDoc(id, path, space, title, headingText, content string, headingLeve
 		Content:      content,
 		HeadingLevel: headingLevel,
 		Line:         line,
-		ModTime:      time.Now().Truncate(time.Second),
+		ModTime:      &t,
 	}
 }
 
@@ -142,7 +144,7 @@ func TestSearchReturnsAllFieldsRoundTrip(t *testing.T) {
 		HeadingLevel: 0,
 		Language:     "",
 		Line:         0,
-		ModTime:      modTime,
+		ModTime:      &modTime,
 	}
 	mustIndex(t, s, doc)
 

@@ -189,17 +189,22 @@ func (s *Store) Close() error {
 // docToMap converts a search.Document to a flat map for Bleve indexing.
 func docToMap(d search.Document) map[string]interface{} {
 	m := map[string]interface{}{
-		"type":              d.Type,
-		"path":              d.Path,
-		"page_id":           d.PageID,
-		"title":             d.Title,
-		"space_key":         d.SpaceKey,
-		"content":           d.Content,
-		"heading_text":      d.HeadingText,
-		"heading_level":     float64(d.HeadingLevel),
-		"language":          d.Language,
-		"line":              float64(d.Line),
-		"mod_time":          d.ModTime,
+		"type":          d.Type,
+		"path":          d.Path,
+		"page_id":       d.PageID,
+		"title":         d.Title,
+		"space_key":     d.SpaceKey,
+		"content":       d.Content,
+		"heading_text":  d.HeadingText,
+		"heading_level": float64(d.HeadingLevel),
+		"language":      d.Language,
+		"line":          float64(d.Line),
+		"mod_time": func() interface{} {
+			if d.ModTime != nil {
+				return *d.ModTime
+			}
+			return nil
+		}(),
 		"heading_path_text": strings.Join(d.HeadingPath, " / "),
 	}
 
@@ -251,7 +256,7 @@ func mapToDoc(id string, fields map[string]interface{}) (search.Document, error)
 	}
 	if v, ok := fields["mod_time"]; ok {
 		if t, err := parseTimeField(v); err == nil {
-			d.ModTime = t
+			d.ModTime = &t
 		}
 	}
 	if v, ok := fields["labels"]; ok {

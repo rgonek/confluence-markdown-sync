@@ -177,7 +177,7 @@ func (ix *Indexer) indexFile(absPath, docPath, spaceKey string) (int, error) {
 		SpaceKey: spaceKey,
 		Labels:   labels,
 		Content:  mdDoc.Body,
-		ModTime:  modTime,
+		ModTime:  &modTime,
 	})
 
 	// 2. Section and code-block documents.
@@ -197,7 +197,7 @@ func (ix *Indexer) indexFile(absPath, docPath, spaceKey string) (int, error) {
 			HeadingText:  sec.HeadingText,
 			HeadingLevel: sec.HeadingLevel,
 			Line:         sec.Line,
-			ModTime:      modTime,
+			ModTime:      &modTime,
 		})
 	}
 
@@ -216,7 +216,7 @@ func (ix *Indexer) indexFile(absPath, docPath, spaceKey string) (int, error) {
 			HeadingLevel: cb.HeadingLevel,
 			Language:     cb.Language,
 			Line:         cb.Line,
-			ModTime:      modTime,
+			ModTime:      &modTime,
 		})
 	}
 

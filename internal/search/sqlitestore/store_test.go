@@ -33,7 +33,7 @@ func sampleDocs() []search.Document {
 			SpaceKey: "DEV",
 			Labels:   []string{"architecture", "security"},
 			Content:  "This page covers the security architecture and OAuth2 flows.",
-			ModTime:  now,
+			ModTime:  &now,
 		},
 		{
 			ID:           "section:DEV/overview.md:5",
@@ -48,7 +48,7 @@ func sampleDocs() []search.Document {
 			HeadingLevel: 2,
 			HeadingPath:  []string{"# Security Overview", "## OAuth2 Flow"},
 			Line:         5,
-			ModTime:      now,
+			ModTime:      &now,
 		},
 		{
 			ID:           "code:DEV/overview.md:12",
@@ -64,7 +64,7 @@ func sampleDocs() []search.Document {
 			HeadingPath:  []string{"# Security Overview", "## OAuth2 Flow", "### Token Refresh"},
 			Language:     "go",
 			Line:         12,
-			ModTime:      now,
+			ModTime:      &now,
 		},
 		{
 			ID:       "page:OPS/deploy.md",
@@ -75,7 +75,7 @@ func sampleDocs() []search.Document {
 			SpaceKey: "OPS",
 			Labels:   []string{"ops", "deployment"},
 			Content:  "How to deploy the application to production.",
-			ModTime:  now,
+			ModTime:  &now,
 		},
 	}
 }
@@ -94,6 +94,94 @@ func TestStore_IndexAndSearch(t *testing.T) {
 	}
 	if len(results) == 0 {
 		t.Fatal("expected at least one result for 'OAuth2'")
+	}
+}
+
+func TestStore_SearchStripsSpecialCharacters(t *testing.T) {
+	s := newTestStore(t)
+	docs := sampleDocs()
+
+	docs = append(docs, search.Document{
+		ID:       "page:OPS/events.md",
+		Type:     search.DocTypePage,
+		Path:     "OPS/events.md",
+		PageID:   "777777",
+		Title:    "Events API",
+		SpaceKey: "OPS",
+		Content:  "POST /v2/events endpoint details and payloads.",
+	})
+
+	if err := s.Index(docs); err != nil {
+		t.Fatalf("Index: %v", err)
+	}
+
+	results, err := s.Search(search.SearchOptions{Query: "POST /v2/events"})
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	if len(results) == 0 {
+		t.Fatal("expected results for query with special characters")
+	}
+}
+
+func TestNormalizeFTSQuery(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		input   string
+		want    string
+		wantErr bool
+	}{
+		{
+			name:  "slashes",
+			input: "POST /v2/events",
+			want:  "POST v2 events",
+		},
+		{
+			name:  "hyphen",
+			input: "Onboarding to On-Call guide",
+			want:  "Onboarding to On Call guide",
+		},
+		{
+			name:  "punctuation",
+			input: "auth:token (refresh)",
+			want:  "auth token refresh",
+		},
+		{
+			name:  "dots and quotes",
+			input: `"v2.0" endpoint`,
+			want:  "v2 0 endpoint",
+		},
+		{
+			name:  "underscore",
+			input: "api_events_v2",
+			want:  "api events v2",
+		},
+		{
+			name:    "only symbols",
+			input:   "/-()",
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := normalizeFTSQuery(tt.input)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("expected error, got nil")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("normalizeFTSQuery: %v", err)
+			}
+			if got != tt.want {
+				t.Fatalf("normalizeFTSQuery(%q) = %q, want %q", tt.input, got, tt.want)
+			}
+		})
 	}
 }
 
