@@ -99,7 +99,7 @@ ON CONFLICT(id) DO UPDATE SET
 			return fmt.Errorf("sqlitestore.Index marshal heading_path: %w", err)
 		}
 		modTimeStr := ""
-		if !d.ModTime.IsZero() {
+		if d.ModTime != nil {
 			modTimeStr = d.ModTime.UTC().Format(time.RFC3339)
 		}
 		_, err = stmt.Exec(
@@ -237,7 +237,7 @@ LIMIT ?`, whereExpr)
 		}
 		if modTimeStr != "" {
 			if t, err := time.Parse(time.RFC3339, modTimeStr); err == nil {
-				doc.ModTime = t
+				doc.ModTime = &t
 			}
 		}
 

@@ -21,48 +21,48 @@ const (
 // so that filtering never requires a join.
 type Document struct {
 	// ID is a composite, globally unique key.
-	ID string
+	ID string `json:"id,omitempty"`
 
 	// Type is DocTypePage, DocTypeSection, or DocTypeCode.
-	Type string
+	Type string `json:"type,omitempty"`
 
 	// Path is the repository-relative path with forward slashes, e.g. "DEV/overview.md".
-	Path string
+	Path string `json:"path,omitempty"`
 
 	// PageID is the Confluence page identifier from frontmatter (may be empty for new files).
-	PageID string
+	PageID string `json:"page_id,omitempty"`
 
 	// Title is the Confluence page title from frontmatter.
-	Title string
+	Title string `json:"title,omitempty"`
 
 	// SpaceKey is the Confluence space key from frontmatter.
-	SpaceKey string
+	SpaceKey string `json:"space_key,omitempty"`
 
 	// Labels are Confluence page labels, normalised (lowercase, trimmed, deduplicated).
-	Labels []string
+	Labels []string `json:"labels,omitempty"`
 
 	// Content holds the searchable text: full body for page docs, heading-section text for
 	// section docs, and raw code content for code docs.
-	Content string
+	Content string `json:"content,omitempty"`
 
 	// HeadingPath is the ordered heading hierarchy from root to the section/code block,
 	// e.g. ["# Overview", "## Auth Flow", "### Token Refresh"].
-	HeadingPath []string
+	HeadingPath []string `json:"heading_path,omitempty"`
 
 	// HeadingText is the innermost heading label (for section/code docs).
-	HeadingText string
+	HeadingText string `json:"heading_text,omitempty"`
 
 	// HeadingLevel is the Markdown heading level (1–6) of HeadingText; 0 for page docs.
-	HeadingLevel int
+	HeadingLevel int `json:"heading_level,omitempty"`
 
 	// Language is the fenced code block info string (e.g. "go", "sql"); empty for non-code docs.
-	Language string
+	Language string `json:"language,omitempty"`
 
 	// Line is the 1-based start line in the source file (0 for page docs).
-	Line int
+	Line int `json:"line,omitempty"`
 
 	// ModTime is the last modification time of the source file.
-	ModTime time.Time
+	ModTime *time.Time `json:"mod_time,omitempty"`
 }
 
 // SearchOptions controls a full-text search query.
@@ -90,11 +90,11 @@ type SearchOptions struct {
 // SearchResult is a single match returned by Store.Search.
 type SearchResult struct {
 	// Document is the full indexed document.
-	Document Document
+	Document Document `json:"document"`
 
 	// Score is a backend-specific relevance score (higher = more relevant).
-	Score float64
+	Score float64 `json:"score,omitempty"`
 
 	// Snippet is a short contextual excerpt with the matched terms highlighted.
-	Snippet string
+	Snippet string `json:"snippet,omitempty"`
 }
