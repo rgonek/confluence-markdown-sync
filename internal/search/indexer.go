@@ -169,15 +169,19 @@ func (ix *Indexer) indexFile(absPath, docPath, spaceKey string) (int, error) {
 
 	// 1. Page document: full body as Content for FTS across entire page.
 	docs = append(docs, Document{
-		ID:       "page:" + docPath,
-		Type:     DocTypePage,
-		Path:     docPath,
-		PageID:   fm.ID,
-		Title:    fm.Title,
-		SpaceKey: spaceKey,
-		Labels:   labels,
-		Content:  mdDoc.Body,
-		ModTime:  &modTime,
+		ID:        "page:" + docPath,
+		Type:      DocTypePage,
+		Path:      docPath,
+		PageID:    fm.ID,
+		Title:     fm.Title,
+		SpaceKey:  spaceKey,
+		Labels:    labels,
+		Content:   mdDoc.Body,
+		ModTime:   &modTime,
+		CreatedBy: fm.CreatedBy,
+		CreatedAt: normalizeDate(fm.CreatedAt),
+		UpdatedBy: fm.UpdatedBy,
+		UpdatedAt: normalizeDate(fm.UpdatedAt),
 	})
 
 	// 2. Section and code-block documents.
@@ -198,6 +202,10 @@ func (ix *Indexer) indexFile(absPath, docPath, spaceKey string) (int, error) {
 			HeadingLevel: sec.HeadingLevel,
 			Line:         sec.Line,
 			ModTime:      &modTime,
+			CreatedBy:    fm.CreatedBy,
+			CreatedAt:    normalizeDate(fm.CreatedAt),
+			UpdatedBy:    fm.UpdatedBy,
+			UpdatedAt:    normalizeDate(fm.UpdatedAt),
 		})
 	}
 
@@ -217,6 +225,10 @@ func (ix *Indexer) indexFile(absPath, docPath, spaceKey string) (int, error) {
 			Language:     cb.Language,
 			Line:         cb.Line,
 			ModTime:      &modTime,
+			CreatedBy:    fm.CreatedBy,
+			CreatedAt:    normalizeDate(fm.CreatedAt),
+			UpdatedBy:    fm.UpdatedBy,
+			UpdatedAt:    normalizeDate(fm.UpdatedAt),
 		})
 	}
 
@@ -224,4 +236,20 @@ func (ix *Indexer) indexFile(absPath, docPath, spaceKey string) (int, error) {
 		return 0, fmt.Errorf("store index for %s: %w", docPath, err)
 	}
 	return len(docs), nil
+}
+
+// normalizeDate attempts to parse s using common date/datetime layouts and returns
+// an RFC3339-formatted string in UTC. Returns s unchanged if it is already RFC3339,
+// or the original string if it cannot be parsed at all.
+func normalizeDate(s string) string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return ""
+	}
+	for _, layout := range []string{time.RFC3339, "2006-01-02T15:04:05Z", "2006-01-02"} {
+		if t, err := time.Parse(layout, s); err == nil {
+			return t.UTC().Format(time.RFC3339)
+		}
+	}
+	return s
 }
