@@ -199,7 +199,7 @@ func docToMap(d search.Document) map[string]interface{} {
 		"heading_level":     float64(d.HeadingLevel),
 		"language":          d.Language,
 		"line":              float64(d.Line),
-		"mod_time":          d.ModTime,
+		"mod_time":          func() interface{} { if d.ModTime != nil { return *d.ModTime }; return nil }(),
 		"heading_path_text": strings.Join(d.HeadingPath, " / "),
 	}
 
@@ -251,7 +251,7 @@ func mapToDoc(id string, fields map[string]interface{}) (search.Document, error)
 	}
 	if v, ok := fields["mod_time"]; ok {
 		if t, err := parseTimeField(v); err == nil {
-			d.ModTime = t
+			d.ModTime = &t
 		}
 	}
 	if v, ok := fields["labels"]; ok {

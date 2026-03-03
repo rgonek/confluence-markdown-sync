@@ -33,7 +33,7 @@ func sampleDocs() []search.Document {
 			SpaceKey: "DEV",
 			Labels:   []string{"architecture", "security"},
 			Content:  "This page covers the security architecture and OAuth2 flows.",
-			ModTime:  now,
+			ModTime:  &now,
 		},
 		{
 			ID:           "section:DEV/overview.md:5",
@@ -48,7 +48,7 @@ func sampleDocs() []search.Document {
 			HeadingLevel: 2,
 			HeadingPath:  []string{"# Security Overview", "## OAuth2 Flow"},
 			Line:         5,
-			ModTime:      now,
+			ModTime:      &now,
 		},
 		{
 			ID:           "code:DEV/overview.md:12",
@@ -64,7 +64,7 @@ func sampleDocs() []search.Document {
 			HeadingPath:  []string{"# Security Overview", "## OAuth2 Flow", "### Token Refresh"},
 			Language:     "go",
 			Line:         12,
-			ModTime:      now,
+			ModTime:      &now,
 		},
 		{
 			ID:       "page:OPS/deploy.md",
@@ -75,7 +75,7 @@ func sampleDocs() []search.Document {
 			SpaceKey: "OPS",
 			Labels:   []string{"ops", "deployment"},
 			Content:  "How to deploy the application to production.",
-			ModTime:  now,
+			ModTime:  &now,
 		},
 	}
 }
