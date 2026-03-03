@@ -42,6 +42,12 @@ func TestNewSearchCmd_Flags(t *testing.T) {
 		"list-labels",
 		"list-spaces",
 		"result-detail",
+		"created-by",
+		"updated-by",
+		"created-after",
+		"created-before",
+		"updated-after",
+		"updated-before",
 	}
 
 	for _, name := range expectedFlags {
@@ -631,5 +637,151 @@ func TestRunSearch_ConfigFileEngine(t *testing.T) {
 
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("command error: %v", err)
+	}
+}
+
+// --- author/date filter tests ---
+
+func TestSearch_CreatedByFlag(t *testing.T) {
+	runParallelCommandTest(t)
+
+	repo, store := setupSearchTestRepo(t)
+
+	docs := []search.Document{
+		{
+			ID: "page:DEV/a.md", Type: search.DocTypePage,
+			Path: "DEV/a.md", SpaceKey: "DEV", Title: "Alice Doc",
+			Content: "content", CreatedBy: "alice",
+		},
+		{
+			ID: "page:DEV/b.md", Type: search.DocTypePage,
+			Path: "DEV/b.md", SpaceKey: "DEV", Title: "Bob Doc",
+			Content: "content", CreatedBy: "bob",
+		},
+	}
+	if err := store.Index(docs); err != nil {
+		t.Fatalf("index: %v", err)
+	}
+	if err := store.UpdateMeta(); err != nil {
+		t.Fatalf("update meta: %v", err)
+	}
+
+	chdirRepo(t, repo)
+
+	cmd := newSearchCmd()
+	out := new(bytes.Buffer)
+	cmd.SetOut(out)
+	cmd.SetErr(new(bytes.Buffer))
+	cmd.SetArgs([]string{"--created-by", "alice", "--format", "json", "--engine", "sqlite"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	got := out.String()
+	if !strings.Contains(got, "alice") {
+		t.Errorf("expected alice in output, got: %s", got)
+	}
+	if strings.Contains(got, "bob") {
+		t.Errorf("expected bob NOT in output, got: %s", got)
+	}
+}
+
+func TestSearch_UpdatedByFlag(t *testing.T) {
+	runParallelCommandTest(t)
+
+	repo, store := setupSearchTestRepo(t)
+
+	docs := []search.Document{
+		{
+			ID: "page:DEV/x.md", Type: search.DocTypePage,
+			Path: "DEV/x.md", SpaceKey: "DEV", Title: "X",
+			Content: "content", UpdatedBy: "carol",
+		},
+		{
+			ID: "page:DEV/y.md", Type: search.DocTypePage,
+			Path: "DEV/y.md", SpaceKey: "DEV", Title: "Y",
+			Content: "content", UpdatedBy: "dave",
+		},
+	}
+	if err := store.Index(docs); err != nil {
+		t.Fatalf("index: %v", err)
+	}
+	if err := store.UpdateMeta(); err != nil {
+		t.Fatalf("update meta: %v", err)
+	}
+
+	chdirRepo(t, repo)
+
+	cmd := newSearchCmd()
+	out := new(bytes.Buffer)
+	cmd.SetOut(out)
+	cmd.SetErr(new(bytes.Buffer))
+	cmd.SetArgs([]string{"--updated-by", "carol", "--format", "json", "--engine", "sqlite"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	got := out.String()
+	if !strings.Contains(got, "carol") {
+		t.Errorf("expected carol in output, got: %s", got)
+	}
+	if strings.Contains(got, "dave") {
+		t.Errorf("expected dave NOT in output, got: %s", got)
+	}
+}
+
+// --- normalizeDateBound unit tests ---
+
+func TestNormalizeDateBound_Empty(t *testing.T) {
+	if got := normalizeDateBound("", false); got != "" {
+		t.Errorf("expected empty, got %q", got)
+	}
+}
+
+func TestNormalizeDateBound_RFC3339Passthrough(t *testing.T) {
+	s := "2024-06-15T12:00:00Z"
+	if got := normalizeDateBound(s, false); got != s {
+		t.Errorf("expected %q unchanged, got %q", s, got)
+	}
+}
+
+func TestNormalizeDateBound_DateStart(t *testing.T) {
+	got := normalizeDateBound("2024-06-15", false)
+	want := "2024-06-15T00:00:00Z"
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestNormalizeDateBound_DateEnd(t *testing.T) {
+	got := normalizeDateBound("2024-06-15", true)
+	want := "2024-06-15T23:59:59Z"
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestNormalizeDateBound_UnknownPassthrough(t *testing.T) {
+	s := "not-a-date"
+	if got := normalizeDateBound(s, false); got != s {
+		t.Errorf("expected %q passed through, got %q", s, got)
+	}
+}
+
+// --- shortDate unit tests ---
+
+func TestShortDate_RFC3339(t *testing.T) {
+	got := shortDate("2024-06-15T12:00:00Z")
+	if got != "2024-06-15" {
+		t.Errorf("got %q, want 2024-06-15", got)
+	}
+}
+
+func TestShortDate_ShortString(t *testing.T) {
+	got := shortDate("2024")
+	if got != "2024" {
+		t.Errorf("short string: got %q, want %q", got, "2024")
 	}
 }

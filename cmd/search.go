@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/rgonek/confluence-markdown-sync/internal/config"
 	"github.com/rgonek/confluence-markdown-sync/internal/search"
@@ -20,16 +21,22 @@ const searchIndexDir = ".confluence-search-index"
 
 func newSearchCmd() *cobra.Command {
 	var (
-		flagSearchSpace        string
-		flagSearchLabels       []string
-		flagSearchHeading      string
-		flagSearchFormat       string
-		flagSearchLimit        int
-		flagSearchReindex      bool
-		flagSearchEngine       string
-		flagSearchListLabels   bool
-		flagSearchListSpaces   bool
-		flagSearchResultDetail string
+		flagSearchSpace         string
+		flagSearchLabels        []string
+		flagSearchHeading       string
+		flagSearchFormat        string
+		flagSearchLimit         int
+		flagSearchReindex       bool
+		flagSearchEngine        string
+		flagSearchListLabels    bool
+		flagSearchListSpaces    bool
+		flagSearchResultDetail  string
+		flagSearchCreatedBy     string
+		flagSearchUpdatedBy     string
+		flagSearchCreatedAfter  string
+		flagSearchCreatedBefore string
+		flagSearchUpdatedAfter  string
+		flagSearchUpdatedBefore string
 	)
 
 	cmd := &cobra.Command{
@@ -52,16 +59,22 @@ Examples:
 				query = args[0]
 			}
 			return runSearch(cmd, query, searchRunOptions{
-				space:        flagSearchSpace,
-				labels:       flagSearchLabels,
-				heading:      flagSearchHeading,
-				format:       flagSearchFormat,
-				limit:        flagSearchLimit,
-				reindex:      flagSearchReindex,
-				engine:       flagSearchEngine,
-				listLabels:   flagSearchListLabels,
-				listSpaces:   flagSearchListSpaces,
-				resultDetail: flagSearchResultDetail,
+				space:         flagSearchSpace,
+				labels:        flagSearchLabels,
+				heading:       flagSearchHeading,
+				format:        flagSearchFormat,
+				limit:         flagSearchLimit,
+				reindex:       flagSearchReindex,
+				engine:        flagSearchEngine,
+				listLabels:    flagSearchListLabels,
+				listSpaces:    flagSearchListSpaces,
+				resultDetail:  flagSearchResultDetail,
+				createdBy:     flagSearchCreatedBy,
+				updatedBy:     flagSearchUpdatedBy,
+				createdAfter:  flagSearchCreatedAfter,
+				createdBefore: flagSearchCreatedBefore,
+				updatedAfter:  flagSearchUpdatedAfter,
+				updatedBefore: flagSearchUpdatedBefore,
 			})
 		},
 	}
@@ -76,21 +89,33 @@ Examples:
 	cmd.Flags().BoolVar(&flagSearchListLabels, "list-labels", false, "List all indexed labels and exit")
 	cmd.Flags().BoolVar(&flagSearchListSpaces, "list-spaces", false, "List all indexed spaces and exit")
 	cmd.Flags().StringVar(&flagSearchResultDetail, "result-detail", "", `Result verbosity: "full" (default), "standard", or "minimal"`)
+	cmd.Flags().StringVar(&flagSearchCreatedBy, "created-by", "", "Filter to pages created by this user (exact match)")
+	cmd.Flags().StringVar(&flagSearchUpdatedBy, "updated-by", "", "Filter to pages last updated by this user (exact match)")
+	cmd.Flags().StringVar(&flagSearchCreatedAfter, "created-after", "", "Filter to pages created on or after this date (YYYY-MM-DD or RFC3339)")
+	cmd.Flags().StringVar(&flagSearchCreatedBefore, "created-before", "", "Filter to pages created on or before this date")
+	cmd.Flags().StringVar(&flagSearchUpdatedAfter, "updated-after", "", "Filter to pages updated on or after this date")
+	cmd.Flags().StringVar(&flagSearchUpdatedBefore, "updated-before", "", "Filter to pages updated on or before this date")
 
 	return cmd
 }
 
 type searchRunOptions struct {
-	space        string
-	labels       []string
-	heading      string
-	format       string
-	limit        int
-	reindex      bool
-	engine       string
-	listLabels   bool
-	listSpaces   bool
-	resultDetail string
+	space         string
+	labels        []string
+	heading       string
+	format        string
+	limit         int
+	reindex       bool
+	engine        string
+	listLabels    bool
+	listSpaces    bool
+	resultDetail  string
+	createdBy     string
+	updatedBy     string
+	createdAfter  string
+	createdBefore string
+	updatedAfter  string
+	updatedBefore string
 }
 
 func runSearch(cmd *cobra.Command, query string, opts searchRunOptions) error {
@@ -160,7 +185,11 @@ func runSearch(cmd *cobra.Command, query string, opts searchRunOptions) error {
 		return printSearchStringList(out, spaces, format)
 	}
 
-	if query == "" && !opts.listLabels && !opts.listSpaces {
+	hasFilter := opts.createdBy != "" || opts.updatedBy != "" ||
+		opts.createdAfter != "" || opts.createdBefore != "" ||
+		opts.updatedAfter != "" || opts.updatedBefore != "" ||
+		opts.space != "" || len(opts.labels) > 0 || opts.heading != ""
+	if query == "" && !opts.listLabels && !opts.listSpaces && !hasFilter {
 		return fmt.Errorf("search: QUERY argument is required (or use --list-labels / --list-spaces)")
 	}
 
@@ -170,6 +199,12 @@ func runSearch(cmd *cobra.Command, query string, opts searchRunOptions) error {
 		Labels:        opts.labels,
 		HeadingFilter: opts.heading,
 		Limit:         limit,
+		CreatedBy:     opts.createdBy,
+		UpdatedBy:     opts.updatedBy,
+		CreatedAfter:  normalizeDateBound(opts.createdAfter, false),
+		CreatedBefore: normalizeDateBound(opts.createdBefore, true),
+		UpdatedAfter:  normalizeDateBound(opts.updatedAfter, false),
+		UpdatedBefore: normalizeDateBound(opts.updatedBefore, true),
 	})
 	if err != nil {
 		return fmt.Errorf("search: query: %w", err)
@@ -180,6 +215,34 @@ func runSearch(cmd *cobra.Command, query string, opts searchRunOptions) error {
 		projected[i] = projectResult(r, detail)
 	}
 	return printSearchResults(out, projected, format)
+}
+
+// normalizeDateBound normalizes a user-supplied date string to RFC3339 for store queries.
+// YYYY-MM-DD is expanded: endOfDay=true → T23:59:59Z, endOfDay=false → T00:00:00Z.
+// Already-valid RFC3339 strings are returned unchanged. Unrecognized formats are passed through.
+func normalizeDateBound(s string, endOfDay bool) string {
+	if s == "" {
+		return ""
+	}
+	if _, err := time.Parse(time.RFC3339, s); err == nil {
+		return s
+	}
+	if _, err := time.Parse("2006-01-02", s); err == nil {
+		if endOfDay {
+			return s + "T23:59:59Z"
+		}
+		return s + "T00:00:00Z"
+	}
+	return s
+}
+
+// shortDate returns the YYYY-MM-DD prefix of an RFC3339 string, or the full string
+// if it is shorter than 10 characters.
+func shortDate(s string) string {
+	if len(s) >= 10 {
+		return s[:10]
+	}
+	return s
 }
 
 // openSearchStore opens the appropriate Store backend based on engine name.
@@ -236,6 +299,24 @@ func printSearchResults(out io.Writer, results []search.SearchResult, format str
 			titleStr = " - " + doc.Title
 		}
 		_, _ = fmt.Fprintf(out, "%s%s%s\n", doc.Path, titleStr, labelsStr)
+
+		// Metadata byline (only when any field is present)
+		var metaParts []string
+		if doc.CreatedBy != "" {
+			metaParts = append(metaParts, "Created by: "+doc.CreatedBy)
+		}
+		if doc.CreatedAt != "" {
+			metaParts = append(metaParts, "Created: "+shortDate(doc.CreatedAt))
+		}
+		if doc.UpdatedBy != "" {
+			metaParts = append(metaParts, "Updated by: "+doc.UpdatedBy)
+		}
+		if doc.UpdatedAt != "" {
+			metaParts = append(metaParts, "Updated: "+shortDate(doc.UpdatedAt))
+		}
+		if len(metaParts) > 0 {
+			_, _ = fmt.Fprintf(out, "  %s\n", strings.Join(metaParts, "  "))
+		}
 
 		// Section context
 		if doc.Type != search.DocTypePage && len(doc.HeadingPath) > 0 {
@@ -314,6 +395,10 @@ func projectResult(r search.SearchResult, detail string) search.SearchResult {
 			HeadingPath: r.Document.HeadingPath,
 			HeadingText: r.Document.HeadingText,
 			Line:        r.Document.Line,
+			CreatedBy:   r.Document.CreatedBy,
+			UpdatedBy:   r.Document.UpdatedBy,
+			CreatedAt:   r.Document.CreatedAt,
+			UpdatedAt:   r.Document.UpdatedAt,
 		}
 		return r
 	case "minimal":
