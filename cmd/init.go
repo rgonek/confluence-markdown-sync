@@ -56,6 +56,13 @@ In this mode, the agent is responsible for the entire lifecycle.
   - ` + "`conf push [SPACE] --on-conflict=pull-merge`" + ` — Publish changes.
 - **Automation**: Use ` + "`--yes`" + ` and ` + "`--non-interactive`" + ` in CI/CD or automated scripts.
 
+### 3. Search (Read-Only, Zero API Calls)
+Use ` + "`conf search`" + ` to find content without reading entire files.
+- **Workflow**: ` + "`conf search \"term\" --format json | <process>`" + ` for structured reads.
+- **Filters**: ` + "`--space KEY`" + `, ` + "`--label LABEL`" + `, ` + "`--heading TEXT`" + `.
+- **Facets**: ` + "`conf search --list-labels`" + `, ` + "`conf search --list-spaces`" + `.
+- **Index**: built automatically on first use; updated after each ` + "`conf pull`" + `.
+
 ## Core Invariants
 - **Source of Truth**: Confluence is the primary source of truth for IDs and versions. Local Markdown is the source of truth for content between syncs.
 - **Validation**: ` + "`push`" + ` will fail if ` + "`validate`" + ` fails.
