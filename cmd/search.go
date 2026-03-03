@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/rgonek/confluence-markdown-sync/internal/config"
 	"github.com/rgonek/confluence-markdown-sync/internal/search"
 	"github.com/rgonek/confluence-markdown-sync/internal/search/blevestore"
 	"github.com/rgonek/confluence-markdown-sync/internal/search/sqlitestore"
@@ -19,15 +20,16 @@ const searchIndexDir = ".confluence-search-index"
 
 func newSearchCmd() *cobra.Command {
 	var (
-		flagSearchSpace      string
-		flagSearchLabels     []string
-		flagSearchHeading    string
-		flagSearchFormat     string
-		flagSearchLimit      int
-		flagSearchReindex    bool
-		flagSearchEngine     string
-		flagSearchListLabels bool
-		flagSearchListSpaces bool
+		flagSearchSpace        string
+		flagSearchLabels       []string
+		flagSearchHeading      string
+		flagSearchFormat       string
+		flagSearchLimit        int
+		flagSearchReindex      bool
+		flagSearchEngine       string
+		flagSearchListLabels   bool
+		flagSearchListSpaces   bool
+		flagSearchResultDetail string
 	)
 
 	cmd := &cobra.Command{
@@ -50,15 +52,16 @@ Examples:
 				query = args[0]
 			}
 			return runSearch(cmd, query, searchRunOptions{
-				space:      flagSearchSpace,
-				labels:     flagSearchLabels,
-				heading:    flagSearchHeading,
-				format:     flagSearchFormat,
-				limit:      flagSearchLimit,
-				reindex:    flagSearchReindex,
-				engine:     flagSearchEngine,
-				listLabels: flagSearchListLabels,
-				listSpaces: flagSearchListSpaces,
+				space:        flagSearchSpace,
+				labels:       flagSearchLabels,
+				heading:      flagSearchHeading,
+				format:       flagSearchFormat,
+				limit:        flagSearchLimit,
+				reindex:      flagSearchReindex,
+				engine:       flagSearchEngine,
+				listLabels:   flagSearchListLabels,
+				listSpaces:   flagSearchListSpaces,
+				resultDetail: flagSearchResultDetail,
 			})
 		},
 	}
@@ -72,20 +75,22 @@ Examples:
 	cmd.Flags().StringVar(&flagSearchEngine, "engine", "sqlite", `Search backend: "sqlite" or "bleve"`)
 	cmd.Flags().BoolVar(&flagSearchListLabels, "list-labels", false, "List all indexed labels and exit")
 	cmd.Flags().BoolVar(&flagSearchListSpaces, "list-spaces", false, "List all indexed spaces and exit")
+	cmd.Flags().StringVar(&flagSearchResultDetail, "result-detail", "", `Result verbosity: "full" (default), "standard", or "minimal"`)
 
 	return cmd
 }
 
 type searchRunOptions struct {
-	space      string
-	labels     []string
-	heading    string
-	format     string
-	limit      int
-	reindex    bool
-	engine     string
-	listLabels bool
-	listSpaces bool
+	space        string
+	labels       []string
+	heading      string
+	format       string
+	limit        int
+	reindex      bool
+	engine       string
+	listLabels   bool
+	listSpaces   bool
+	resultDetail string
 }
 
 func runSearch(cmd *cobra.Command, query string, opts searchRunOptions) error {
@@ -96,7 +101,27 @@ func runSearch(cmd *cobra.Command, query string, opts searchRunOptions) error {
 		return err
 	}
 
-	store, err := openSearchStore(opts.engine, repoRoot)
+	searchCfg, err := config.LoadSearchConfig(repoRoot)
+	if err != nil {
+		return fmt.Errorf("search: load config: %w", err)
+	}
+
+	engine := searchCfg.Engine
+	if cmd.Flags().Changed("engine") {
+		engine = opts.engine
+	}
+
+	limit := searchCfg.Limit
+	if cmd.Flags().Changed("limit") {
+		limit = opts.limit
+	}
+
+	detail := searchCfg.ResultDetail
+	if cmd.Flags().Changed("result-detail") {
+		detail = opts.resultDetail
+	}
+
+	store, err := openSearchStore(engine, repoRoot)
 	if err != nil {
 		return err
 	}
@@ -144,13 +169,17 @@ func runSearch(cmd *cobra.Command, query string, opts searchRunOptions) error {
 		SpaceKey:      opts.space,
 		Labels:        opts.labels,
 		HeadingFilter: opts.heading,
-		Limit:         opts.limit,
+		Limit:         limit,
 	})
 	if err != nil {
 		return fmt.Errorf("search: query: %w", err)
 	}
 
-	return printSearchResults(out, results, format)
+	projected := make([]search.SearchResult, len(results))
+	for i, r := range results {
+		projected[i] = projectResult(r, detail)
+	}
+	return printSearchResults(out, projected, format)
 }
 
 // openSearchStore opens the appropriate Store backend based on engine name.
@@ -268,4 +297,35 @@ func printSearchStringList(out io.Writer, items []string, format string) error {
 		_, _ = fmt.Fprintln(out, item)
 	}
 	return nil
+}
+
+// projectResult returns a copy of r with fields zeroed out based on detail level.
+// "full" returns r unchanged. "standard" drops Content, ID, PageID, Type, Language,
+// HeadingLevel, ModTime. "minimal" keeps only Path, HeadingPath, HeadingText, Line,
+// Snippet. Unknown values fall back to "full".
+func projectResult(r search.SearchResult, detail string) search.SearchResult {
+	switch detail {
+	case "standard":
+		r.Document = search.Document{
+			Path:        r.Document.Path,
+			Title:       r.Document.Title,
+			SpaceKey:    r.Document.SpaceKey,
+			Labels:      r.Document.Labels,
+			HeadingPath: r.Document.HeadingPath,
+			HeadingText: r.Document.HeadingText,
+			Line:        r.Document.Line,
+		}
+		return r
+	case "minimal":
+		r.Document = search.Document{
+			Path:        r.Document.Path,
+			HeadingPath: r.Document.HeadingPath,
+			HeadingText: r.Document.HeadingText,
+			Line:        r.Document.Line,
+		}
+		r.Score = 0
+		return r
+	default: // "full" and unknown values
+		return r
+	}
 }
