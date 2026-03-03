@@ -427,3 +427,176 @@ func TestOpenSearchStore_Bleve(t *testing.T) {
 	}
 	defer func() { _ = store.Close() }()
 }
+
+// --- projectResult tests ---
+
+func TestProjectResult_Full(t *testing.T) {
+	r := search.SearchResult{
+		Document: search.Document{
+			ID:           "page:foo.md",
+			Type:         search.DocTypePage,
+			Path:         "DEV/foo.md",
+			PageID:       "123",
+			Title:        "Foo",
+			SpaceKey:     "DEV",
+			Labels:       []string{"a", "b"},
+			Content:      "body text",
+			HeadingPath:  []string{"## H2"},
+			HeadingText:  "H2",
+			HeadingLevel: 2,
+			Language:     "go",
+			Line:         42,
+		},
+		Score:   1.5,
+		Snippet: "...body...",
+	}
+
+	got := projectResult(r, "full")
+	if got.Document.Content != "body text" {
+		t.Errorf("full: Content stripped unexpectedly")
+	}
+	if got.Document.SpaceKey != "DEV" {
+		t.Errorf("full: SpaceKey stripped unexpectedly")
+	}
+	if got.Score != 1.5 {
+		t.Errorf("full: Score stripped unexpectedly")
+	}
+}
+
+func TestProjectResult_Standard(t *testing.T) {
+	r := search.SearchResult{
+		Document: search.Document{
+			ID:           "page:foo.md",
+			Type:         search.DocTypePage,
+			Path:         "DEV/foo.md",
+			PageID:       "123",
+			Title:        "Foo",
+			SpaceKey:     "DEV",
+			Labels:       []string{"a"},
+			Content:      "body text",
+			HeadingPath:  []string{"## H2"},
+			HeadingText:  "H2",
+			HeadingLevel: 2,
+			Language:     "go",
+			Line:         10,
+		},
+		Score:   2.0,
+		Snippet: "...snippet...",
+	}
+
+	got := projectResult(r, "standard")
+
+	// kept fields
+	if got.Document.Path != "DEV/foo.md" {
+		t.Errorf("standard: Path missing")
+	}
+	if got.Document.Title != "Foo" {
+		t.Errorf("standard: Title missing")
+	}
+	if got.Document.SpaceKey != "DEV" {
+		t.Errorf("standard: SpaceKey missing")
+	}
+	if len(got.Document.Labels) != 1 {
+		t.Errorf("standard: Labels missing")
+	}
+	if len(got.Document.HeadingPath) != 1 {
+		t.Errorf("standard: HeadingPath missing")
+	}
+	if got.Document.HeadingText != "H2" {
+		t.Errorf("standard: HeadingText missing")
+	}
+	if got.Document.Line != 10 {
+		t.Errorf("standard: Line missing")
+	}
+	if got.Snippet != "...snippet..." {
+		t.Errorf("standard: Snippet missing")
+	}
+	if got.Score != 2.0 {
+		t.Errorf("standard: Score missing")
+	}
+
+	// stripped fields
+	if got.Document.Content != "" {
+		t.Errorf("standard: Content should be stripped, got %q", got.Document.Content)
+	}
+	if got.Document.ID != "" {
+		t.Errorf("standard: ID should be stripped")
+	}
+	if got.Document.PageID != "" {
+		t.Errorf("standard: PageID should be stripped")
+	}
+	if got.Document.Language != "" {
+		t.Errorf("standard: Language should be stripped")
+	}
+}
+
+func TestProjectResult_Minimal(t *testing.T) {
+	r := search.SearchResult{
+		Document: search.Document{
+			ID:           "section:foo.md:12",
+			Type:         search.DocTypeSection,
+			Path:         "DEV/foo.md",
+			PageID:       "123",
+			Title:        "Foo",
+			SpaceKey:     "DEV",
+			Labels:       []string{"a"},
+			Content:      "body text",
+			HeadingPath:  []string{"## H2"},
+			HeadingText:  "H2",
+			HeadingLevel: 2,
+			Line:         12,
+		},
+		Score:   1.0,
+		Snippet: "...match...",
+	}
+
+	got := projectResult(r, "minimal")
+
+	// kept fields
+	if got.Document.Path != "DEV/foo.md" {
+		t.Errorf("minimal: Path missing")
+	}
+	if len(got.Document.HeadingPath) != 1 {
+		t.Errorf("minimal: HeadingPath missing")
+	}
+	if got.Document.HeadingText != "H2" {
+		t.Errorf("minimal: HeadingText missing")
+	}
+	if got.Document.Line != 12 {
+		t.Errorf("minimal: Line missing")
+	}
+	if got.Snippet != "...match..." {
+		t.Errorf("minimal: Snippet missing")
+	}
+
+	// stripped fields
+	if got.Document.Title != "" {
+		t.Errorf("minimal: Title should be stripped")
+	}
+	if got.Document.SpaceKey != "" {
+		t.Errorf("minimal: SpaceKey should be stripped")
+	}
+	if len(got.Document.Labels) != 0 {
+		t.Errorf("minimal: Labels should be stripped")
+	}
+	if got.Document.Content != "" {
+		t.Errorf("minimal: Content should be stripped")
+	}
+	if got.Score != 0 {
+		t.Errorf("minimal: Score should be stripped")
+	}
+}
+
+func TestProjectResult_UnknownDetailFallsBackToFull(t *testing.T) {
+	r := search.SearchResult{
+		Document: search.Document{
+			Path:    "DEV/foo.md",
+			Content: "body text",
+		},
+		Score: 9.9,
+	}
+	got := projectResult(r, "bogus")
+	if got.Document.Content != "body text" {
+		t.Errorf("unknown detail: should fall back to full, Content stripped")
+	}
+}

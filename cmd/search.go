@@ -269,3 +269,34 @@ func printSearchStringList(out io.Writer, items []string, format string) error {
 	}
 	return nil
 }
+
+// projectResult returns a copy of r with fields zeroed out based on detail level.
+// "full" returns r unchanged. "standard" drops Content, ID, PageID, Type, Language,
+// HeadingLevel, ModTime. "minimal" keeps only Path, HeadingPath, HeadingText, Line,
+// Snippet. Unknown values fall back to "full".
+func projectResult(r search.SearchResult, detail string) search.SearchResult {
+	switch detail {
+	case "standard":
+		r.Document = search.Document{
+			Path:        r.Document.Path,
+			Title:       r.Document.Title,
+			SpaceKey:    r.Document.SpaceKey,
+			Labels:      r.Document.Labels,
+			HeadingPath: r.Document.HeadingPath,
+			HeadingText: r.Document.HeadingText,
+			Line:        r.Document.Line,
+		}
+		return r
+	case "minimal":
+		r.Document = search.Document{
+			Path:        r.Document.Path,
+			HeadingPath: r.Document.HeadingPath,
+			HeadingText: r.Document.HeadingText,
+			Line:        r.Document.Line,
+		}
+		r.Score = 0
+		return r
+	default: // "full" and unknown values
+		return r
+	}
+}
