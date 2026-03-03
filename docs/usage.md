@@ -12,7 +12,7 @@ This guide covers day-to-day usage of `conf`.
 - `diff` previews local vs remote content.
 - `init agents` scaffolds an `AGENTS.md` file for AI-assisted authoring.
 - `relink` rewrites absolute Confluence links to local relative Markdown links.
-- `version` prints the CLI version (`conf version` or `conf --version`).
+- `search` indexes and queries local Markdown files with full-text search (zero API calls).
 
 ## Requirements
 
@@ -155,6 +155,53 @@ Highlights:
 - recovery refs retained on failures,
 - archive deletes require long-task completion (`--archive-task-timeout`, `--archive-task-poll-interval`),
 - `--preflight` for a concise local push plan (change summary + validation) without remote writes.
+
+### `conf search QUERY`
+
+Full-text search over local Markdown files.
+
+Highlights:
+
+- index is built automatically on first use and updated incrementally,
+- two backends available: `--engine sqlite` (default, SQLite FTS5) and `--engine bleve`,
+- index stored in `.confluence-search-index/` (local-only, gitignored),
+- index updated automatically after each `conf pull` (non-fatal),
+- results grouped by file with heading context and snippets,
+- `--format auto` defaults to text on TTY, JSON when piped.
+
+Key flags:
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--space KEY` | | Filter to a specific Confluence space |
+| `--label LABEL` | | Filter by label (repeatable) |
+| `--heading TEXT` | | Restrict to sections under matching headings |
+| `--limit N` | 20 | Maximum number of results |
+| `--reindex` | false | Force full index rebuild |
+| `--engine` | sqlite | Backend: `sqlite` or `bleve` |
+| `--list-labels` | false | List all indexed labels and exit |
+| `--list-spaces` | false | List all indexed spaces and exit |
+| `--format` | auto | Output format: `text`, `json`, or `auto` |
+
+Examples:
+
+```powershell
+# Basic search
+conf search "oauth token refresh"
+
+# Filter by space and label
+conf search "deploy pipeline" --space DEV --label ci
+
+# Restrict to sections under matching headings
+conf search "token" --heading "Authentication"
+
+# Facet discovery
+conf search --list-labels --format json
+conf search --list-spaces
+
+# Agent-friendly (piped → JSON automatically)
+conf search "security review" --format json | ConvertFrom-Json
+```
 
 ## Metadata and State
 

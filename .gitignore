@@ -33,6 +33,7 @@ test-output/
 
 # Local Confluence sync state
 .confluence-state.json
+.confluence-search-index/
 conf
 .claude/
 
