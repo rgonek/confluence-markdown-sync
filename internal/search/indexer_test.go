@@ -32,10 +32,10 @@ func newTestIndexer(t *testing.T) (*search.Indexer, string) {
 func writeMarkdownFile(t *testing.T, repoDir, relPath, content string) {
 	t.Helper()
 	absPath := filepath.Join(repoDir, filepath.FromSlash(relPath))
-	if err := os.MkdirAll(filepath.Dir(absPath), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(absPath), 0o755); err != nil { //nolint:gosec // test data
 		t.Fatalf("mkdir %s: %v", filepath.Dir(absPath), err)
 	}
-	if err := os.WriteFile(absPath, []byte(content), 0o644); err != nil {
+	if err := os.WriteFile(absPath, []byte(content), 0o644); err != nil { //nolint:gosec // test data
 		t.Fatalf("write %s: %v", absPath, err)
 	}
 }
@@ -93,7 +93,7 @@ func TestIndexer_IndexSpace(t *testing.T) {
 	ix, repoDir := newTestIndexer(t)
 
 	spaceDir := filepath.Join(repoDir, "DEV")
-	if err := os.MkdirAll(spaceDir, 0o755); err != nil {
+	if err := os.MkdirAll(spaceDir, 0o755); err != nil { //nolint:gosec // test data
 		t.Fatalf("mkdir: %v", err)
 	}
 	writeMarkdownFile(t, repoDir, "DEV/overview.md", sampleMD)
@@ -240,11 +240,3 @@ func openStoreFromIndexer(t *testing.T, repoDir string) *sqlitestore.Store {
 
 // — compile-time interface check —
 var _ search.Store = (*sqlitestore.Store)(nil)
-
-// — time stub for incremental test —
-func mustNotBeZero(t *testing.T, ts time.Time, label string) {
-	t.Helper()
-	if ts.IsZero() {
-		t.Errorf("%s: expected non-zero time", label)
-	}
-}
