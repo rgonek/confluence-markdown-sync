@@ -125,6 +125,16 @@ func runClean(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 
+	// Remove search index directory if present.
+	searchIndexPath := filepath.Join(client.RootDir, ".confluence-search-index")
+	if _, statErr := os.Stat(searchIndexPath); statErr == nil {
+		if rmErr := os.RemoveAll(searchIndexPath); rmErr != nil {
+			_, _ = fmt.Fprintf(out, "warning: failed to remove search index: %v\n", rmErr)
+		} else {
+			_, _ = fmt.Fprintln(out, "Removed .confluence-search-index/")
+		}
+	}
+
 	_, _ = fmt.Fprintf(out, "clean completed: removed %d worktree(s), deleted %d snapshot ref(s)\n", removedWorktrees, deletedRefs)
 	return nil
 }

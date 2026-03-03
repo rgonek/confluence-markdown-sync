@@ -335,6 +335,10 @@ func runPull(cmd *cobra.Command, target config.Target) (runErr error) {
 
 	_, _ = fmt.Fprintf(out, "pull completed: committed and tagged %s\n", tagName)
 
+	if err := updateSearchIndexForSpace(repoRoot, pullCtx.spaceDir, pullCtx.spaceKey, out); err != nil {
+		_, _ = fmt.Fprintf(out, "warning: search index update failed: %v\n", err)
+	}
+
 	if flagPullRelink {
 		index, err := syncflow.BuildGlobalPageIndex(repoRoot)
 		if err != nil {

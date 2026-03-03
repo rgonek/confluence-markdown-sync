@@ -72,10 +72,25 @@ The agent manages the full sync cycle.
 Validation failures must stop `push` immediately.
 
 ## Command Model
-- Commands: `init`, `pull`, `push`, `validate`, `diff`.
+- Commands: `init`, `pull`, `push`, `validate`, `diff`, `search`.
 - `[TARGET]` parsing rule:
   - Ends with `.md` => file mode.
   - Otherwise => space mode (`SPACE_KEY`).
+
+## Search Command (`conf search`)
+- `conf search QUERY [flags]` runs full-text search over local Markdown files.
+- Two pluggable backends share the `Store` interface: `--engine sqlite` (default, SQLite FTS5) and `--engine bleve` (Bleve scorch).
+- Index lives in `.confluence-search-index/` (gitignored, local-only).
+- Index is updated automatically on `pull` (non-fatal) and incrementally on each `search` invocation.
+- Key flags:
+  - `--space KEY` — filter to a Confluence space.
+  - `--label LABEL` — filter by label (repeatable).
+  - `--heading TEXT` — restrict to sections under matching headings.
+  - `--reindex` — force full rebuild.
+  - `--list-labels` / `--list-spaces` — facet discovery.
+  - `--format text|json|auto` — output format (auto: TTY→text, pipe→json).
+  - `--limit N` (default 20) — max results.
+- Recommended agent workflow: `conf search "term" --format json | <process>` for token-efficient, structured reads.
 
 ## Developer Tooling Requirements
 - Keep a top-level `Makefile` in the repository.
