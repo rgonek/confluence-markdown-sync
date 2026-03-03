@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/rgonek/confluence-markdown-sync/internal/search"
 	_ "modernc.org/sqlite" // SQLite driver registration
@@ -141,8 +142,12 @@ func (s *Store) Search(opts search.SearchOptions) ([]search.SearchResult, error)
 	)
 
 	if opts.Query != "" {
+		safeQuery, err := normalizeFTSQuery(opts.Query)
+		if err != nil {
+			return nil, fmt.Errorf("sqlitestore.Search query normalize: %w", err)
+		}
 		whereClauses = append(whereClauses, "documents_fts MATCH ?")
-		args = append(args, opts.Query)
+		args = append(args, safeQuery)
 	}
 
 	if opts.SpaceKey != "" {
@@ -348,4 +353,18 @@ func marshalJSON(v any) (string, error) {
 		return "", err
 	}
 	return string(b), nil
+}
+
+func normalizeFTSQuery(raw string) (string, error) {
+	sanitized := strings.Map(func(r rune) rune {
+		if unicode.IsLetter(r) || unicode.IsNumber(r) {
+			return r
+		}
+		return ' '
+	}, raw)
+	tokens := strings.Fields(sanitized)
+	if len(tokens) == 0 {
+		return "", fmt.Errorf("query contains no searchable tokens")
+	}
+	return strings.Join(tokens, " "), nil
 }
