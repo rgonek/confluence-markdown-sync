@@ -60,7 +60,7 @@ In this mode, the agent is responsible for the entire lifecycle.
 ### 3. Search (Read-Only, Zero API Calls)
 Use ` + "`conf search`" + ` to find content without reading entire files.
 - **Workflow**: ` + "`conf search \"term\" --format json | <process>`" + ` for structured reads.
-- **Filters**: ` + "`--space KEY`" + `, ` + "`--label LABEL`" + `, ` + "`--heading TEXT`" + `.
+- **Filters**: ` + "`--space KEY`" + `, ` + "`--label LABEL`" + `, ` + "`--heading TEXT`" + `, ` + "`--created-by USER`" + `, ` + "`--updated-by USER`" + `, ` + "`--created-after DATE`" + `, ` + "`--created-before DATE`" + `, ` + "`--updated-after DATE`" + `, ` + "`--updated-before DATE`" + `.
 - **Facets**: ` + "`conf search --list-labels`" + `, ` + "`conf search --list-spaces`" + `.
 - **Index**: built automatically on first use; updated after each ` + "`conf pull`" + `.
 
