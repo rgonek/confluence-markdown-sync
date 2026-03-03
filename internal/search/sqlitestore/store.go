@@ -65,9 +65,10 @@ func (s *Store) Index(docs []search.Document) error {
 	const query = `
 INSERT INTO documents
     (id, type, path, page_id, title, space_key, labels,
-     content, heading_path, heading_text, heading_level, language, line, mod_time)
+     content, heading_path, heading_text, heading_level, language, line, mod_time,
+     created_by, created_at, updated_by, updated_at)
 VALUES
-    (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(id) DO UPDATE SET
     type          = excluded.type,
     path          = excluded.path,
@@ -81,7 +82,11 @@ ON CONFLICT(id) DO UPDATE SET
     heading_level = excluded.heading_level,
     language      = excluded.language,
     line          = excluded.line,
-    mod_time      = excluded.mod_time`
+    mod_time      = excluded.mod_time,
+    created_by    = excluded.created_by,
+    created_at    = excluded.created_at,
+    updated_by    = excluded.updated_by,
+    updated_at    = excluded.updated_at`
 
 	stmt, err := tx.Prepare(query)
 	if err != nil {
@@ -107,6 +112,7 @@ ON CONFLICT(id) DO UPDATE SET
 			d.ID, d.Type, d.Path, d.PageID, d.Title, d.SpaceKey,
 			labelsJSON, d.Content, headingPathJSON, d.HeadingText,
 			d.HeadingLevel, d.Language, d.Line, modTimeStr,
+			d.CreatedBy, d.CreatedAt, d.UpdatedBy, d.UpdatedAt,
 		)
 		if err != nil {
 			return fmt.Errorf("sqlitestore.Index exec for %s: %w", d.ID, err)
@@ -167,6 +173,31 @@ func (s *Store) Search(opts search.SearchOptions) ([]search.SearchResult, error)
 		args = append(args, "%"+opts.HeadingFilter+"%")
 	}
 
+	if opts.CreatedBy != "" {
+		whereClauses = append(whereClauses, "d.created_by = ?")
+		args = append(args, opts.CreatedBy)
+	}
+	if opts.UpdatedBy != "" {
+		whereClauses = append(whereClauses, "d.updated_by = ?")
+		args = append(args, opts.UpdatedBy)
+	}
+	if opts.CreatedAfter != "" {
+		whereClauses = append(whereClauses, "d.created_at >= ?")
+		args = append(args, opts.CreatedAfter)
+	}
+	if opts.CreatedBefore != "" {
+		whereClauses = append(whereClauses, "d.created_at <= ?")
+		args = append(args, opts.CreatedBefore)
+	}
+	if opts.UpdatedAfter != "" {
+		whereClauses = append(whereClauses, "d.updated_at >= ?")
+		args = append(args, opts.UpdatedAfter)
+	}
+	if opts.UpdatedBefore != "" {
+		whereClauses = append(whereClauses, "d.updated_at <= ?")
+		args = append(args, opts.UpdatedBefore)
+	}
+
 	if len(opts.Types) > 0 {
 		placeholders := strings.Repeat("?,", len(opts.Types))
 		placeholders = strings.TrimSuffix(placeholders, ",")
@@ -185,6 +216,7 @@ func (s *Store) Search(opts search.SearchOptions) ([]search.SearchResult, error)
 SELECT d.id, d.type, d.path, d.page_id, d.title, d.space_key,
        d.labels, d.content, d.heading_path, d.heading_text,
        d.heading_level, d.language, d.line, d.mod_time,
+       d.created_by, d.created_at, d.updated_by, d.updated_at,
        fts.rank AS score,
        snippet(documents_fts, 1, '[', ']', '...', 10) AS snippet
 FROM documents_fts fts
@@ -201,6 +233,7 @@ LIMIT ?`, whereExpr)
 SELECT d.id, d.type, d.path, d.page_id, d.title, d.space_key,
        d.labels, d.content, d.heading_path, d.heading_text,
        d.heading_level, d.language, d.line, d.mod_time,
+       d.created_by, d.created_at, d.updated_by, d.updated_at,
        0.0 AS score,
        '' AS snippet
 FROM documents d
@@ -229,7 +262,8 @@ LIMIT ?`, whereExpr)
 			&doc.ID, &doc.Type, &doc.Path, &doc.PageID, &doc.Title,
 			&doc.SpaceKey, &labelsJSON, &doc.Content, &hpathJSON,
 			&doc.HeadingText, &doc.HeadingLevel, &doc.Language, &doc.Line,
-			&modTimeStr, &score, &snippet,
+			&modTimeStr, &doc.CreatedBy, &doc.CreatedAt, &doc.UpdatedBy, &doc.UpdatedAt,
+			&score, &snippet,
 		); err != nil {
 			return nil, fmt.Errorf("sqlitestore.Search scan: %w", err)
 		}
@@ -338,8 +372,56 @@ func (s *Store) LastIndexedAt() (time.Time, error) {
 // — helpers —
 
 func applyDDL(db *sql.DB) error {
+	// Apply the base DDL first (creates tables if they don't exist).
 	if _, err := db.Exec(DDL); err != nil {
 		return err
+	}
+	// Then run column migrations for existing databases.
+	if err := addColumnsIfMissing(db, "documents", map[string]string{
+		"created_by": "TEXT NOT NULL DEFAULT ''",
+		"created_at": "TEXT NOT NULL DEFAULT ''",
+		"updated_by": "TEXT NOT NULL DEFAULT ''",
+		"updated_at": "TEXT NOT NULL DEFAULT ''",
+	}); err != nil {
+		return fmt.Errorf("migration: %w", err)
+	}
+	return nil
+}
+
+// addColumnsIfMissing adds columns to a table only if they are not already present.
+// This is a safe alternative to ALTER TABLE ... ADD COLUMN IF NOT EXISTS for SQLite
+// versions that do not support that syntax.
+func addColumnsIfMissing(db *sql.DB, table string, columns map[string]string) error {
+	rows, err := db.Query(fmt.Sprintf("PRAGMA table_info(%s)", table))
+	if err != nil {
+		return fmt.Errorf("pragma table_info %s: %w", table, err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	existing := make(map[string]bool)
+	for rows.Next() {
+		var cid int
+		var name, colType string
+		var notNull int
+		var dflt sql.NullString
+		var pk int
+		if err := rows.Scan(&cid, &name, &colType, &notNull, &dflt, &pk); err != nil {
+			return fmt.Errorf("scan table_info: %w", err)
+		}
+		existing[name] = true
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+
+	for col, def := range columns {
+		if existing[col] {
+			continue
+		}
+		stmt := fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s", table, col, def)
+		if _, err := db.Exec(stmt); err != nil {
+			return fmt.Errorf("add column %s: %w", col, err)
+		}
 	}
 	return nil
 }

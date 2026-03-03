@@ -206,6 +206,10 @@ func docToMap(d search.Document) map[string]interface{} {
 			return nil
 		}(),
 		"heading_path_text": strings.Join(d.HeadingPath, " / "),
+		"created_by":        d.CreatedBy,
+		"updated_by":        d.UpdatedBy,
+		"created_at":        parseDateString(d.CreatedAt),
+		"updated_at":        parseDateString(d.UpdatedAt),
 	}
 
 	// Index labels as a multi-valued field so Bleve creates one term per label.
@@ -218,6 +222,18 @@ func docToMap(d search.Document) map[string]interface{} {
 	}
 
 	return m
+}
+
+// parseDateString parses an RFC3339 string into time.Time for Bleve datetime fields.
+// Returns nil if s is empty or unparseable.
+func parseDateString(s string) interface{} {
+	if s == "" {
+		return nil
+	}
+	if t, err := time.Parse(time.RFC3339, s); err == nil {
+		return t
+	}
+	return nil
 }
 
 // mapToDoc reconstructs a search.Document from a Bleve hit's Fields map.
@@ -257,6 +273,22 @@ func mapToDoc(id string, fields map[string]interface{}) (search.Document, error)
 	if v, ok := fields["mod_time"]; ok {
 		if t, err := parseTimeField(v); err == nil {
 			d.ModTime = &t
+		}
+	}
+	if v, ok := fields["created_by"]; ok {
+		d.CreatedBy = toString(v)
+	}
+	if v, ok := fields["updated_by"]; ok {
+		d.UpdatedBy = toString(v)
+	}
+	if v, ok := fields["created_at"]; ok {
+		if t, err := parseTimeField(v); err == nil {
+			d.CreatedAt = t.UTC().Format(time.RFC3339)
+		}
+	}
+	if v, ok := fields["updated_at"]; ok {
+		if t, err := parseTimeField(v); err == nil {
+			d.UpdatedAt = t.UTC().Format(time.RFC3339)
 		}
 	}
 	if v, ok := fields["labels"]; ok {
@@ -317,6 +349,64 @@ func buildQuery(opts search.SearchOptions) query.Query {
 		musts = append(musts, mq)
 	}
 
+	// CreatedBy / UpdatedBy exact-match filters.
+	if opts.CreatedBy != "" {
+		tq := query.NewTermQuery(opts.CreatedBy)
+		tq.SetField("created_by")
+		musts = append(musts, tq)
+	}
+	if opts.UpdatedBy != "" {
+		tq := query.NewTermQuery(opts.UpdatedBy)
+		tq.SetField("updated_by")
+		musts = append(musts, tq)
+	}
+
+	// Date range filters — parse RFC3339; skip malformed values gracefully.
+	if opts.CreatedAfter != "" || opts.CreatedBefore != "" {
+		var start, end time.Time
+		var hasStart, hasEnd bool
+		if t, err := time.Parse(time.RFC3339, opts.CreatedAfter); err == nil {
+			start, hasStart = t, true
+		}
+		if t, err := time.Parse(time.RFC3339, opts.CreatedBefore); err == nil {
+			end, hasEnd = t, true
+		}
+		if hasStart || hasEnd {
+			incl := true
+			var startPtr, endPtr *time.Time
+			if hasStart {
+				startPtr = &start
+			}
+			if hasEnd {
+				endPtr = &end
+			}
+			drq := buildDateRangeQuery("created_at", startPtr, endPtr, incl)
+			musts = append(musts, drq)
+		}
+	}
+	if opts.UpdatedAfter != "" || opts.UpdatedBefore != "" {
+		var start, end time.Time
+		var hasStart, hasEnd bool
+		if t, err := time.Parse(time.RFC3339, opts.UpdatedAfter); err == nil {
+			start, hasStart = t, true
+		}
+		if t, err := time.Parse(time.RFC3339, opts.UpdatedBefore); err == nil {
+			end, hasEnd = t, true
+		}
+		if hasStart || hasEnd {
+			incl := true
+			var startPtr, endPtr *time.Time
+			if hasStart {
+				startPtr = &start
+			}
+			if hasEnd {
+				endPtr = &end
+			}
+			drq := buildDateRangeQuery("updated_at", startPtr, endPtr, incl)
+			musts = append(musts, drq)
+		}
+	}
+
 	// Types filter.
 	if len(opts.Types) > 0 {
 		typeQueries := make([]query.Query, len(opts.Types))
@@ -342,6 +432,24 @@ func buildQuery(opts search.SearchOptions) query.Query {
 	default:
 		return query.NewConjunctionQuery(musts)
 	}
+}
+
+// buildDateRangeQuery builds a Bleve DateRangeQuery for the given field.
+// start and end are optional (*time.Time); nil means "unbounded" (uses the
+// Bleve-compatible min/max sentinel values). inclusive applies to both ends.
+func buildDateRangeQuery(field string, start, end *time.Time, inclusive bool) query.Query {
+	s := query.MinRFC3339CompatibleTime
+	e := query.MaxRFC3339CompatibleTime
+	if start != nil {
+		s = *start
+	}
+	if end != nil {
+		e = *end
+	}
+	incl := inclusive
+	drq := query.NewDateRangeInclusiveQuery(s, e, &incl, &incl)
+	drq.SetField(field)
+	return drq
 }
 
 // listFacetTerms runs a match-all query with a facet on field and returns the

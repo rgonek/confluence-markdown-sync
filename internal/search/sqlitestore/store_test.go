@@ -420,3 +420,165 @@ func TestStore_OpenCreatesDirectory(t *testing.T) {
 		t.Errorf("expected db file to exist at %s: %v", dbPath, err)
 	}
 }
+
+// sampleDocsWithAuthors returns documents that include created_by/updated_by/date fields.
+func sampleDocsWithAuthors() []search.Document {
+	now := time.Date(2024, 11, 15, 12, 0, 0, 0, time.UTC)
+	return []search.Document{
+		{
+			ID:        "page:DEV/alice-doc.md",
+			Type:      search.DocTypePage,
+			Path:      "DEV/alice-doc.md",
+			SpaceKey:  "DEV",
+			Title:     "Alice's Document",
+			Content:   "content about deployment",
+			CreatedBy: "alice",
+			CreatedAt: "2024-01-15T09:00:00Z",
+			UpdatedBy: "alice",
+			UpdatedAt: "2024-06-01T12:00:00Z",
+			ModTime:   &now,
+		},
+		{
+			ID:        "page:DEV/bob-doc.md",
+			Type:      search.DocTypePage,
+			Path:      "DEV/bob-doc.md",
+			SpaceKey:  "DEV",
+			Title:     "Bob's Document",
+			Content:   "content about authentication",
+			CreatedBy: "bob",
+			CreatedAt: "2024-03-20T10:00:00Z",
+			UpdatedBy: "alice",
+			UpdatedAt: "2024-11-01T08:00:00Z",
+			ModTime:   &now,
+		},
+		{
+			ID:        "page:OPS/charlie-doc.md",
+			Type:      search.DocTypePage,
+			Path:      "OPS/charlie-doc.md",
+			SpaceKey:  "OPS",
+			Title:     "Charlie's Document",
+			Content:   "content about operations",
+			CreatedBy: "charlie",
+			CreatedAt: "2024-09-10T14:00:00Z",
+			UpdatedBy: "charlie",
+			UpdatedAt: "2024-12-01T16:00:00Z",
+			ModTime:   &now,
+		},
+	}
+}
+
+func TestStore_FilterByCreatedBy(t *testing.T) {
+	s := newTestStore(t)
+	if err := s.Index(sampleDocsWithAuthors()); err != nil {
+		t.Fatalf("Index: %v", err)
+	}
+
+	results, err := s.Search(search.SearchOptions{CreatedBy: "alice"})
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result for CreatedBy=alice, got %d", len(results))
+	}
+	if results[0].Document.CreatedBy != "alice" {
+		t.Errorf("expected CreatedBy=alice, got %q", results[0].Document.CreatedBy)
+	}
+}
+
+func TestStore_FilterByUpdatedBy(t *testing.T) {
+	s := newTestStore(t)
+	if err := s.Index(sampleDocsWithAuthors()); err != nil {
+		t.Fatalf("Index: %v", err)
+	}
+
+	// alice updated two documents (alice-doc and bob-doc)
+	results, err := s.Search(search.SearchOptions{UpdatedBy: "alice"})
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	if len(results) != 2 {
+		t.Fatalf("expected 2 results for UpdatedBy=alice, got %d", len(results))
+	}
+	for _, r := range results {
+		if r.Document.UpdatedBy != "alice" {
+			t.Errorf("expected UpdatedBy=alice, got %q", r.Document.UpdatedBy)
+		}
+	}
+}
+
+func TestStore_FilterByCreatedAfterAndBefore(t *testing.T) {
+	s := newTestStore(t)
+	if err := s.Index(sampleDocsWithAuthors()); err != nil {
+		t.Fatalf("Index: %v", err)
+	}
+
+	// created_at between 2024-02-01 and 2024-10-01 => bob-doc (2024-03-20) and charlie-doc (2024-09-10)
+	results, err := s.Search(search.SearchOptions{
+		CreatedAfter:  "2024-02-01T00:00:00Z",
+		CreatedBefore: "2024-10-01T23:59:59Z",
+	})
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	if len(results) != 2 {
+		// bob-doc (2024-03-20) and charlie-doc (2024-09-10) are in range
+		t.Fatalf("expected 2 results, got %d: %v", len(results), results)
+	}
+}
+
+func TestStore_FilterByUpdatedAfter(t *testing.T) {
+	s := newTestStore(t)
+	if err := s.Index(sampleDocsWithAuthors()); err != nil {
+		t.Fatalf("Index: %v", err)
+	}
+
+	// updated_at after 2024-10-01 => bob-doc (2024-11-01) and charlie-doc (2024-12-01)
+	results, err := s.Search(search.SearchOptions{UpdatedAfter: "2024-10-01T00:00:00Z"})
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	if len(results) != 2 {
+		t.Fatalf("expected 2 results for UpdatedAfter, got %d", len(results))
+	}
+}
+
+func TestStore_AuthorFieldsRoundTrip(t *testing.T) {
+	s := newTestStore(t)
+	doc := search.Document{
+		ID:        "page:TEST/roundtrip.md",
+		Type:      search.DocTypePage,
+		Path:      "TEST/roundtrip.md",
+		SpaceKey:  "TEST",
+		Title:     "Round Trip",
+		Content:   "test",
+		CreatedBy: "alice",
+		CreatedAt: "2024-06-15T10:00:00Z",
+		UpdatedBy: "bob",
+		UpdatedAt: "2024-12-01T08:30:00Z",
+	}
+
+	if err := s.Index([]search.Document{doc}); err != nil {
+		t.Fatalf("Index: %v", err)
+	}
+
+	results, err := s.Search(search.SearchOptions{SpaceKey: "TEST"})
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(results))
+	}
+	got := results[0].Document
+	if got.CreatedBy != "alice" {
+		t.Errorf("CreatedBy: got %q, want %q", got.CreatedBy, "alice")
+	}
+	if got.CreatedAt != "2024-06-15T10:00:00Z" {
+		t.Errorf("CreatedAt: got %q, want %q", got.CreatedAt, "2024-06-15T10:00:00Z")
+	}
+	if got.UpdatedBy != "bob" {
+		t.Errorf("UpdatedBy: got %q, want %q", got.UpdatedBy, "bob")
+	}
+	if got.UpdatedAt != "2024-12-01T08:30:00Z" {
+		t.Errorf("UpdatedAt: got %q, want %q", got.UpdatedAt, "2024-12-01T08:30:00Z")
+	}
+}

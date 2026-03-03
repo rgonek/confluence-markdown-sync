@@ -63,6 +63,20 @@ type Document struct {
 
 	// ModTime is the last modification time of the source file.
 	ModTime *time.Time `json:"mod_time,omitempty"`
+
+	// CreatedBy is the Confluence username who created the page (from frontmatter).
+	CreatedBy string `json:"created_by,omitempty"`
+
+	// CreatedAt is the page creation timestamp in RFC3339 format (from frontmatter).
+	// Empty if the frontmatter field is absent or unparseable.
+	CreatedAt string `json:"created_at,omitempty"`
+
+	// UpdatedBy is the Confluence username who last updated the page (from frontmatter).
+	UpdatedBy string `json:"updated_by,omitempty"`
+
+	// UpdatedAt is the last-updated timestamp in RFC3339 format (from frontmatter).
+	// Empty if the frontmatter field is absent or unparseable.
+	UpdatedAt string `json:"updated_at,omitempty"`
 }
 
 // SearchOptions controls a full-text search query.
@@ -85,6 +99,24 @@ type SearchOptions struct {
 
 	// Limit is the maximum number of results to return. 0 = use a sensible default.
 	Limit int
+
+	// CreatedBy restricts results to documents where created_by exactly matches.
+	CreatedBy string
+
+	// UpdatedBy restricts results to documents where updated_by exactly matches.
+	UpdatedBy string
+
+	// CreatedAfter restricts results to documents where created_at >= this RFC3339 value.
+	CreatedAfter string
+
+	// CreatedBefore restricts results to documents where created_at <= this RFC3339 value.
+	CreatedBefore string
+
+	// UpdatedAfter restricts results to documents where updated_at >= this RFC3339 value.
+	UpdatedAfter string
+
+	// UpdatedBefore restricts results to documents where updated_at <= this RFC3339 value.
+	UpdatedBefore string
 }
 
 // SearchResult is a single match returned by Store.Search.

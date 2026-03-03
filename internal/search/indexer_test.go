@@ -238,5 +238,59 @@ func openStoreFromIndexer(t *testing.T, repoDir string) *sqlitestore.Store {
 	return store
 }
 
+func TestIndexer_AuthorFieldsPopulated(t *testing.T) {
+	repoDir := t.TempDir()
+	dbPath := filepath.Join(repoDir, ".confluence-search-index", "search.db")
+	store, err := sqlitestore.Open(dbPath)
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	ix := search.NewIndexer(store, repoDir)
+	writeStateFile(t, repoDir, "DEV", "DEV")
+
+	const md = `---
+id: "999"
+title: Author Test
+created_by: alice
+created_at: "2024-06-01T09:00:00Z"
+updated_by: bob
+updated_at: "2024-11-15T14:30:00Z"
+---
+
+Body text here.
+`
+	writeMarkdownFile(t, repoDir, "DEV/author-test.md", md)
+
+	if _, err := ix.IndexSpace(filepath.Join(repoDir, "DEV"), "DEV"); err != nil {
+		t.Fatalf("IndexSpace: %v", err)
+	}
+
+	results, err := store.Search(search.SearchOptions{SpaceKey: "DEV"})
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	for _, r := range results {
+		if r.Document.Path != "DEV/author-test.md" {
+			continue
+		}
+		if r.Document.CreatedBy != "alice" {
+			t.Errorf("CreatedBy: got %q, want %q", r.Document.CreatedBy, "alice")
+		}
+		if r.Document.UpdatedBy != "bob" {
+			t.Errorf("UpdatedBy: got %q, want %q", r.Document.UpdatedBy, "bob")
+		}
+		if r.Document.CreatedAt != "2024-06-01T09:00:00Z" {
+			t.Errorf("CreatedAt: got %q, want %q", r.Document.CreatedAt, "2024-06-01T09:00:00Z")
+		}
+		if r.Document.UpdatedAt != "2024-11-15T14:30:00Z" {
+			t.Errorf("UpdatedAt: got %q, want %q", r.Document.UpdatedAt, "2024-11-15T14:30:00Z")
+		}
+		return
+	}
+	t.Error("document DEV/author-test.md not found in results")
+}
+
 // — compile-time interface check —
 var _ search.Store = (*sqlitestore.Store)(nil)

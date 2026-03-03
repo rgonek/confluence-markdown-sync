@@ -63,6 +63,14 @@ func NewMapping() mapping.IndexMapping {
 	// datetime field
 	dm.AddFieldMappingsAt("mod_time", dt)
 
+	// keyword fields — author names for exact-match filtering
+	dm.AddFieldMappingsAt("created_by", kw)
+	dm.AddFieldMappingsAt("updated_by", kw)
+
+	// datetime fields — creation/update timestamps for date-range filtering
+	dm.AddFieldMappingsAt("created_at", dt)
+	dm.AddFieldMappingsAt("updated_at", dt)
+
 	im.DefaultMapping = dm
 
 	return im
@@ -73,4 +81,5 @@ var allDocFields = []string{
 	"type", "path", "page_id", "space_key", "labels",
 	"language", "title", "content", "heading_text", "heading_path_text",
 	"heading_level", "line", "mod_time",
+	"created_by", "created_at", "updated_by", "updated_at",
 }
