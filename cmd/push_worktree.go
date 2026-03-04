@@ -63,10 +63,6 @@ func runPushInWorktree(
 		wtTarget = config.Target{Mode: config.TargetModeSpace, Value: wtSpaceDir}
 	}
 
-	if err := runValidateTargetWithContext(ctx, out, wtTarget); err != nil {
-		return fmt.Errorf("pre-push validate failed: %w", err)
-	}
-
 	// 5. Diff (Snapshot vs Baseline)
 	baselineRef, err := gitPushBaselineRef(gitClient, spaceKey)
 	if err != nil {
@@ -77,6 +73,18 @@ func runPushInWorktree(
 	syncChanges, err := collectPushChangesForTarget(wtClient, baselineRef, target, spaceScopePath, changeScopePath)
 	if err != nil {
 		return err
+	}
+
+	// 4. Validate (in worktree) — only the changed files for space targets
+	if target.IsFile() {
+		if err := runValidateTargetWithContext(ctx, out, wtTarget); err != nil {
+			return fmt.Errorf("pre-push validate failed: %w", err)
+		}
+	} else {
+		changedAbsPaths := pushChangedAbsPaths(wtSpaceDir, syncChanges)
+		if err := runValidateChangedPushFiles(ctx, out, wtSpaceDir, changedAbsPaths); err != nil {
+			return fmt.Errorf("pre-push validate failed: %w", err)
+		}
 	}
 
 	if len(syncChanges) == 0 {

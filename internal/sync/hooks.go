@@ -330,8 +330,8 @@ func NewReverseLinkHookWithGlobalIndex(spaceDir string, index PageIndex, globalI
 	globalPathIndex := invertGlobalPageIndex(globalIndex)
 
 	return func(ctx context.Context, in mdconv.LinkParseInput) (mdconv.LinkParseOutput, error) {
-		// If absolute URL, let it pass (Handled=false)
-		if strings.HasPrefix(in.Destination, "http://") || strings.HasPrefix(in.Destination, "https://") {
+		// If absolute URL or non-http scheme, let it pass (Handled=false)
+		if isExternalDestination(in.Destination) {
 			return mdconv.LinkParseOutput{Handled: false}, nil
 		}
 

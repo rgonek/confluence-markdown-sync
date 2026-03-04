@@ -75,6 +75,25 @@ Use ` + "`conf search`" + ` to find content without reading entire files.
   - ` + "`labels`" + `: Confluence page labels (array of strings).
 - **State**: ` + "`.confluence-state.json`" + ` tracks sync state. Do not delete.
 
+## Directory Hierarchy Convention
+
+To create a Confluence page that has subpages, use a directory named after the parent page and place the parent page file inside it with the **same name as the directory**:
+
+` + "```" + `
+Space/
+  ParentPage/
+    ParentPage.md       ← parent page content
+    SubpageOne.md       ← child of ParentPage
+    SubpageTwo.md       ← child of ParentPage
+    NestedGroup/
+      NestedGroup.md    ← child of ParentPage, parent of its own children
+      NestedChild.md
+` + "```" + `
+
+- The parent page file **must** be ` + "`DirectoryName/DirectoryName.md`" + ` (filename matches directory name).
+- Sibling ` + "`.md`" + ` files inside the directory become subpages of that parent.
+- This mirrors the Confluence page tree hierarchy in the local filesystem.
+
 ## Space-Specific Rules
 Each space directory (e.g., ` + "`Technical documentation (TD)/`" + `) may contain its own ` + "`AGENTS.md`" + ` with space-specific content rules (e.g., required templates, PII guidelines). Check those if they exist.
 `

@@ -41,15 +41,17 @@ func runPushPreflight(
 		return nil
 	}
 
-	var currentTarget config.Target
 	if target.IsFile() {
 		abs, _ := filepath.Abs(target.Value)
-		currentTarget = config.Target{Mode: config.TargetModeFile, Value: abs}
+		currentTarget := config.Target{Mode: config.TargetModeFile, Value: abs}
+		if err := runValidateTargetWithContext(ctx, out, currentTarget); err != nil {
+			return fmt.Errorf("preflight validate failed: %w", err)
+		}
 	} else {
-		currentTarget = config.Target{Mode: config.TargetModeSpace, Value: spaceDir}
-	}
-	if err := runValidateTargetWithContext(ctx, out, currentTarget); err != nil {
-		return fmt.Errorf("preflight validate failed: %w", err)
+		changedAbsPaths := pushChangedAbsPaths(spaceDir, syncChanges)
+		if err := runValidateChangedPushFiles(ctx, out, spaceDir, changedAbsPaths); err != nil {
+			return fmt.Errorf("preflight validate failed: %w", err)
+		}
 	}
 
 	addCount, modifyCount, deleteCount := summarizePushChanges(syncChanges)
@@ -89,15 +91,17 @@ func runPushDryRun(
 		return nil
 	}
 
-	var currentTarget config.Target
 	if target.IsFile() {
 		abs, _ := filepath.Abs(target.Value)
-		currentTarget = config.Target{Mode: config.TargetModeFile, Value: abs}
+		currentTarget := config.Target{Mode: config.TargetModeFile, Value: abs}
+		if err := runValidateTargetWithContext(ctx, out, currentTarget); err != nil {
+			return fmt.Errorf("pre-push validate failed: %w", err)
+		}
 	} else {
-		currentTarget = config.Target{Mode: config.TargetModeSpace, Value: spaceDir}
-	}
-	if err := runValidateTargetWithContext(ctx, out, currentTarget); err != nil {
-		return fmt.Errorf("pre-push validate failed: %w", err)
+		changedAbsPaths := pushChangedAbsPaths(spaceDir, syncChanges)
+		if err := runValidateChangedPushFiles(ctx, out, spaceDir, changedAbsPaths); err != nil {
+			return fmt.Errorf("pre-push validate failed: %w", err)
+		}
 	}
 
 	envPath := findEnvPath(spaceDir)
