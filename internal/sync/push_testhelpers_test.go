@@ -144,7 +144,10 @@ type rollbackPushRemote struct {
 	archiveTaskWaitErr       error
 	failUpdate               bool
 	failAddLabels            bool
+	rejectParentID           string
+	rejectParentErr          error
 	updateInputsByPageID     map[string]confluence.PageUpsertInput
+	updateCallInputs         []confluence.PageUpsertInput
 }
 
 func newRollbackPushRemote() *rollbackPushRemote {
@@ -242,8 +245,16 @@ func (f *rollbackPushRemote) CreatePage(_ context.Context, input confluence.Page
 func (f *rollbackPushRemote) UpdatePage(_ context.Context, pageID string, input confluence.PageUpsertInput) (confluence.Page, error) {
 	f.updatePageCalls++
 	f.updateInputsByPageID[pageID] = input
+	f.updateCallInputs = append(f.updateCallInputs, input)
 	if f.failUpdate {
 		return confluence.Page{}, errors.New("simulated update failure")
+	}
+	if strings.TrimSpace(f.rejectParentID) != "" && strings.TrimSpace(input.ParentPageID) == strings.TrimSpace(f.rejectParentID) {
+		err := f.rejectParentErr
+		if err == nil {
+			err = confluence.ErrNotFound
+		}
+		return confluence.Page{}, err
 	}
 	updated := confluence.Page{
 		ID:           pageID,
