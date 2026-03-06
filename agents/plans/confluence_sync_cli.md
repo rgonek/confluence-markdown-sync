@@ -188,6 +188,16 @@ Compatibility and precedence:
 - **Side-Effect Boundary**:
     - Hooks return mapping decisions only; sync orchestration owns network/filesystem side effects (downloads/uploads/file writes/deletes).
 
+#### 2.3.4.1 Diagram Extension Contract
+- **PlantUML**:
+    - Supported as a first-class Confluence extension through the existing `plantumlcloud` extension handler.
+    - Pull and push must preserve authored Markdown round-trip semantics for supported PlantUML blocks.
+- **Mermaid**:
+    - Not treated as a first-class rendered Confluence extension.
+    - Markdown Mermaid fences push as ADF `codeBlock` nodes with language `mermaid`.
+    - Pull must preserve those `codeBlock` nodes as authored Mermaid fenced code.
+    - `validate` must emit a non-fatal warning before push so users know Mermaid will be preserved as code, not rendered as a Confluence diagram macro.
+
 #### 2.3.5 Git Integration Enhancements
 - **Smart .gitignore**: `init` adds `.DS_Store`, `*.tmp`, `.confluence-state.json`, `.env`, `conf.exe`, etc.
 - **Diff Command**: `conf diff [TARGET]` fetches remote, converts to MD, and runs `git diff --no-index` (`.md` suffix => file mode, otherwise space mode).
