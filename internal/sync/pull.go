@@ -35,7 +35,7 @@ type PullRemote interface {
 	GetFolder(ctx context.Context, folderID string) (confluence.Folder, error)
 	ListChanges(ctx context.Context, opts confluence.ChangeListOptions) (confluence.ChangeListResult, error)
 	GetPage(ctx context.Context, pageID string) (confluence.Page, error)
-	GetContentStatus(ctx context.Context, pageID string) (string, error)
+	GetContentStatus(ctx context.Context, pageID string, pageStatus string) (string, error)
 	GetLabels(ctx context.Context, pageID string) ([]string, error)
 	ListAttachments(ctx context.Context, pageID string) ([]confluence.Attachment, error)
 	DownloadAttachment(ctx context.Context, attachmentID string, pageID string, out io.Writer) error
@@ -262,7 +262,7 @@ func Pull(ctx context.Context, remote PullRemote, opts PullOptions) (PullResult,
 				return fmt.Errorf("fetch page %s: %w", pageID, err)
 			}
 
-			status, err := remote.GetContentStatus(gCtx, pageID)
+			status, err := remote.GetContentStatus(gCtx, pageID, page.Status)
 			if err != nil {
 				existingFM, ok := readExistingFrontmatter(pageID)
 				if ok && existingFM.Status != "" {

@@ -78,8 +78,8 @@ func restorePageContentSnapshot(ctx context.Context, remote PushRemote, pageID s
 	return nil
 }
 
-func capturePageMetadataSnapshot(ctx context.Context, remote PushRemote, pageID string) (pushMetadataSnapshot, error) {
-	status, err := remote.GetContentStatus(ctx, pageID)
+func capturePageMetadataSnapshot(ctx context.Context, remote PushRemote, pageID string, pageStatus string) (pushMetadataSnapshot, error) {
+	status, err := remote.GetContentStatus(ctx, pageID, pageStatus)
 	if err != nil {
 		return pushMetadataSnapshot{}, fmt.Errorf("get content status: %w", err)
 	}
@@ -91,33 +91,41 @@ func capturePageMetadataSnapshot(ctx context.Context, remote PushRemote, pageID 
 
 	return pushMetadataSnapshot{
 		ContentStatus: strings.TrimSpace(status),
+		PageStatus:    normalizePageLifecycleState(pageStatus),
 		Labels:        fs.NormalizeLabels(labels),
 	}, nil
 }
 
-func restorePageMetadataSnapshot(ctx context.Context, remote PushRemote, pageID string, snapshot pushMetadataSnapshot) error {
+type metadataRestoreResult struct {
+	ContentStatusRestored bool
+}
+
+func restorePageMetadataSnapshot(ctx context.Context, remote PushRemote, pageID string, snapshot pushMetadataSnapshot) (metadataRestoreResult, error) {
 	targetStatus := strings.TrimSpace(snapshot.ContentStatus)
-	currentStatus, err := remote.GetContentStatus(ctx, pageID)
+	pageStatus := normalizePageLifecycleState(snapshot.PageStatus)
+	currentStatus, err := remote.GetContentStatus(ctx, pageID, pageStatus)
 	if err != nil {
-		return fmt.Errorf("get content status: %w", err)
+		return metadataRestoreResult{}, fmt.Errorf("get content status: %w", err)
 	}
 	currentStatus = strings.TrimSpace(currentStatus)
+	result := metadataRestoreResult{}
 
 	if currentStatus != targetStatus {
 		if targetStatus == "" {
-			if err := remote.DeleteContentStatus(ctx, pageID); err != nil {
-				return fmt.Errorf("delete content status: %w", err)
+			if err := remote.DeleteContentStatus(ctx, pageID, pageStatus); err != nil {
+				return metadataRestoreResult{}, fmt.Errorf("delete content status: %w", err)
 			}
 		} else {
-			if err := remote.SetContentStatus(ctx, pageID, targetStatus); err != nil {
-				return fmt.Errorf("set content status: %w", err)
+			if err := remote.SetContentStatus(ctx, pageID, pageStatus, targetStatus); err != nil {
+				return metadataRestoreResult{}, fmt.Errorf("set content status: %w", err)
 			}
 		}
+		result.ContentStatusRestored = true
 	}
 
 	remoteLabels, err := remote.GetLabels(ctx, pageID)
 	if err != nil {
-		return fmt.Errorf("get labels: %w", err)
+		return metadataRestoreResult{}, fmt.Errorf("get labels: %w", err)
 	}
 
 	targetLabelSet := map[string]struct{}{}
@@ -135,7 +143,7 @@ func restorePageMetadataSnapshot(ctx context.Context, remote PushRemote, pageID 
 			continue
 		}
 		if err := remote.RemoveLabel(ctx, pageID, label); err != nil {
-			return fmt.Errorf("remove label %q: %w", label, err)
+			return metadataRestoreResult{}, fmt.Errorf("remove label %q: %w", label, err)
 		}
 	}
 
@@ -150,11 +158,21 @@ func restorePageMetadataSnapshot(ctx context.Context, remote PushRemote, pageID 
 
 	if len(toAdd) > 0 {
 		if err := remote.AddLabels(ctx, pageID, toAdd); err != nil {
-			return fmt.Errorf("add labels: %w", err)
+			return metadataRestoreResult{}, fmt.Errorf("add labels: %w", err)
 		}
 	}
 
-	return nil
+	return result, nil
+}
+
+func deleteOptionsForPageLifecycle(pageStatus string, preferPermanent bool) confluence.PageDeleteOptions {
+	if normalizePageLifecycleState(pageStatus) == "draft" {
+		return confluence.PageDeleteOptions{Draft: true}
+	}
+	if preferPermanent {
+		return confluence.PageDeleteOptions{Purge: true}
+	}
+	return confluence.PageDeleteOptions{}
 }
 
 func resolveLocalTitle(doc fs.MarkdownDocument, relPath string) string {

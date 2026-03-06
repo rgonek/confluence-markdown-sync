@@ -87,3 +87,53 @@ func TestSyncPageMetadata_EquivalentLabelSetsDoNotChurn(t *testing.T) {
 		t.Fatalf("remove label calls = %d, want 0", len(remote.removeLabelCalls))
 	}
 }
+
+func TestSyncPageMetadata_SetsContentStatusOnlyWhenPresent(t *testing.T) {
+	remote := newRollbackPushRemote()
+
+	doc := fs.MarkdownDocument{
+		Frontmatter: fs.Frontmatter{
+			State:  "draft",
+			Status: "Ready to review",
+		},
+	}
+
+	if err := syncPageMetadata(context.Background(), remote, "1", doc); err != nil {
+		t.Fatalf("syncPageMetadata() error: %v", err)
+	}
+
+	if len(remote.setContentStatusArgs) != 1 {
+		t.Fatalf("set content status args = %d, want 1", len(remote.setContentStatusArgs))
+	}
+	if got := remote.setContentStatusArgs[0]; got.PageStatus != "draft" || got.StatusName != "Ready to review" {
+		t.Fatalf("unexpected content status call: %+v", got)
+	}
+	if len(remote.deleteContentStatusArgs) != 0 {
+		t.Fatalf("delete content status args = %d, want 0", len(remote.deleteContentStatusArgs))
+	}
+}
+
+func TestSyncPageMetadata_RemovesContentStatusWhenCleared(t *testing.T) {
+	remote := newRollbackPushRemote()
+	remote.contentStatuses["1"] = "Ready"
+
+	doc := fs.MarkdownDocument{
+		Frontmatter: fs.Frontmatter{
+			State: "current",
+		},
+	}
+
+	if err := syncPageMetadata(context.Background(), remote, "1", doc); err != nil {
+		t.Fatalf("syncPageMetadata() error: %v", err)
+	}
+
+	if len(remote.deleteContentStatusArgs) != 1 {
+		t.Fatalf("delete content status args = %d, want 1", len(remote.deleteContentStatusArgs))
+	}
+	if got := remote.deleteContentStatusArgs[0]; got.PageStatus != "current" {
+		t.Fatalf("unexpected delete content status call: %+v", got)
+	}
+	if len(remote.setContentStatusArgs) != 0 {
+		t.Fatalf("set content status args = %d, want 0", len(remote.setContentStatusArgs))
+	}
+}

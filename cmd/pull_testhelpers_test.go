@@ -98,7 +98,7 @@ func (f *cmdFakePullRemote) GetPage(_ context.Context, pageID string) (confluenc
 	return page, nil
 }
 
-func (f *cmdFakePullRemote) GetContentStatus(_ context.Context, pageID string) (string, error) {
+func (f *cmdFakePullRemote) GetContentStatus(_ context.Context, pageID string, _ string) (string, error) {
 	return "", nil
 }
 

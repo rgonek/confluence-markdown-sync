@@ -77,17 +77,18 @@ func walkAndFixMediaNodes(node any, pageID string) bool {
 func syncPageMetadata(ctx context.Context, remote PushRemote, pageID string, doc fs.MarkdownDocument) error {
 	// 1. Sync Content Status
 	targetStatus := strings.TrimSpace(doc.Frontmatter.Status)
-	currentStatus, err := remote.GetContentStatus(ctx, pageID)
+	pageStatus := normalizePageLifecycleState(doc.Frontmatter.State)
+	currentStatus, err := remote.GetContentStatus(ctx, pageID, pageStatus)
 	if err != nil {
 		return fmt.Errorf("get content status: %w", err)
 	}
 	if targetStatus != currentStatus {
 		if targetStatus == "" {
-			if err := remote.DeleteContentStatus(ctx, pageID); err != nil {
+			if err := remote.DeleteContentStatus(ctx, pageID, pageStatus); err != nil {
 				return fmt.Errorf("delete content status: %w", err)
 			}
 		} else {
-			if err := remote.SetContentStatus(ctx, pageID, targetStatus); err != nil {
+			if err := remote.SetContentStatus(ctx, pageID, pageStatus, targetStatus); err != nil {
 				return fmt.Errorf("set content status: %w", err)
 			}
 		}

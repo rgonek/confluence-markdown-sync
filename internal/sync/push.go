@@ -210,7 +210,8 @@ func pushDeletePage(
 
 	page := remotePageByID[pageID]
 	if opts.HardDelete {
-		if err := remote.DeletePage(ctx, pageID, true); err != nil && !errors.Is(err, confluence.ErrNotFound) {
+		deleteOpts := deleteOptionsForPageLifecycle(page.Status, true)
+		if err := remote.DeletePage(ctx, pageID, deleteOpts); err != nil && !errors.Is(err, confluence.ErrNotFound) {
 			return PushCommitPlan{}, fmt.Errorf("hard-delete page %s: %w", pageID, err)
 		}
 	} else {
@@ -515,7 +516,7 @@ func pushUpsertPage(
 				return failWithRollback(fmt.Errorf("pre-created placeholder page for %s returned empty page ID", relPath))
 			}
 
-			rollback.trackCreatedPage(pageID)
+			rollback.trackCreatedPage(pageID, targetState)
 			localVersion = precreatedPage.Version
 			remotePage = precreatedPage
 			remotePageByID[pageID] = precreatedPage
@@ -548,7 +549,7 @@ func pushUpsertPage(
 				return failWithRollback(fmt.Errorf("create placeholder page for %s returned empty page ID", relPath))
 			}
 
-			rollback.trackCreatedPage(pageID)
+			rollback.trackCreatedPage(pageID, targetState)
 			localVersion = created.Version
 			remotePage = created
 			remotePageByID[pageID] = created
@@ -746,7 +747,7 @@ func pushUpsertPage(
 	rollback.markContentRestoreRequired()
 
 	if isExistingPage {
-		snapshot, snapshotErr := capturePageMetadataSnapshot(ctx, remote, pageID)
+		snapshot, snapshotErr := capturePageMetadataSnapshot(ctx, remote, pageID, remotePage.Status)
 		if snapshotErr != nil {
 			return failWithRollback(fmt.Errorf("capture metadata snapshot for %s: %w", relPath, snapshotErr))
 		}

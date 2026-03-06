@@ -28,12 +28,13 @@ func appendPushDiagnostic(diagnostics *[]PushDiagnostic, path, code, message str
 	})
 }
 
-func (r *pushRollbackTracker) trackCreatedPage(pageID string) {
+func (r *pushRollbackTracker) trackCreatedPage(pageID string, pageStatus string) {
 	pageID = strings.TrimSpace(pageID)
 	if pageID == "" {
 		return
 	}
 	r.createdPageID = pageID
+	r.createdPageStatus = normalizePageLifecycleState(pageStatus)
 }
 
 func (r *pushRollbackTracker) trackUploadedAttachment(pageID, attachmentID, path string) {
@@ -106,8 +107,17 @@ func (r *pushRollbackTracker) rollback(ctx context.Context, remote PushRemote) e
 
 	if r.metadataRestoreReq && r.metadataSnapshot != nil && strings.TrimSpace(r.metadataPageID) != "" {
 		slog.Info("push_rollback_step", "path", r.relPath, "step", "metadata", "page_id", r.metadataPageID)
-		if err := restorePageMetadataSnapshot(ctx, remote, r.metadataPageID, *r.metadataSnapshot); err != nil {
+		restoreResult, err := restorePageMetadataSnapshot(ctx, remote, r.metadataPageID, *r.metadataSnapshot)
+		if err != nil {
 			slog.Warn("push_rollback_step_failed", "path", r.relPath, "step", "metadata", "page_id", r.metadataPageID, "error", err.Error())
+			if strings.Contains(err.Error(), "content status") {
+				appendPushDiagnostic(
+					r.diagnostics,
+					r.relPath,
+					"ROLLBACK_CONTENT_STATUS_FAILED",
+					fmt.Sprintf("failed to restore content status for page %s: %v", r.metadataPageID, err),
+				)
+			}
 			appendPushDiagnostic(
 				r.diagnostics,
 				r.relPath,
@@ -117,6 +127,14 @@ func (r *pushRollbackTracker) rollback(ctx context.Context, remote PushRemote) e
 			rollbackErr = errors.Join(rollbackErr, fmt.Errorf("restore metadata for page %s: %w", r.metadataPageID, err))
 		} else {
 			slog.Info("push_rollback_step_succeeded", "path", r.relPath, "step", "metadata", "page_id", r.metadataPageID)
+			if restoreResult.ContentStatusRestored {
+				appendPushDiagnostic(
+					r.diagnostics,
+					r.relPath,
+					"ROLLBACK_CONTENT_STATUS_RESTORED",
+					fmt.Sprintf("restored content status for page %s", r.metadataPageID),
+				)
+			}
 			appendPushDiagnostic(
 				r.diagnostics,
 				r.relPath,
@@ -163,7 +181,8 @@ func (r *pushRollbackTracker) rollback(ctx context.Context, remote PushRemote) e
 
 	if strings.TrimSpace(r.createdPageID) != "" {
 		slog.Info("push_rollback_step", "path", r.relPath, "step", "created_page", "page_id", r.createdPageID)
-		if err := remote.DeletePage(ctx, r.createdPageID, true); err != nil && !errors.Is(err, confluence.ErrNotFound) {
+		deleteOpts := deleteOptionsForPageLifecycle(r.createdPageStatus, false)
+		if err := remote.DeletePage(ctx, r.createdPageID, deleteOpts); err != nil && !errors.Is(err, confluence.ErrNotFound) {
 			slog.Warn("push_rollback_step_failed", "path", r.relPath, "step", "created_page", "page_id", r.createdPageID, "error", err.Error())
 			appendPushDiagnostic(
 				r.diagnostics,

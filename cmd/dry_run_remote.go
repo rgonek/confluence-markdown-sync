@@ -32,21 +32,21 @@ func (d *dryRunPushRemote) GetPage(ctx context.Context, pageID string) (confluen
 	return d.inner.GetPage(ctx, pageID)
 }
 
-func (d *dryRunPushRemote) GetContentStatus(ctx context.Context, pageID string) (string, error) {
+func (d *dryRunPushRemote) GetContentStatus(ctx context.Context, pageID string, pageStatus string) (string, error) {
 	if strings.HasPrefix(pageID, "dry-run-") {
 		return "", nil
 	}
-	return d.inner.GetContentStatus(ctx, pageID)
+	return d.inner.GetContentStatus(ctx, pageID, pageStatus)
 }
 
-func (d *dryRunPushRemote) SetContentStatus(ctx context.Context, pageID string, statusName string) error {
-	fmt.Fprintf(d.out, "[DRY-RUN] SET CONTENT STATUS (PUT %s/wiki/rest/api/content/%s/state)\n", d.domain, pageID)
+func (d *dryRunPushRemote) SetContentStatus(ctx context.Context, pageID string, pageStatus string, statusName string) error {
+	fmt.Fprintf(d.out, "[DRY-RUN] SET CONTENT STATUS (PUT %s/wiki/rest/api/content/%s/state?status=%s)\n", d.domain, pageID, pageStatus)
 	fmt.Fprintf(d.out, "  Name: %s\n\n", statusName)
 	return nil
 }
 
-func (d *dryRunPushRemote) DeleteContentStatus(ctx context.Context, pageID string) error {
-	fmt.Fprintf(d.out, "[DRY-RUN] DELETE CONTENT STATUS (DELETE %s/wiki/rest/api/content/%s/state)\n\n", d.domain, pageID)
+func (d *dryRunPushRemote) DeleteContentStatus(ctx context.Context, pageID string, pageStatus string) error {
+	fmt.Fprintf(d.out, "[DRY-RUN] DELETE CONTENT STATUS (DELETE %s/wiki/rest/api/content/%s/state?status=%s)\n\n", d.domain, pageID, pageStatus)
 	return nil
 }
 
@@ -158,12 +158,15 @@ func (d *dryRunPushRemote) WaitForArchiveTask(ctx context.Context, taskID string
 	return confluence.ArchiveTaskStatus{TaskID: taskID, State: confluence.ArchiveTaskStateSucceeded, RawStatus: "DRY_RUN"}, nil
 }
 
-func (d *dryRunPushRemote) DeletePage(ctx context.Context, pageID string, hardDelete bool) error {
-	purge := ""
-	if hardDelete {
-		purge = "?purge=true"
+func (d *dryRunPushRemote) DeletePage(ctx context.Context, pageID string, opts confluence.PageDeleteOptions) error {
+	query := ""
+	switch {
+	case opts.Draft:
+		query = "?draft=true"
+	case opts.Purge:
+		query = "?purge=true"
 	}
-	fmt.Fprintf(d.out, "[DRY-RUN] DELETE PAGE (DELETE %s/wiki/api/v2/pages/%s%s)\n\n", d.domain, pageID, purge)
+	fmt.Fprintf(d.out, "[DRY-RUN] DELETE PAGE (DELETE %s/wiki/api/v2/pages/%s%s)\n\n", d.domain, pageID, query)
 	return nil
 }
 

@@ -65,6 +65,15 @@ func TestPush_RollbackDeletesCreatedPageAndAttachmentsOnUpdateFailure(t *testing
 	if len(remote.deletePageCalls) != 1 {
 		t.Fatalf("delete page calls = %d, want 1", len(remote.deletePageCalls))
 	}
+	if len(remote.deletePageOpts) != 1 {
+		t.Fatalf("delete page opts = %d, want 1", len(remote.deletePageOpts))
+	}
+	if remote.deletePageOpts[0].Purge {
+		t.Fatalf("rollback should not purge current pages: %+v", remote.deletePageOpts[0])
+	}
+	if remote.deletePageOpts[0].Draft {
+		t.Fatalf("rollback should not use draft delete for current pages: %+v", remote.deletePageOpts[0])
+	}
 
 	hasAttachmentRollback := false
 	hasPageRollback := false
@@ -139,16 +148,68 @@ func TestPush_RollbackRestoresMetadataOnSyncFailure(t *testing.T) {
 	if len(remote.deleteContentStatusCalls) == 0 {
 		t.Fatalf("expected rollback to delete content status")
 	}
+	if len(remote.deleteContentStatusArgs) == 0 || remote.deleteContentStatusArgs[0].PageStatus != "current" {
+		t.Fatalf("expected rollback delete content status call with current state, got %+v", remote.deleteContentStatusArgs)
+	}
 
 	hasMetadataRollback := false
+	hasContentStatusRollback := false
 	for _, diag := range result.Diagnostics {
-		if diag.Code == "ROLLBACK_METADATA_RESTORED" {
+		switch diag.Code {
+		case "ROLLBACK_METADATA_RESTORED":
 			hasMetadataRollback = true
-			break
+		case "ROLLBACK_CONTENT_STATUS_RESTORED":
+			hasContentStatusRollback = true
 		}
 	}
 	if !hasMetadataRollback {
 		t.Fatalf("expected ROLLBACK_METADATA_RESTORED diagnostic, got %+v", result.Diagnostics)
+	}
+	if !hasContentStatusRollback {
+		t.Fatalf("expected ROLLBACK_CONTENT_STATUS_RESTORED diagnostic, got %+v", result.Diagnostics)
+	}
+}
+
+func TestPush_RollbackDeletesCreatedDraftPageWithDraftDeleteOption(t *testing.T) {
+	spaceDir := t.TempDir()
+	mdPath := filepath.Join(spaceDir, "draft.md")
+
+	if err := fs.WriteMarkdownDocument(mdPath, fs.MarkdownDocument{
+		Frontmatter: fs.Frontmatter{
+			Title: "Draft",
+			State: "draft",
+		},
+		Body: "draft body\n",
+	}); err != nil {
+		t.Fatalf("write markdown: %v", err)
+	}
+
+	remote := newRollbackPushRemote()
+	remote.failUpdate = true
+
+	_, err := Push(context.Background(), remote, PushOptions{
+		SpaceKey:       "ENG",
+		SpaceDir:       spaceDir,
+		Domain:         "https://example.atlassian.net",
+		State:          fs.SpaceState{SpaceKey: "ENG"},
+		ConflictPolicy: PushConflictPolicyCancel,
+		Changes: []PushFileChange{{
+			Type: PushChangeAdd,
+			Path: "draft.md",
+		}},
+	})
+	if err == nil {
+		t.Fatal("expected update failure")
+	}
+
+	if len(remote.deletePageOpts) != 1 {
+		t.Fatalf("delete page opts = %d, want 1", len(remote.deletePageOpts))
+	}
+	if !remote.deletePageOpts[0].Draft {
+		t.Fatalf("rollback should delete draft pages with draft=true, got %+v", remote.deletePageOpts[0])
+	}
+	if remote.deletePageOpts[0].Purge {
+		t.Fatalf("rollback should not purge draft pages, got %+v", remote.deletePageOpts[0])
 	}
 }
 

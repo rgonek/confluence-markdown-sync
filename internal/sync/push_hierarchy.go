@@ -328,7 +328,6 @@ func normalizePushState(state fs.SpaceState) fs.SpaceState {
 	if state.AttachmentIndex == nil {
 		state.AttachmentIndex = map[string]string{}
 	}
-
 	normalizedPageIndex := make(map[string]string, len(state.PagePathIndex))
 	for path, id := range state.PagePathIndex {
 		normalizedPageIndex[normalizeRelPath(path)] = id
@@ -585,7 +584,8 @@ func cleanupPendingPrecreatedPages(
 			continue
 		}
 
-		if err := remote.DeletePage(ctx, pageID, true); err != nil && !errors.Is(err, confluence.ErrNotFound) {
+		deleteOpts := deleteOptionsForPageLifecycle(precreatedPages[relPath].Status, false)
+		if err := remote.DeletePage(ctx, pageID, deleteOpts); err != nil && !errors.Is(err, confluence.ErrNotFound) {
 			appendPushDiagnostic(
 				diagnostics,
 				relPath,

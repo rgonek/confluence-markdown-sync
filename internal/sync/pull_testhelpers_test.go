@@ -76,7 +76,7 @@ func (f *fakePullRemote) GetPage(_ context.Context, pageID string) (confluence.P
 	return page, nil
 }
 
-func (f *fakePullRemote) GetContentStatus(_ context.Context, pageID string) (string, error) {
+func (f *fakePullRemote) GetContentStatus(_ context.Context, pageID string, _ string) (string, error) {
 	if f.contentStatuses == nil {
 		return "", nil
 	}

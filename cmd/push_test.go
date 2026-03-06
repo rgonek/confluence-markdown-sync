@@ -406,15 +406,15 @@ func (f *cmdFakePushRemote) GetPage(_ context.Context, pageID string) (confluenc
 	return page, nil
 }
 
-func (f *cmdFakePushRemote) GetContentStatus(_ context.Context, pageID string) (string, error) {
+func (f *cmdFakePushRemote) GetContentStatus(_ context.Context, pageID string, _ string) (string, error) {
 	return "", nil
 }
 
-func (f *cmdFakePushRemote) SetContentStatus(_ context.Context, pageID string, statusName string) error {
+func (f *cmdFakePushRemote) SetContentStatus(_ context.Context, pageID string, _ string, statusName string) error {
 	return nil
 }
 
-func (f *cmdFakePushRemote) DeleteContentStatus(_ context.Context, pageID string) error {
+func (f *cmdFakePushRemote) DeleteContentStatus(_ context.Context, pageID string, _ string) error {
 	return nil
 }
 
@@ -476,7 +476,7 @@ func (f *cmdFakePushRemote) WaitForArchiveTask(_ context.Context, taskID string,
 	return confluence.ArchiveTaskStatus{TaskID: taskID, State: confluence.ArchiveTaskStateSucceeded}, nil
 }
 
-func (f *cmdFakePushRemote) DeletePage(_ context.Context, pageID string, _ bool) error {
+func (f *cmdFakePushRemote) DeletePage(_ context.Context, pageID string, _ confluence.PageDeleteOptions) error {
 	f.deletePageCalls = append(f.deletePageCalls, pageID)
 	return nil
 }
