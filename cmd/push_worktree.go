@@ -27,7 +27,8 @@ func runPushInWorktree(
 	spaceScopePath, changeScopePath string,
 	worktreeDir, syncBranchName, snapshotRefName string,
 	stashRef *string,
-) error {
+) (pushWorktreeOutcome, error) {
+	outcome := pushWorktreeOutcome{}
 	warnings := make([]string, 0)
 	addWarning := func(message string) {
 		warnings = append(warnings, message)
@@ -38,19 +39,19 @@ func runPushInWorktree(
 	wtSpaceDir := filepath.Join(worktreeDir, spaceScopePath)
 	wtClient := &git.Client{RootDir: worktreeDir}
 	if err := os.MkdirAll(wtSpaceDir, 0o750); err != nil {
-		return fmt.Errorf("prepare worktree space directory: %w", err)
+		return outcome, fmt.Errorf("prepare worktree space directory: %w", err)
 	}
 
 	if strings.TrimSpace(*stashRef) != "" {
 		if err := wtClient.StashApply(snapshotRefName); err != nil {
-			return fmt.Errorf("materialize snapshot in worktree: %w", err)
+			return outcome, fmt.Errorf("materialize snapshot in worktree: %w", err)
 		}
 		if err := restoreUntrackedFromStashParent(wtClient, snapshotRefName, spaceScopePath); err != nil {
-			return err
+			return outcome, err
 		}
 	}
 	if err := os.MkdirAll(wtSpaceDir, 0o750); err != nil {
-		return fmt.Errorf("prepare worktree scope directory: %w", err)
+		return outcome, fmt.Errorf("prepare worktree scope directory: %w", err)
 	}
 
 	var wtTarget config.Target
@@ -66,57 +67,58 @@ func runPushInWorktree(
 	// 5. Diff (Snapshot vs Baseline)
 	baselineRef, err := gitPushBaselineRef(gitClient, spaceKey)
 	if err != nil {
-		return err
+		return outcome, err
 	}
 
 	wtClient = &git.Client{RootDir: worktreeDir}
 	syncChanges, err := collectPushChangesForTarget(wtClient, baselineRef, target, spaceScopePath, changeScopePath)
 	if err != nil {
-		return err
+		return outcome, err
 	}
 
 	// 4. Validate (in worktree) — only the changed files for space targets
 	if target.IsFile() {
 		if err := runValidateTargetWithContext(ctx, out, wtTarget); err != nil {
-			return fmt.Errorf("pre-push validate failed: %w", err)
+			return outcome, fmt.Errorf("pre-push validate failed: %w", err)
 		}
 	} else {
 		changedAbsPaths := pushChangedAbsPaths(wtSpaceDir, syncChanges)
 		if err := runValidateChangedPushFiles(ctx, out, wtSpaceDir, changedAbsPaths); err != nil {
-			return fmt.Errorf("pre-push validate failed: %w", err)
+			return outcome, fmt.Errorf("pre-push validate failed: %w", err)
 		}
 	}
 
 	if len(syncChanges) == 0 {
 		_, _ = fmt.Fprintln(out, "push completed with no in-scope markdown changes (no-op)")
-		return nil
+		outcome.NoChanges = true
+		return outcome, nil
 	}
 
 	if err := requireSafetyConfirmation(cmd.InOrStdin(), out, "push", len(syncChanges), pushHasDeleteChange(syncChanges)); err != nil {
-		return err
+		return outcome, err
 	}
 
 	// 6. Push (in worktree)
 	envPath := findEnvPath(wtSpaceDir)
 	cfg, err := config.Load(envPath)
 	if err != nil {
-		return fmt.Errorf("failed to load config: %w", err)
+		return outcome, fmt.Errorf("failed to load config: %w", err)
 	}
 
 	remote, err := newPushRemote(cfg)
 	if err != nil {
-		return fmt.Errorf("create confluence client: %w", err)
+		return outcome, fmt.Errorf("create confluence client: %w", err)
 	}
 	defer closeRemoteIfPossible(remote)
 
 	state, err := fs.LoadState(spaceDir)
 	if err != nil {
-		return fmt.Errorf("load state: %w", err)
+		return outcome, fmt.Errorf("load state: %w", err)
 	}
 
 	globalPageIndex, err := buildWorkspaceGlobalPageIndex(wtSpaceDir)
 	if err != nil {
-		return fmt.Errorf("build global page index: %w", err)
+		return outcome, fmt.Errorf("build global page index: %w", err)
 	}
 
 	var progress syncflow.Progress
@@ -137,6 +139,7 @@ func runPushInWorktree(
 		ArchivePollInterval: normalizedArchiveTaskPollInterval(),
 		Progress:            progress,
 	})
+	outcome.Result = result
 	if err != nil {
 		var conflictErr *syncflow.PushConflictError
 		if errors.As(err, &conflictErr) {
@@ -152,7 +155,7 @@ func runPushInWorktree(
 				_, _ = fmt.Fprintf(out, "conflict detected for %s; policy is %s, attempting automatic pull-merge...\n", conflictErr.Path, onConflict)
 				if strings.TrimSpace(*stashRef) != "" {
 					if err := gitClient.StashPop(*stashRef); err != nil {
-						return fmt.Errorf("restore local workspace before automatic pull-merge: %w", err)
+						return outcome, fmt.Errorf("restore local workspace before automatic pull-merge: %w", err)
 					}
 					*stashRef = ""
 				}
@@ -161,28 +164,38 @@ func runPushInWorktree(
 				// instead of warning and skipping them.
 				prevDiscardLocal := flagPullDiscardLocal
 				flagPullDiscardLocal = true
-				pullErr := runPullForPush(cmd, target)
+				pullReport, pullErr := runPullForPush(cmd, target)
+				outcome.ConflictResolution = &commandRunReportConflictResolution{
+					Policy:               OnConflictPullMerge,
+					MutatedFiles:         append([]string(nil), pullReport.MutatedFiles...),
+					Diagnostics:          append([]commandRunReportDiagnostic(nil), pullReport.Diagnostics...),
+					AttachmentOperations: append([]commandRunReportAttachmentOp(nil), pullReport.AttachmentOperations...),
+					FallbackModes:        append([]string(nil), pullReport.FallbackModes...),
+				}
 				flagPullDiscardLocal = prevDiscardLocal
 				if pullErr != nil {
-					return fmt.Errorf("automatic pull-merge failed: %w", pullErr)
+					outcome.ConflictResolution.Status = "failed"
+					return outcome, fmt.Errorf("automatic pull-merge failed: %w", pullErr)
 				}
+				outcome.ConflictResolution.Status = "completed"
 				retryCmd := "conf push"
 				if target.IsFile() {
 					retryCmd = fmt.Sprintf("conf push %q", target.Value)
 				}
 				_, _ = fmt.Fprintf(out, "automatic pull-merge completed. If there were no content conflicts, rerun `%s` to resume the push.\n", retryCmd)
-				return nil
+				return outcome, nil
 			}
-			return formatPushConflictError(conflictErr)
+			return outcome, formatPushConflictError(conflictErr)
 		}
 		printPushDiagnostics(out, result.Diagnostics)
-		return err
+		return outcome, err
 	}
 
 	if len(result.Commits) == 0 {
 		slog.Info("push_sync_result", "space_key", spaceKey, "commit_count", 0, "diagnostics", len(result.Diagnostics))
 		_, _ = fmt.Fprintln(out, "push completed with no pushable markdown changes (no-op)")
-		return nil
+		outcome.NoChanges = true
+		return outcome, nil
 	}
 
 	printPushDiagnostics(out, result.Diagnostics)
@@ -262,11 +275,11 @@ func runPushInWorktree(
 
 	if progress != nil {
 		if err := runWithIndeterminateStatus(out, "Finalizing push", finalizePushGit); err != nil {
-			return err
+			return outcome, err
 		}
 	} else {
 		if err := finalizePushGit(); err != nil {
-			return err
+			return outcome, err
 		}
 	}
 
@@ -279,7 +292,8 @@ func runPushInWorktree(
 
 	_, _ = fmt.Fprintf(out, "push completed: %d page change(s) synced\n", len(result.Commits))
 	slog.Info("push_sync_result", "space_key", spaceKey, "commit_count", len(result.Commits), "diagnostics", len(result.Diagnostics))
-	return nil
+	outcome.Warnings = append(outcome.Warnings, warnings...)
+	return outcome, nil
 }
 
 func resolvePushScopePath(client *git.Client, spaceDir string, target config.Target, targetCtx validateTargetContext) (string, error) {

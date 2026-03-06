@@ -17,7 +17,8 @@ Capture the non-blocking but high-value workflow, diagnostics, and operator-expe
 - [x] Batch 3 completed: items 10, 11, and 18 are closed, and follow-up hardening landed for items 6, 12, and 13.
 - [x] Batch 4 completed: items 4 and 9 are closed with warning-taxonomy regression coverage and explicit extension-support documentation updates.
 - [x] Item 8 was re-verified as already complete on this branch.
-- [ ] Remaining items: 14, 15, 16, and 17.
+- [x] Batch 5 completed: item 14 is closed with structured report regression coverage for success and failure paths.
+- [ ] Remaining items: 15, 16, and 17.
 
 ## Improvements
 

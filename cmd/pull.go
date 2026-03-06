@@ -60,19 +60,34 @@ If omitted, the space is inferred from the current directory name.`,
 	cmd.Flags().BoolVarP(&flagPullForce, "force", "f", false, "Force full space pull and refresh all tracked pages")
 	cmd.Flags().BoolVar(&flagPullDiscardLocal, "discard-local", false, "Discard local uncommitted changes if they conflict with remote updates")
 	cmd.Flags().BoolVarP(&flagPullRelink, "relink", "r", false, "Automatically relink references to this space from other spaces after pull")
+	addReportJSONFlag(cmd)
 	return cmd
 }
 
 func runPull(cmd *cobra.Command, target config.Target) (runErr error) {
+	_, runErr = runPullWithReport(cmd, target, true)
+	return runErr
+}
+
+func runPullWithReport(cmd *cobra.Command, target config.Target, emitJSONReport bool) (report commandRunReport, runErr error) {
 	ctx := getCommandContext(cmd)
-	out := ensureSynchronizedCmdOutput(cmd)
-	_, restoreLogger := beginCommandRun("pull")
+	actualOut := ensureSynchronizedCmdOutput(cmd)
+	out := reportWriter(cmd, actualOut)
+	runID, restoreLogger := beginCommandRun("pull")
 	defer restoreLogger()
+	startedAt := time.Now()
+	report = newCommandRunReport(runID, "pull", target, startedAt)
+	defer func() {
+		if !emitJSONReport || !commandRequestsJSONReport(cmd) {
+			return
+		}
+		report.finalize(runErr, time.Now())
+		_ = writeCommandRunReport(actualOut, report)
+	}()
 	if err := ensureWorkspaceSyncReady("pull"); err != nil {
-		return err
+		return report, err
 	}
 
-	startedAt := time.Now()
 	telemetrySpaceKey := ""
 	telemetryUpdated := 0
 	telemetryDeleted := 0
@@ -106,29 +121,29 @@ func runPull(cmd *cobra.Command, target config.Target) (runErr error) {
 	// 1. Initial resolution of key/dir
 	initialCtx, err := resolveInitialPullContext(target)
 	if err != nil {
-		return err
+		return report, err
 	}
 	if flagPullForce && strings.TrimSpace(initialCtx.targetPageID) != "" {
-		return errors.New("--force is only supported for space targets")
+		return report, errors.New("--force is only supported for space targets")
 	}
 
 	// 2. Load config to talk to Confluence
 	envPath := findEnvPath(initialCtx.spaceDir)
 	cfg, err := config.Load(envPath)
 	if err != nil {
-		return fmt.Errorf("failed to load config: %w", err)
+		return report, fmt.Errorf("failed to load config: %w", err)
 	}
 
 	remote, err := newPullRemote(cfg)
 	if err != nil {
-		return fmt.Errorf("create confluence client: %w", err)
+		return report, fmt.Errorf("create confluence client: %w", err)
 	}
 	defer closeRemoteIfPossible(remote)
 
 	// 3. Resolve actual space metadata and final directory
 	space, err := remote.GetSpace(ctx, initialCtx.spaceKey)
 	if err != nil {
-		return fmt.Errorf("resolve space %q: %w", initialCtx.spaceKey, err)
+		return report, fmt.Errorf("resolve space %q: %w", initialCtx.spaceKey, err)
 	}
 
 	// Finalize space directory based on Space Name if we are creating it,
@@ -143,17 +158,22 @@ func runPull(cmd *cobra.Command, target config.Target) (runErr error) {
 		spaceDir:     spaceDir,
 		targetPageID: initialCtx.targetPageID,
 	}
+	report.Target.SpaceKey = pullCtx.spaceKey
+	report.Target.SpaceDir = pullCtx.spaceDir
+	if target.IsFile() {
+		report.Target.File = target.Value
+	}
 	telemetrySpaceKey = pullCtx.spaceKey
 
 	scopeDirExisted := dirExists(pullCtx.spaceDir)
 
 	if err := os.MkdirAll(pullCtx.spaceDir, 0o750); err != nil {
-		return fmt.Errorf("prepare space directory: %w", err)
+		return report, fmt.Errorf("prepare space directory: %w", err)
 	}
 
 	state, err := loadPullStateWithHealing(ctx, out, remote, space, pullCtx.spaceDir)
 	if err != nil {
-		return err
+		return report, err
 	}
 
 	var progress syncflow.Progress
@@ -163,27 +183,27 @@ func runPull(cmd *cobra.Command, target config.Target) (runErr error) {
 
 	impact, err := estimatePullImpactWithSpace(ctx, remote, space, pullCtx.targetPageID, state, syncflow.DefaultPullOverlapWindow, flagPullForce, progress)
 	if err != nil {
-		return err
+		return report, err
 	}
 	affectedCount := impact.changedMarkdown + impact.deletedMarkdown
 	if err := requireSafetyConfirmation(cmd.InOrStdin(), out, "pull", affectedCount, impact.deletedMarkdown > 0); err != nil {
-		return err
+		return report, err
 	}
 
 	repoRoot, err := gitRepoRoot()
 	if err != nil {
-		return err
+		return report, err
 	}
 	scopePath, err := gitScopePath(repoRoot, pullCtx.spaceDir)
 	if err != nil {
-		return err
+		return report, err
 	}
 
 	dirtyMarkdownBeforePull := map[string]struct{}{}
 	if !flagPullDiscardLocal {
 		dirtyMarkdownBeforePull, err = listDirtyMarkdownPathsForScope(repoRoot, scopePath)
 		if err != nil {
-			return fmt.Errorf("inspect local markdown changes: %w", err)
+			return report, fmt.Errorf("inspect local markdown changes: %w", err)
 		}
 	}
 
@@ -193,7 +213,7 @@ func runPull(cmd *cobra.Command, target config.Target) (runErr error) {
 	if scopeDirExisted {
 		stashRef, err = stashScopeIfDirty(repoRoot, scopePath, pullCtx.spaceKey, pullStartedAt)
 		if err != nil {
-			return translateWorkspaceGitError(err, "pull")
+			return report, translateWorkspaceGitError(err, "pull")
 		}
 		if stashRef != "" {
 			defer func() {
@@ -251,7 +271,7 @@ func runPull(cmd *cobra.Command, target config.Target) (runErr error) {
 
 	globalPageIndex, err := syncflow.BuildGlobalPageIndex(repoRoot)
 	if err != nil {
-		return fmt.Errorf("build global page index: %w", err)
+		return report, fmt.Errorf("build global page index: %w", err)
 	}
 
 	result, err = syncflow.Pull(ctx, remote, syncflow.PullOptions{
@@ -272,24 +292,33 @@ func runPull(cmd *cobra.Command, target config.Target) (runErr error) {
 	})
 
 	if err != nil {
-		return err
+		return report, err
 	}
 	telemetryUpdated = len(result.UpdatedMarkdown)
 	telemetryDeleted = len(result.DeletedMarkdown)
 	telemetryAssetsDownloaded = len(result.DownloadedAssets)
 	telemetryDiagnostics = len(result.Diagnostics)
+	report.Diagnostics = append(report.Diagnostics, reportDiagnosticsFromPull(result.Diagnostics, pullCtx.spaceDir)...)
+	for _, path := range result.UpdatedMarkdown {
+		report.MutatedFiles = append(report.MutatedFiles, reportRelativePath(pullCtx.spaceDir, path))
+	}
+	for _, path := range result.DeletedMarkdown {
+		report.MutatedFiles = append(report.MutatedFiles, reportRelativePath(pullCtx.spaceDir, path))
+	}
+	report.AttachmentOperations = append(report.AttachmentOperations, reportAttachmentOpsFromPull(result, pullCtx.spaceDir)...)
+	report.FallbackModes = append(report.FallbackModes, fallbackModesFromPullDiagnostics(result.Diagnostics)...)
 
 	if !flagPullDiscardLocal {
 		warnSkippedDirtyDeletions(out, result.DeletedMarkdown, dirtyMarkdownBeforePull)
 	}
 
 	if err := fs.SaveState(pullCtx.spaceDir, result.State); err != nil {
-		return fmt.Errorf("save state: %w", err)
+		return report, fmt.Errorf("save state: %w", err)
 	}
 
 	for _, diag := range result.Diagnostics {
 		if err := writeSyncDiagnostic(out, diag); err != nil {
-			return fmt.Errorf("write diagnostic output: %w", err)
+			return report, fmt.Errorf("write diagnostic output: %w", err)
 		}
 	}
 
@@ -327,17 +356,17 @@ func runPull(cmd *cobra.Command, target config.Target) (runErr error) {
 
 	if progress != nil {
 		if err := runWithIndeterminateStatus(out, "Finalizing pull", finalizePullGit); err != nil {
-			return err
+			return report, err
 		}
 	} else {
 		if err := finalizePullGit(); err != nil {
-			return err
+			return report, err
 		}
 	}
 
 	if !hasChanges {
 		_, _ = fmt.Fprintln(out, "pull completed with no scoped changes (no-op)")
-		return nil
+		return report, nil
 	}
 
 	_, _ = fmt.Fprintf(out, "pull completed: committed and tagged %s\n", tagName)
@@ -349,18 +378,25 @@ func runPull(cmd *cobra.Command, target config.Target) (runErr error) {
 	if flagPullRelink {
 		index, err := syncflow.BuildGlobalPageIndex(repoRoot)
 		if err != nil {
-			return fmt.Errorf("build global index for relink: %w", err)
+			return report, fmt.Errorf("build global index for relink: %w", err)
 		}
 
 		states, err := fs.FindAllStateFiles(repoRoot)
 		if err != nil {
-			return fmt.Errorf("discover spaces for relink: %w", err)
+			return report, fmt.Errorf("discover spaces for relink: %w", err)
 		}
 
-		if err := runTargetedRelink(cmd, repoRoot, pullCtx.spaceDir, index, states); err != nil {
-			return fmt.Errorf("auto-relink: %w", err)
+		relinkResult, err := runTargetedRelink(cmd, out, repoRoot, pullCtx.spaceDir, index, states)
+		if err != nil {
+			for _, path := range relinkResult.MutatedFiles {
+				report.MutatedFiles = append(report.MutatedFiles, reportRelativePath(pullCtx.spaceDir, path))
+			}
+			return report, fmt.Errorf("auto-relink: %w", err)
+		}
+		for _, path := range relinkResult.MutatedFiles {
+			report.MutatedFiles = append(report.MutatedFiles, reportRelativePath(pullCtx.spaceDir, path))
 		}
 	}
 
-	return nil
+	return report, nil
 }
