@@ -382,6 +382,103 @@ func validateFile(ctx context.Context, path, spaceDir string, linkHook mdconvert
 	return issues
 }
 
+// runValidateChangedPushFiles validates only the files in changedAbsPaths but builds the full
+// space context (index, global index) so cross-page links resolve correctly.
+func runValidateChangedPushFiles(ctx context.Context, out io.Writer, spaceDir string, changedAbsPaths []string) error {
+	if len(changedAbsPaths) == 0 {
+		return nil
+	}
+
+	spaceTarget := config.Target{Mode: config.TargetModeSpace, Value: spaceDir}
+	targetCtx, err := resolveValidateTargetContext(spaceTarget)
+	if err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
+	envPath := findEnvPath(targetCtx.spaceDir)
+	cfg, err := config.Load(envPath)
+	if err != nil {
+		return fmt.Errorf("failed to load config: %w", err)
+	}
+
+	_, _ = fmt.Fprintf(out, "Building index for space: %s\n", targetCtx.spaceDir)
+	index, err := syncflow.BuildPageIndexWithPending(targetCtx.spaceDir, targetCtx.files)
+	if err != nil {
+		return fmt.Errorf("failed to build page index: %w", err)
+	}
+
+	if dupErrs := detectDuplicatePageIDs(index); len(dupErrs) > 0 {
+		for _, msg := range dupErrs {
+			_, _ = fmt.Fprintf(out, "Validation failed: %s\n", msg)
+		}
+		return fmt.Errorf("validation failed: duplicate page IDs detected - rename each file to have a unique id or remove the duplicate id")
+	}
+
+	var globalIndex syncflow.GlobalPageIndex
+	globalIndexRoot := filepath.Dir(targetCtx.spaceDir)
+	if repoRoot, rootErr := gitRepoRoot(); rootErr == nil {
+		globalIndexRoot = repoRoot
+	}
+	globalIndex, err = syncflow.BuildGlobalPageIndex(globalIndexRoot)
+	if err != nil {
+		return fmt.Errorf("failed to build global page index: %w", err)
+	}
+
+	state, err := fs.LoadState(targetCtx.spaceDir)
+	if err != nil {
+		return fmt.Errorf("failed to load state: %w", err)
+	}
+	if strings.TrimSpace(targetCtx.spaceKey) == "" {
+		targetCtx.spaceKey = strings.TrimSpace(state.SpaceKey)
+	}
+
+	immutableResolver := newValidateImmutableFrontmatterResolver(targetCtx.spaceDir, targetCtx.spaceKey, state)
+	linkHook := syncflow.NewReverseLinkHookWithGlobalIndex(targetCtx.spaceDir, index, globalIndex, cfg.Domain)
+
+	hasErrors := false
+	for _, file := range changedAbsPaths {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+
+		rel, _ := filepath.Rel(targetCtx.spaceDir, file)
+
+		issues := validateFile(ctx, file, targetCtx.spaceDir, linkHook, state.AttachmentIndex)
+		issues = append(issues, immutableResolver.validate(file)...)
+		if len(issues) == 0 {
+			continue
+		}
+
+		hasErrors = true
+		_, _ = fmt.Fprintf(out, "Validation failed for %s:\n", filepath.ToSlash(rel))
+		for _, issue := range issues {
+			_, _ = fmt.Fprintf(out, "  - [%s] %s: %s\n", issue.Code, issue.Field, issue.Message)
+		}
+	}
+
+	if hasErrors {
+		return fmt.Errorf("validation failed: please fix the issues listed above before retrying")
+	}
+
+	_, _ = fmt.Fprintln(out, "Validation successful")
+	return nil
+}
+
+// pushChangedAbsPaths returns absolute paths for push changes that are not deletions.
+func pushChangedAbsPaths(spaceDir string, changes []syncflow.PushFileChange) []string {
+	out := make([]string, 0, len(changes))
+	for _, change := range changes {
+		if change.Type == syncflow.PushChangeDelete {
+			continue
+		}
+		out = append(out, filepath.Join(spaceDir, filepath.FromSlash(change.Path)))
+	}
+	return out
+}
+
 // detectDuplicatePageIDs returns an error message for each Confluence page ID
 // that appears in more than one file within the index.
 // A duplicate ID typically means a file was copy-pasted (rename trap) and

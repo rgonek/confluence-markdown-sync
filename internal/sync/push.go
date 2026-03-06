@@ -656,14 +656,90 @@ func pushUpsertPage(
 		return failWithRollback(fmt.Errorf("post-process ADF for %s: %w", relPath, err))
 	}
 
-	updatedPage, err := remote.UpdatePage(ctx, pageID, confluence.PageUpsertInput{
+	updateInput := confluence.PageUpsertInput{
 		SpaceID:      space.ID,
 		ParentPageID: resolvedParentID,
 		Title:        title,
 		Status:       targetState,
 		Version:      nextVersion,
 		BodyADF:      finalADF,
-	})
+	}
+	updatedPage, err := remote.UpdatePage(ctx, pageID, updateInput)
+	if err != nil && isExistingPage && errors.Is(err, confluence.ErrNotFound) {
+		refreshedPage, refreshErr := remote.GetPage(ctx, pageID)
+		if refreshErr != nil {
+			if errors.Is(refreshErr, confluence.ErrNotFound) || errors.Is(refreshErr, confluence.ErrArchived) {
+				return failWithRollback(fmt.Errorf(
+					"page %q (id=%s) no longer exists remotely during push; run 'conf pull' to reconcile or remove the id to publish as a new page",
+					relPath,
+					pageID,
+				))
+			}
+			return failWithRollback(fmt.Errorf("refresh page %s after update failure: %w", pageID, refreshErr))
+		}
+
+		if normalizePageLifecycleState(refreshedPage.Status) == "archived" {
+			return failWithRollback(fmt.Errorf(
+				"page %q (id=%s) is archived remotely and cannot be updated; run 'conf pull' to reconcile or remove the id to publish as a new page",
+				relPath,
+				pageID,
+			))
+		}
+
+		if refreshedPage.Version > localVersion {
+			switch policy {
+			case PushConflictPolicyForce:
+				// Continue and overwrite on top of remote head.
+			case PushConflictPolicyPullMerge, PushConflictPolicyCancel:
+				return failWithRollback(&PushConflictError{
+					Path:          relPath,
+					PageID:        pageID,
+					LocalVersion:  localVersion,
+					RemoteVersion: refreshedPage.Version,
+					Policy:        policy,
+				})
+			default:
+				return failWithRollback(&PushConflictError{
+					Path:          relPath,
+					PageID:        pageID,
+					LocalVersion:  localVersion,
+					RemoteVersion: refreshedPage.Version,
+					Policy:        PushConflictPolicyCancel,
+				})
+			}
+		}
+
+		retryParentID := strings.TrimSpace(refreshedPage.ParentPageID)
+		if retryParentID == "" {
+			retryParentID = strings.TrimSpace(fallbackParentID)
+		}
+
+		retryVersion := localVersion + 1
+		if policy == PushConflictPolicyForce && refreshedPage.Version >= retryVersion {
+			retryVersion = refreshedPage.Version + 1
+		}
+
+		retryInput := updateInput
+		retryInput.ParentPageID = retryParentID
+		retryInput.Version = retryVersion
+		updatedPage, err = remote.UpdatePage(ctx, pageID, retryInput)
+		if err != nil {
+			return failWithRollback(fmt.Errorf("update page %s after retry: %w", pageID, err))
+		}
+
+		remotePageByID[pageID] = refreshedPage
+		appendPushDiagnostic(
+			diagnostics,
+			relPath,
+			"UPDATE_RETRIED_AFTER_NOT_FOUND",
+			fmt.Sprintf(
+				"retried update for page %s after not-found response (parent %q -> %q)",
+				pageID,
+				strings.TrimSpace(updateInput.ParentPageID),
+				strings.TrimSpace(retryInput.ParentPageID),
+			),
+		)
+	}
 	if err != nil {
 		return failWithRollback(fmt.Errorf("update page %s: %w", pageID, err))
 	}
