@@ -25,8 +25,10 @@ func PlanPagePaths(
 	pageByID := map[string]confluence.Page{}
 	hasChildren := map[string]bool{}
 	for _, page := range pages {
-		pageByID[page.ID] = page
-		if page.ParentType == "page" || page.ParentType == "" {
+		pageID := strings.TrimSpace(page.ID)
+		pageByID[pageID] = page
+		parentType := strings.ToLower(strings.TrimSpace(page.ParentType))
+		if parentType == "" || parentType == "page" {
 			parentID := strings.TrimSpace(page.ParentPageID)
 			if parentID != "" {
 				hasChildren[parentID] = true
@@ -37,7 +39,7 @@ func PlanPagePaths(
 		folderByID = map[string]confluence.Folder{}
 	}
 	for _, folder := range folderByID {
-		if folder.ParentType == "page" {
+		if strings.EqualFold(strings.TrimSpace(folder.ParentType), "page") {
 			parentID := strings.TrimSpace(folder.ParentID)
 			if parentID != "" {
 				hasChildren[parentID] = true
@@ -262,6 +264,13 @@ func cloneStringMap(in map[string]string) map[string]string {
 	return out
 }
 
+func normalizePullState(state fs.SpaceState) fs.SpaceState {
+	state.PagePathIndex = cloneStringMap(state.PagePathIndex)
+	state.AttachmentIndex = cloneStringMap(state.AttachmentIndex)
+	state.FolderPathIndex = cloneStringMap(state.FolderPathIndex)
+	return state
+}
+
 type recoveryRemote interface {
 	GetPage(ctx context.Context, pageID string) (confluence.Page, error)
 }
@@ -327,7 +336,7 @@ func buildFolderPathIndex(folderByID map[string]confluence.Folder, pageByID map[
 	for folderID := range folderByID {
 		localPath := buildFolderLocalPath(folderID, folderByID, pageByID)
 		if localPath != "" {
-			folderPathIndex[localPath] = folderID
+			folderPathIndex[normalizeRelPath(localPath)] = folderID
 		}
 	}
 
@@ -392,5 +401,5 @@ func buildFolderLocalPath(folderID string, folderByID map[string]confluence.Fold
 		segments[i], segments[j] = segments[j], segments[i]
 	}
 
-	return filepath.Join(segments...)
+	return normalizeRelPath(filepath.Join(segments...))
 }

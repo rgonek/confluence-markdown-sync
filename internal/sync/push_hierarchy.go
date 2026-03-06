@@ -334,6 +334,7 @@ func normalizePushState(state fs.SpaceState) fs.SpaceState {
 	}
 	state.PagePathIndex = normalizedPageIndex
 	state.AttachmentIndex = cloneStringMap(state.AttachmentIndex)
+	state.FolderPathIndex = cloneStringMap(state.FolderPathIndex)
 	return state
 }
 

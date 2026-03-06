@@ -98,13 +98,7 @@ func Pull(ctx context.Context, remote PullRemote, opts PullOptions) (PullResult,
 		return PullResult{}, fmt.Errorf("resolve space directory: %w", err)
 	}
 
-	state := opts.State
-	if state.PagePathIndex == nil {
-		state.PagePathIndex = map[string]string{}
-	}
-	if state.AttachmentIndex == nil {
-		state.AttachmentIndex = map[string]string{}
-	}
+	state := normalizePullState(opts.State)
 
 	pullStartedAt := opts.PullStartedAt
 	if pullStartedAt.IsZero() {
