@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -9,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/huh"
+	"github.com/rgonek/confluence-markdown-sync/internal/config"
 	"github.com/spf13/cobra"
 )
 
@@ -293,6 +295,13 @@ func ensureDotEnv(cmd *cobra.Command) (bool, error) {
 	}
 
 	out := cmd.OutOrStdout()
+	if cfg, ok, err := loadInitEnvScaffoldConfig(); err != nil {
+		return false, err
+	} else if ok {
+		_, _ = fmt.Fprintln(out, "\nNo .env file found. Scaffolding it from existing Atlassian environment variables.")
+		return true, writeDotEnvFile(*cfg)
+	}
+
 	_, _ = fmt.Fprintln(out, "\nNo .env file found. Please enter your Atlassian credentials.")
 
 	var domain, email, token string
@@ -325,14 +334,33 @@ func ensureDotEnv(cmd *cobra.Command) (bool, error) {
 		token = promptField(scanner, out, "ATLASSIAN_API_TOKEN")
 	}
 
+	return true, writeDotEnvFile(config.Config{
+		Domain:   domain,
+		Email:    email,
+		APIToken: token,
+	})
+}
+
+func loadInitEnvScaffoldConfig() (*config.Config, bool, error) {
+	cfg, err := config.Load("")
+	if err == nil {
+		return cfg, true, nil
+	}
+	if errors.Is(err, config.ErrMissingConfig) {
+		return nil, false, nil
+	}
+	return nil, false, fmt.Errorf("resolve environment-backed auth for .env scaffolding: %w", err)
+}
+
+func writeDotEnvFile(cfg config.Config) error {
 	lines := []string{
 		"# Atlassian / Confluence credentials",
-		fmt.Sprintf("ATLASSIAN_DOMAIN=%s", strings.TrimRight(domain, "/")),
-		fmt.Sprintf("ATLASSIAN_EMAIL=%s", email),
-		fmt.Sprintf("ATLASSIAN_API_TOKEN=%s", token),
+		fmt.Sprintf("ATLASSIAN_DOMAIN=%s", strings.TrimRight(cfg.Domain, "/")),
+		fmt.Sprintf("ATLASSIAN_EMAIL=%s", strings.TrimSpace(cfg.Email)),
+		fmt.Sprintf("ATLASSIAN_API_TOKEN=%s", strings.TrimSpace(cfg.APIToken)),
 	}
 
-	return true, os.WriteFile(".env", []byte(strings.Join(lines, "\n")+"\n"), 0o600) //nolint:gosec // Writing static filename
+	return os.WriteFile(".env", []byte(strings.Join(lines, "\n")+"\n"), 0o600) //nolint:gosec // Writing static filename
 }
 
 func promptField(scanner *bufio.Scanner, out interface{ Write([]byte) (int, error) }, label string) string {

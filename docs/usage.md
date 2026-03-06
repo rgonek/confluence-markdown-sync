@@ -55,6 +55,7 @@ conf init
 - initialize Git when missing,
 - ensure `.gitignore` entries,
 - create `.env` when needed,
+- scaffold `.env` directly from already-set `ATLASSIAN_*` / `CONFLUENCE_*` variables without prompting,
 - scaffold helper files,
 - create an initial commit when a new Git repository is initialized.
 

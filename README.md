@@ -33,6 +33,7 @@ conf init
 ```
 
 `conf init` prepares Git metadata, `.gitignore`, and `.env` scaffolding, and creates an initial commit when it initializes a new Git repository.
+If `ATLASSIAN_*` or legacy `CONFLUENCE_*` credentials are already set in the environment, `conf init` writes `.env` from them without prompting.
 
 `conf pull` mirrors Confluence hierarchy locally by placing folders and child pages in nested directories. Pages with children use `<Page>/<Page>.md` so they are distinct from pure folders.
 

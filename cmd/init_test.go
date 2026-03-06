@@ -76,3 +76,50 @@ func TestRunInit_DoesNotCreateCommitInsideExistingRepo(t *testing.T) {
 		t.Fatalf("HEAD changed unexpectedly for existing repo: before=%s after=%s", headBefore, headAfter)
 	}
 }
+
+func TestRunInit_ScaffoldsDotEnvFromExistingEnvironmentWithoutPrompt(t *testing.T) {
+	runParallelCommandTest(t)
+	repo := t.TempDir()
+	chdirRepo(t, repo)
+
+	t.Setenv("ATLASSIAN_DOMAIN", "https://env-example.atlassian.net/")
+	t.Setenv("ATLASSIAN_EMAIL", "env-user@example.com")
+	t.Setenv("ATLASSIAN_API_TOKEN", "env-token-123")
+	t.Setenv("GIT_AUTHOR_NAME", "conf-test")
+	t.Setenv("GIT_AUTHOR_EMAIL", "conf-test@example.com")
+	t.Setenv("GIT_COMMITTER_NAME", "conf-test")
+	t.Setenv("GIT_COMMITTER_EMAIL", "conf-test@example.com")
+
+	cmd := newInitCmd()
+	out := &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetIn(strings.NewReader(""))
+
+	if err := runInit(cmd, nil); err != nil {
+		t.Fatalf("runInit() error: %v", err)
+	}
+
+	dotEnvRaw, err := os.ReadFile(filepath.Join(repo, ".env"))
+	if err != nil {
+		t.Fatalf("read .env: %v", err)
+	}
+
+	dotEnv := string(dotEnvRaw)
+	if !strings.Contains(dotEnv, "ATLASSIAN_DOMAIN=https://env-example.atlassian.net\n") {
+		t.Fatalf(".env missing normalized domain:\n%s", dotEnv)
+	}
+	if !strings.Contains(dotEnv, "ATLASSIAN_EMAIL=env-user@example.com\n") {
+		t.Fatalf(".env missing email:\n%s", dotEnv)
+	}
+	if !strings.Contains(dotEnv, "ATLASSIAN_API_TOKEN=env-token-123\n") {
+		t.Fatalf(".env missing API token:\n%s", dotEnv)
+	}
+
+	output := out.String()
+	if !strings.Contains(output, "Scaffolding it from existing Atlassian environment variables.") {
+		t.Fatalf("expected env-backed scaffolding message, got:\n%s", output)
+	}
+	if strings.Contains(output, "Please enter your Atlassian credentials") {
+		t.Fatalf("did not expect interactive credential prompt when env is complete:\n%s", output)
+	}
+}
