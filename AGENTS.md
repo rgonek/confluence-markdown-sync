@@ -76,7 +76,7 @@ The agent manages the full sync cycle.
 Validation failures must stop `push` immediately.
 
 ## Command Model
-- Commands: `init`, `pull`, `push`, `validate`, `diff`, `search`.
+- Commands: `init`, `pull`, `push`, `status`, `clean`, `prune`, `validate`, `diff`, `relink`, `version`, `doctor`, `search`.
 - `status` reports Markdown page drift only; attachment-only changes should be checked with `git status` or `conf diff`.
 - `[TARGET]` parsing rule:
   - Ends with `.md` => file mode.
