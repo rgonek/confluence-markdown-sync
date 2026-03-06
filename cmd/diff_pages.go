@@ -72,6 +72,7 @@ func recoverMissingPagesForDiff(ctx context.Context, remote syncflow.PullRemote,
 func resolveDiffFolderHierarchyFromPages(ctx context.Context, remote syncflow.PullRemote, pages []confluence.Page) (map[string]confluence.Folder, []syncflow.PullDiagnostic, error) {
 	folderByID := map[string]confluence.Folder{}
 	diagnostics := []syncflow.PullDiagnostic{}
+	fallbackTracker := syncflow.NewFolderLookupFallbackTracker()
 
 	queue := []string{}
 	enqueued := map[string]struct{}{}
@@ -105,11 +106,9 @@ func resolveDiffFolderHierarchyFromPages(ctx context.Context, remote syncflow.Pu
 			if !shouldIgnoreFolderHierarchyError(err) {
 				return nil, nil, fmt.Errorf("get folder %s: %w", folderID, err)
 			}
-			diagnostics = append(diagnostics, syncflow.PullDiagnostic{
-				Path:    folderID,
-				Code:    "FOLDER_LOOKUP_UNAVAILABLE",
-				Message: fmt.Sprintf("folder %s unavailable, falling back to page-only hierarchy: %v", folderID, err),
-			})
+			if diag, ok := fallbackTracker.Report("diff-folder-hierarchy", folderID, err); ok {
+				diagnostics = append(diagnostics, diag)
+			}
 			continue
 		}
 

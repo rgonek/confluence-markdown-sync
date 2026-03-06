@@ -3,15 +3,17 @@ package cmd
 import (
 	"context"
 	"fmt"
-	syncflow "github.com/rgonek/confluence-markdown-sync/internal/sync"
+	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 
 	"github.com/rgonek/confluence-markdown-sync/internal/confluence"
 	"github.com/rgonek/confluence-markdown-sync/internal/converter"
 	"github.com/rgonek/confluence-markdown-sync/internal/fs"
+	syncflow "github.com/rgonek/confluence-markdown-sync/internal/sync"
 )
 
 func hydrateDiffPageMetadata(
@@ -180,4 +182,98 @@ func buildDiffAttachmentPathByID(spaceDir string, attachmentIndex map[string]str
 	}
 
 	return out
+}
+
+type diffMetadataSummary struct {
+	Path    string
+	Changes []string
+}
+
+func summarizeMetadataDrift(relPath string, localRaw, remoteRaw []byte) diffMetadataSummary {
+	localDoc, err := fs.ParseMarkdownDocument(localRaw)
+	if err != nil {
+		return diffMetadataSummary{}
+	}
+	remoteDoc, err := fs.ParseMarkdownDocument(remoteRaw)
+	if err != nil {
+		return diffMetadataSummary{}
+	}
+
+	changes := make([]string, 0, 3)
+	localState := displayDiffState(localDoc.Frontmatter.State)
+	remoteState := displayDiffState(remoteDoc.Frontmatter.State)
+	if localState != remoteState {
+		changes = append(changes, fmt.Sprintf("state: %s -> %s", localState, remoteState))
+	}
+
+	localStatus := strings.TrimSpace(localDoc.Frontmatter.Status)
+	remoteStatus := strings.TrimSpace(remoteDoc.Frontmatter.Status)
+	if localStatus != remoteStatus {
+		changes = append(changes, fmt.Sprintf("status: %q -> %q", localStatus, remoteStatus))
+	}
+
+	localLabels := fs.NormalizeLabels(localDoc.Frontmatter.Labels)
+	remoteLabels := fs.NormalizeLabels(remoteDoc.Frontmatter.Labels)
+	if !slices.Equal(localLabels, remoteLabels) {
+		changes = append(changes, fmt.Sprintf("labels: %s -> %s", formatDiffLabels(localLabels), formatDiffLabels(remoteLabels)))
+	}
+
+	if len(changes) == 0 {
+		return diffMetadataSummary{}
+	}
+
+	return diffMetadataSummary{
+		Path:    filepath.ToSlash(relPath),
+		Changes: changes,
+	}
+}
+
+func writeDiffMetadataSummary(out io.Writer, summaries []diffMetadataSummary) error {
+	filtered := make([]diffMetadataSummary, 0, len(summaries))
+	for _, summary := range summaries {
+		if summary.Path == "" || len(summary.Changes) == 0 {
+			continue
+		}
+		filtered = append(filtered, summary)
+	}
+	if len(filtered) == 0 {
+		return nil
+	}
+
+	sort.Slice(filtered, func(i, j int) bool {
+		return filtered[i].Path < filtered[j].Path
+	})
+
+	if _, err := fmt.Fprintln(out, "metadata drift summary:"); err != nil {
+		return fmt.Errorf("write metadata drift summary: %w", err)
+	}
+	for _, summary := range filtered {
+		if _, err := fmt.Fprintf(out, "  %s\n", summary.Path); err != nil {
+			return fmt.Errorf("write metadata drift summary: %w", err)
+		}
+		for _, change := range summary.Changes {
+			if _, err := fmt.Fprintf(out, "    - %s\n", change); err != nil {
+				return fmt.Errorf("write metadata drift summary: %w", err)
+			}
+		}
+	}
+	if _, err := fmt.Fprintln(out); err != nil {
+		return fmt.Errorf("write metadata drift summary: %w", err)
+	}
+	return nil
+}
+
+func displayDiffState(state string) string {
+	normalized := strings.TrimSpace(strings.ToLower(state))
+	if normalized == "" || normalized == "current" {
+		return "current"
+	}
+	return normalized
+}
+
+func formatDiffLabels(labels []string) string {
+	if len(labels) == 0 {
+		return "[]"
+	}
+	return "[" + strings.Join(labels, ", ") + "]"
 }

@@ -250,6 +250,9 @@ func runDiffFileMode(
 	if err := os.WriteFile(remoteFile, rendered, 0o600); err != nil {
 		return fmt.Errorf("write diff file: %w", err)
 	}
+	if err := writeDiffMetadataSummary(out, []diffMetadataSummary{summarizeMetadataDrift(relPath, localRaw, rendered)}); err != nil {
+		return err
+	}
 
 	return printNoIndexDiff(out, localFile, remoteFile)
 }
@@ -285,6 +288,7 @@ func runDiffSpaceMode(
 	sort.Strings(pageIDs)
 
 	diagnostics := make([]syncflow.PullDiagnostic, 0)
+	metadataSummaries := make([]diffMetadataSummary, 0, len(pageIDs))
 	for _, pageID := range pageIDs {
 		page, err := remote.GetPage(ctx, pageID)
 		if err != nil {
@@ -327,12 +331,23 @@ func runDiffSpaceMode(
 		if err := os.WriteFile(dstPath, rendered, 0o600); err != nil {
 			return fmt.Errorf("write remote snapshot file: %w", err)
 		}
+
+		localRaw, err := os.ReadFile(sourcePath) //nolint:gosec // planned path is scoped under the current workspace
+		if err == nil {
+			localRaw, err = normalizeDiffMarkdown(localRaw)
+		}
+		if err == nil {
+			metadataSummaries = append(metadataSummaries, summarizeMetadataDrift(relPath, localRaw, rendered))
+		}
 	}
 
 	for _, diag := range diagnostics {
 		if err := writeSyncDiagnostic(out, diag); err != nil {
 			return fmt.Errorf("write diagnostic output: %w", err)
 		}
+	}
+	if err := writeDiffMetadataSummary(out, metadataSummaries); err != nil {
+		return err
 	}
 
 	return printNoIndexDiff(out, localSnapshot, remoteSnapshot)

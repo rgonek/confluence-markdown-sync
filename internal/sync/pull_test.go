@@ -1,8 +1,10 @@
 package sync
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -366,6 +368,63 @@ func TestPull_FolderListFailureFallsBackToPageHierarchy(t *testing.T) {
 	}
 	if !foundFolderWarning {
 		t.Fatalf("expected FOLDER_LOOKUP_UNAVAILABLE diagnostic, got %+v", result.Diagnostics)
+	}
+}
+
+func TestResolveFolderHierarchyFromPages_DeduplicatesFallbackDiagnostics(t *testing.T) {
+	var logs bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelWarn})))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+
+	pages := []confluence.Page{
+		{ID: "1", Title: "Root", ParentPageID: "folder-1", ParentType: "folder"},
+		{ID: "2", Title: "Child", ParentPageID: "folder-2", ParentType: "folder"},
+	}
+	errBoom := &confluence.APIError{
+		StatusCode: 500,
+		Method:     "GET",
+		URL:        "/wiki/api/v2/folders",
+		Message:    "Internal Server Error",
+	}
+	remote := &fakePullRemote{
+		folderErr: errBoom,
+	}
+
+	_, diagnostics, err := resolveFolderHierarchyFromPages(context.Background(), remote, pages)
+	if err != nil {
+		t.Fatalf("resolveFolderHierarchyFromPages() error: %v", err)
+	}
+
+	fallbackDiagnostics := 0
+	for _, diag := range diagnostics {
+		if diag.Code != "FOLDER_LOOKUP_UNAVAILABLE" {
+			continue
+		}
+		fallbackDiagnostics++
+		if strings.Contains(diag.Message, "Internal Server Error") {
+			t.Fatalf("expected concise diagnostic without raw API error, got %q", diag.Message)
+		}
+		if strings.Contains(diag.Message, "/wiki/api/v2/folders") {
+			t.Fatalf("expected concise diagnostic without raw API URL, got %q", diag.Message)
+		}
+		if !strings.Contains(diag.Message, "falling back to page-only hierarchy for affected pages") {
+			t.Fatalf("expected concise fallback explanation, got %q", diag.Message)
+		}
+	}
+	if fallbackDiagnostics != 1 {
+		t.Fatalf("expected one deduplicated fallback diagnostic, got %+v", diagnostics)
+	}
+
+	gotLogs := logs.String()
+	if strings.Count(gotLogs, "folder_lookup_unavailable_falling_back_to_pages") != 1 {
+		t.Fatalf("expected one warning log with raw error details, got:\n%s", gotLogs)
+	}
+	if !strings.Contains(gotLogs, "Internal Server Error") {
+		t.Fatalf("expected raw error details in logs, got:\n%s", gotLogs)
+	}
+	if !strings.Contains(gotLogs, "/wiki/api/v2/folders") {
+		t.Fatalf("expected raw API URL in logs, got:\n%s", gotLogs)
 	}
 }
 

@@ -10,8 +10,6 @@ import (
 )
 
 func TestFolderListFallbackTracker_SuppressesRepeatedWarnings(t *testing.T) {
-	t.Parallel()
-
 	var logs bytes.Buffer
 	previous := slog.Default()
 	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelInfo})))

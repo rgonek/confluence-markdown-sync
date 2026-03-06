@@ -2,9 +2,7 @@ package sync
 
 import (
 	"context"
-	"errors"
 	"log/slog"
-	"strconv"
 	"strings"
 	"sync"
 
@@ -37,7 +35,7 @@ func (t *folderListFallbackTracker) Report(scope string, err error) {
 		scope = "space-scan"
 	}
 
-	key := folderListFallbackFingerprint(err)
+	key := folderFallbackFingerprint(err)
 
 	t.mu.Lock()
 	state := t.seen[key]
@@ -70,19 +68,6 @@ func (t *folderListFallbackTracker) Report(scope string, err error) {
 			"repeat_count", state.count-1,
 		)
 	}
-}
-
-func folderListFallbackFingerprint(err error) string {
-	var apiErr *confluence.APIError
-	if errors.As(err, &apiErr) {
-		return strings.Join([]string{
-			strings.TrimSpace(apiErr.Method),
-			strings.TrimSpace(apiErr.URL),
-			strconv.Itoa(apiErr.StatusCode),
-			strings.TrimSpace(apiErr.Message),
-		}, "|")
-	}
-	return strings.TrimSpace(err.Error())
 }
 
 func listAllPushFoldersWithTracking(

@@ -281,6 +281,93 @@ func TestRunDiff_FolderListFailureFallsBackToPageHierarchy(t *testing.T) {
 	}
 }
 
+func TestRunDiff_DeduplicatesFolderFallbackWarnings(t *testing.T) {
+	runParallelCommandTest(t)
+	repo := t.TempDir()
+	spaceDir := filepath.Join(repo, "ENG")
+	if err := os.MkdirAll(spaceDir, 0o750); err != nil {
+		t.Fatalf("mkdir space: %v", err)
+	}
+
+	localFile := filepath.Join(spaceDir, "root.md")
+	writeMarkdown(t, localFile, fs.MarkdownDocument{
+		Frontmatter: fs.Frontmatter{
+			Title: "Root",
+			ID:    "1",
+
+			Version:                1,
+			ConfluenceLastModified: "2026-02-01T10:00:00Z",
+		},
+		Body: "old body\n",
+	})
+
+	fake := &cmdFakePullRemote{
+		space: confluence.Space{ID: "space-1", Key: "ENG", Name: "Engineering"},
+		pages: []confluence.Page{
+			{ID: "1", SpaceID: "space-1", Title: "Root", ParentPageID: "folder-1", ParentType: "folder", Version: 2, LastModified: time.Date(2026, time.February, 1, 11, 0, 0, 0, time.UTC)},
+			{ID: "2", SpaceID: "space-1", Title: "Child", ParentPageID: "folder-2", ParentType: "folder", Version: 2, LastModified: time.Date(2026, time.February, 1, 11, 5, 0, 0, time.UTC)},
+		},
+		folderErr: &confluence.APIError{
+			StatusCode: 500,
+			Method:     "GET",
+			URL:        "/wiki/api/v2/folders",
+			Message:    "Internal Server Error",
+		},
+		pagesByID: map[string]confluence.Page{
+			"1": {
+				ID:           "1",
+				SpaceID:      "space-1",
+				Title:        "Root",
+				ParentPageID: "folder-1",
+				ParentType:   "folder",
+				Version:      2,
+				LastModified: time.Date(2026, time.February, 1, 11, 0, 0, 0, time.UTC),
+				BodyADF:      rawJSON(t, simpleADF("new body")),
+			},
+			"2": {
+				ID:           "2",
+				SpaceID:      "space-1",
+				Title:        "Child",
+				ParentPageID: "folder-2",
+				ParentType:   "folder",
+				Version:      2,
+				LastModified: time.Date(2026, time.February, 1, 11, 5, 0, 0, time.UTC),
+				BodyADF:      rawJSON(t, simpleADF("child body")),
+			},
+		},
+		attachments: map[string][]byte{},
+	}
+
+	oldFactory := newDiffRemote
+	newDiffRemote = func(_ *config.Config) (syncflow.PullRemote, error) { return fake, nil }
+	t.Cleanup(func() { newDiffRemote = oldFactory })
+
+	setupEnv(t)
+	chdirRepo(t, repo)
+
+	cmd := &cobra.Command{}
+	out := &bytes.Buffer{}
+	cmd.SetOut(out)
+
+	if err := runDiff(cmd, config.Target{Mode: config.TargetModeFile, Value: localFile}); err != nil {
+		t.Fatalf("runDiff() error: %v", err)
+	}
+
+	got := out.String()
+	if count := strings.Count(got, "[FOLDER_LOOKUP_UNAVAILABLE]"); count != 1 {
+		t.Fatalf("expected one deduplicated folder fallback warning, got %d:\n%s", count, got)
+	}
+	if strings.Contains(got, "Internal Server Error") {
+		t.Fatalf("expected concise operator warning without raw API error, got:\n%s", got)
+	}
+	if strings.Contains(got, "/wiki/api/v2/folders") {
+		t.Fatalf("expected concise operator warning without raw API URL, got:\n%s", got)
+	}
+	if !strings.Contains(got, "falling back to page-only hierarchy for affected pages") {
+		t.Fatalf("expected concise folder fallback warning, got:\n%s", got)
+	}
+}
+
 func TestRunDiff_RespectsCanceledContext(t *testing.T) {
 	runParallelCommandTest(t)
 	ctx, cancel := context.WithCancel(context.Background())
@@ -505,6 +592,287 @@ func TestRunDiff_FileModeShowsSyncedMetadataParity(t *testing.T) {
 	}
 	if !strings.Contains(got, "+labels:") || !strings.Contains(got, "+    - alpha") || !strings.Contains(got, "+    - beta") {
 		t.Fatalf("expected normalized labels diff, got:\n%s", got)
+	}
+}
+
+func TestRunDiff_FileModeShowsLabelOnlyMetadataSummary(t *testing.T) {
+	runParallelCommandTest(t)
+	repo := t.TempDir()
+	spaceDir := filepath.Join(repo, "ENG")
+	if err := os.MkdirAll(spaceDir, 0o750); err != nil {
+		t.Fatalf("mkdir space: %v", err)
+	}
+
+	localFile := filepath.Join(spaceDir, "root.md")
+	writeMarkdown(t, localFile, fs.MarkdownDocument{
+		Frontmatter: fs.Frontmatter{
+			Title:   "Root",
+			ID:      "1",
+			Version: 2,
+			Labels:  []string{"beta"},
+		},
+		Body: "same body\n",
+	})
+
+	fake := &cmdFakePullRemote{
+		space: confluence.Space{ID: "space-1", Key: "ENG", Name: "Engineering"},
+		pages: []confluence.Page{
+			{ID: "1", SpaceID: "space-1", Title: "Root", Version: 2, LastModified: time.Date(2026, time.February, 1, 11, 0, 0, 0, time.UTC)},
+		},
+		pagesByID: map[string]confluence.Page{
+			"1": {
+				ID:           "1",
+				SpaceID:      "space-1",
+				Title:        "Root",
+				Version:      2,
+				LastModified: time.Date(2026, time.February, 1, 11, 0, 0, 0, time.UTC),
+				BodyADF:      rawJSON(t, simpleADF("same body")),
+			},
+		},
+		attachments:  map[string][]byte{},
+		labelsByPage: map[string][]string{"1": {"gamma", "alpha", "gamma"}},
+	}
+
+	oldFactory := newDiffRemote
+	newDiffRemote = func(_ *config.Config) (syncflow.PullRemote, error) { return fake, nil }
+	t.Cleanup(func() { newDiffRemote = oldFactory })
+
+	setupEnv(t)
+	chdirRepo(t, repo)
+
+	cmd := &cobra.Command{}
+	out := &bytes.Buffer{}
+	cmd.SetOut(out)
+
+	if err := runDiff(cmd, config.Target{Mode: config.TargetModeFile, Value: localFile}); err != nil {
+		t.Fatalf("runDiff() error: %v", err)
+	}
+
+	got := out.String()
+	if !strings.Contains(got, "metadata drift summary") {
+		t.Fatalf("expected metadata summary, got:\n%s", got)
+	}
+	if !strings.Contains(got, "labels: [beta] -> [alpha, gamma]") {
+		t.Fatalf("expected normalized label summary, got:\n%s", got)
+	}
+	if strings.Index(got, "metadata drift summary") > strings.Index(got, "diff --git") {
+		t.Fatalf("expected metadata summary before textual diff, got:\n%s", got)
+	}
+}
+
+func TestRunDiff_SpaceModeShowsMetadataSummaryForRemoteMetadataOnlyChanges(t *testing.T) {
+	runParallelCommandTest(t)
+	repo := t.TempDir()
+	spaceDir := filepath.Join(repo, "ENG")
+	if err := os.MkdirAll(spaceDir, 0o750); err != nil {
+		t.Fatalf("mkdir space: %v", err)
+	}
+
+	writeMarkdown(t, filepath.Join(spaceDir, "root.md"), fs.MarkdownDocument{
+		Frontmatter: fs.Frontmatter{
+			Title:   "Root",
+			ID:      "1",
+			Version: 2,
+		},
+		Body: "same body\n",
+	})
+
+	if err := fs.SaveState(spaceDir, fs.SpaceState{
+		PagePathIndex: map[string]string{
+			"root.md": "1",
+		},
+		AttachmentIndex: map[string]string{},
+	}); err != nil {
+		t.Fatalf("save state: %v", err)
+	}
+
+	fake := &cmdFakePullRemote{
+		space: confluence.Space{ID: "space-1", Key: "ENG", Name: "Engineering"},
+		pages: []confluence.Page{
+			{ID: "1", SpaceID: "space-1", Title: "Root", Status: "draft", Version: 2, LastModified: time.Date(2026, time.February, 1, 11, 0, 0, 0, time.UTC)},
+		},
+		pagesByID: map[string]confluence.Page{
+			"1": {
+				ID:           "1",
+				SpaceID:      "space-1",
+				Title:        "Root",
+				Status:       "draft",
+				Version:      2,
+				LastModified: time.Date(2026, time.February, 1, 11, 0, 0, 0, time.UTC),
+				BodyADF:      rawJSON(t, simpleADF("same body")),
+			},
+		},
+		attachments:       map[string][]byte{},
+		contentStatusByID: map[string]string{"1": "Ready to review"},
+		labelsByPage:      map[string][]string{"1": {"beta", "alpha"}},
+	}
+
+	oldFactory := newDiffRemote
+	newDiffRemote = func(_ *config.Config) (syncflow.PullRemote, error) { return fake, nil }
+	t.Cleanup(func() { newDiffRemote = oldFactory })
+
+	setupEnv(t)
+	chdirRepo(t, repo)
+
+	cmd := &cobra.Command{}
+	out := &bytes.Buffer{}
+	cmd.SetOut(out)
+
+	if err := runDiff(cmd, config.Target{Mode: config.TargetModeSpace, Value: "ENG"}); err != nil {
+		t.Fatalf("runDiff() error: %v", err)
+	}
+
+	got := out.String()
+	if !strings.Contains(got, "metadata drift summary") {
+		t.Fatalf("expected metadata summary, got:\n%s", got)
+	}
+	if !strings.Contains(got, "root.md") {
+		t.Fatalf("expected metadata summary to include path, got:\n%s", got)
+	}
+	if !strings.Contains(got, "state: current -> draft") {
+		t.Fatalf("expected state summary, got:\n%s", got)
+	}
+	if !strings.Contains(got, `status: "" -> "Ready to review"`) {
+		t.Fatalf("expected status summary, got:\n%s", got)
+	}
+	if !strings.Contains(got, "labels: [] -> [alpha, beta]") {
+		t.Fatalf("expected labels summary, got:\n%s", got)
+	}
+}
+
+func TestRunDiff_FileModeOmitsMetadataSummaryForContentOnlyChanges(t *testing.T) {
+	runParallelCommandTest(t)
+	repo := t.TempDir()
+	spaceDir := filepath.Join(repo, "ENG")
+	if err := os.MkdirAll(spaceDir, 0o750); err != nil {
+		t.Fatalf("mkdir space: %v", err)
+	}
+
+	localFile := filepath.Join(spaceDir, "root.md")
+	writeMarkdown(t, localFile, fs.MarkdownDocument{
+		Frontmatter: fs.Frontmatter{
+			Title:   "Root",
+			ID:      "1",
+			Version: 2,
+			State:   "draft",
+			Status:  "Ready to review",
+			Labels:  []string{"alpha", "beta"},
+		},
+		Body: "old body\n",
+	})
+
+	fake := &cmdFakePullRemote{
+		space: confluence.Space{ID: "space-1", Key: "ENG", Name: "Engineering"},
+		pages: []confluence.Page{
+			{ID: "1", SpaceID: "space-1", Title: "Root", Status: "draft", Version: 2, LastModified: time.Date(2026, time.February, 1, 11, 0, 0, 0, time.UTC)},
+		},
+		pagesByID: map[string]confluence.Page{
+			"1": {
+				ID:           "1",
+				SpaceID:      "space-1",
+				Title:        "Root",
+				Status:       "draft",
+				Version:      2,
+				LastModified: time.Date(2026, time.February, 1, 11, 0, 0, 0, time.UTC),
+				BodyADF:      rawJSON(t, simpleADF("new body")),
+			},
+		},
+		attachments:       map[string][]byte{},
+		contentStatusByID: map[string]string{"1": "Ready to review"},
+		labelsByPage:      map[string][]string{"1": {"beta", "alpha"}},
+	}
+
+	oldFactory := newDiffRemote
+	newDiffRemote = func(_ *config.Config) (syncflow.PullRemote, error) { return fake, nil }
+	t.Cleanup(func() { newDiffRemote = oldFactory })
+
+	setupEnv(t)
+	chdirRepo(t, repo)
+
+	cmd := &cobra.Command{}
+	out := &bytes.Buffer{}
+	cmd.SetOut(out)
+
+	if err := runDiff(cmd, config.Target{Mode: config.TargetModeFile, Value: localFile}); err != nil {
+		t.Fatalf("runDiff() error: %v", err)
+	}
+
+	got := out.String()
+	if strings.Contains(got, "metadata drift summary") {
+		t.Fatalf("did not expect metadata summary for content-only changes, got:\n%s", got)
+	}
+	if !strings.Contains(got, "-old body") || !strings.Contains(got, "+new body") {
+		t.Fatalf("expected content diff, got:\n%s", got)
+	}
+}
+
+func TestRunDiff_FileModeShowsMetadataSummaryBeforeCombinedMetadataAndContentChanges(t *testing.T) {
+	runParallelCommandTest(t)
+	repo := t.TempDir()
+	spaceDir := filepath.Join(repo, "ENG")
+	if err := os.MkdirAll(spaceDir, 0o750); err != nil {
+		t.Fatalf("mkdir space: %v", err)
+	}
+
+	localFile := filepath.Join(spaceDir, "root.md")
+	writeMarkdown(t, localFile, fs.MarkdownDocument{
+		Frontmatter: fs.Frontmatter{
+			Title:   "Root",
+			ID:      "1",
+			Version: 2,
+			Labels:  []string{"beta"},
+		},
+		Body: "old body\n",
+	})
+
+	fake := &cmdFakePullRemote{
+		space: confluence.Space{ID: "space-1", Key: "ENG", Name: "Engineering"},
+		pages: []confluence.Page{
+			{ID: "1", SpaceID: "space-1", Title: "Root", Status: "draft", Version: 2, LastModified: time.Date(2026, time.February, 1, 11, 0, 0, 0, time.UTC)},
+		},
+		pagesByID: map[string]confluence.Page{
+			"1": {
+				ID:           "1",
+				SpaceID:      "space-1",
+				Title:        "Root",
+				Status:       "draft",
+				Version:      2,
+				LastModified: time.Date(2026, time.February, 1, 11, 0, 0, 0, time.UTC),
+				BodyADF:      rawJSON(t, simpleADF("new body")),
+			},
+		},
+		attachments:       map[string][]byte{},
+		contentStatusByID: map[string]string{"1": "Ready to review"},
+		labelsByPage:      map[string][]string{"1": {"beta", "alpha"}},
+	}
+
+	oldFactory := newDiffRemote
+	newDiffRemote = func(_ *config.Config) (syncflow.PullRemote, error) { return fake, nil }
+	t.Cleanup(func() { newDiffRemote = oldFactory })
+
+	setupEnv(t)
+	chdirRepo(t, repo)
+
+	cmd := &cobra.Command{}
+	out := &bytes.Buffer{}
+	cmd.SetOut(out)
+
+	if err := runDiff(cmd, config.Target{Mode: config.TargetModeFile, Value: localFile}); err != nil {
+		t.Fatalf("runDiff() error: %v", err)
+	}
+
+	got := out.String()
+	if !strings.Contains(got, "metadata drift summary") {
+		t.Fatalf("expected metadata summary, got:\n%s", got)
+	}
+	if !strings.Contains(got, "state: current -> draft") {
+		t.Fatalf("expected state summary, got:\n%s", got)
+	}
+	if !strings.Contains(got, "-old body") || !strings.Contains(got, "+new body") {
+		t.Fatalf("expected content diff, got:\n%s", got)
+	}
+	if strings.Index(got, "metadata drift summary") > strings.Index(got, "diff --git") {
+		t.Fatalf("expected metadata summary before textual diff, got:\n%s", got)
 	}
 }
 

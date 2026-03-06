@@ -160,6 +160,10 @@ func runPush(cmd *cobra.Command, target config.Target, onConflict string, dryRun
 	if err != nil {
 		return err
 	}
+	currentBranch, err := gitClient.CurrentBranch()
+	if err != nil {
+		return err
+	}
 
 	spaceScopePath, err := gitScopePathFromPath(spaceDir)
 	if err != nil {
@@ -268,6 +272,21 @@ func runPush(cmd *cobra.Command, target config.Target, onConflict string, dryRun
 	}
 	defer func() {
 		_ = gitClient.RemoveWorktree(worktreeDir)
+	}()
+
+	defer func() {
+		if runErr == nil {
+			_ = deleteRecoveryMetadata(gitClient.RootDir, refKey, tsStr)
+			return
+		}
+		_ = writeRecoveryMetadata(gitClient.RootDir, recoveryMetadata{
+			SpaceKey:       refKey,
+			Timestamp:      tsStr,
+			SyncBranch:     syncBranchName,
+			SnapshotRef:    snapshotName,
+			OriginalBranch: strings.TrimSpace(currentBranch),
+			FailureReason:  runErr.Error(),
+		})
 	}()
 
 	return runPushInWorktree(ctx, cmd, out, target, spaceKey, spaceDir, onConflict, tsStr,
