@@ -299,6 +299,61 @@ func TestRunPush_WorksWithoutGitRemoteConfigured(t *testing.T) {
 	}
 }
 
+func TestRunPush_MermaidWarningAppearsBeforePushAndPushesCodeBlockADF(t *testing.T) {
+	runParallelCommandTest(t)
+
+	repo := t.TempDir()
+	spaceDir := preparePushRepoWithBaseline(t, repo)
+
+	writeMarkdown(t, filepath.Join(spaceDir, "root.md"), fs.MarkdownDocument{
+		Frontmatter: fs.Frontmatter{
+			Title: "Root",
+			ID:    "1",
+
+			Version:                1,
+			ConfluenceLastModified: "2026-02-01T10:00:00Z",
+		},
+		Body: "```mermaid\ngraph TD\n  A --> B\n```\n",
+	})
+	runGitForTest(t, repo, "add", ".")
+	runGitForTest(t, repo, "commit", "-m", "local mermaid change")
+
+	fake := newCmdFakePushRemote(1)
+	oldPushFactory := newPushRemote
+	oldPullFactory := newPullRemote
+	newPushRemote = func(_ *config.Config) (syncflow.PushRemote, error) { return fake, nil }
+	newPullRemote = func(_ *config.Config) (syncflow.PullRemote, error) { return fake, nil }
+	t.Cleanup(func() {
+		newPushRemote = oldPushFactory
+		newPullRemote = oldPullFactory
+	})
+
+	setupEnv(t)
+	chdirRepo(t, spaceDir)
+
+	out := &bytes.Buffer{}
+	cmd := &cobra.Command{}
+	cmd.SetOut(out)
+	if err := runPush(cmd, config.Target{Mode: config.TargetModeSpace, Value: ""}, OnConflictCancel, false); err != nil {
+		t.Fatalf("runPush() unexpected error: %v\nOutput:\n%s", err, out.String())
+	}
+
+	if !strings.Contains(out.String(), "MERMAID_PRESERVED_AS_CODEBLOCK") {
+		t.Fatalf("expected Mermaid warning in push output, got:\n%s", out.String())
+	}
+	if len(fake.updateCalls) == 0 {
+		t.Fatal("expected push to update at least one page")
+	}
+
+	adf := string(fake.updateCalls[len(fake.updateCalls)-1].Input.BodyADF)
+	if !strings.Contains(adf, "\"type\":\"codeBlock\"") {
+		t.Fatalf("expected Mermaid push ADF to contain codeBlock node, got: %s", adf)
+	}
+	if !strings.Contains(adf, "\"language\":\"mermaid\"") {
+		t.Fatalf("expected Mermaid push ADF to preserve mermaid language, got: %s", adf)
+	}
+}
+
 func TestRunPush_CrossSpaceRelativeLinkParityWithValidate(t *testing.T) {
 	runParallelCommandTest(t)
 

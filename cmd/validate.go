@@ -15,6 +15,7 @@ import (
 	"github.com/rgonek/confluence-markdown-sync/internal/converter"
 	"github.com/rgonek/confluence-markdown-sync/internal/fs"
 	"github.com/rgonek/confluence-markdown-sync/internal/git"
+	"github.com/rgonek/confluence-markdown-sync/internal/search"
 	syncflow "github.com/rgonek/confluence-markdown-sync/internal/sync"
 	"github.com/rgonek/jira-adf-converter/mdconverter"
 	"github.com/spf13/cobra"
@@ -41,6 +42,16 @@ type baselineFrontmatterCacheEntry struct {
 	loaded bool
 	found  bool
 	fm     fs.Frontmatter
+}
+
+type validateWarning struct {
+	Code    string
+	Message string
+}
+
+type validateFileResult struct {
+	Issues   []fs.ValidationIssue
+	Warnings []validateWarning
 }
 
 func newValidateCmd() *cobra.Command {
@@ -142,8 +153,9 @@ func runValidateTargetWithContext(ctx context.Context, out io.Writer, target con
 
 		rel, _ := filepath.Rel(targetCtx.spaceDir, file)
 
-		issues := validateFile(ctx, file, targetCtx.spaceDir, linkHook, state.AttachmentIndex)
-		issues = append(issues, immutableResolver.validate(file)...)
+		fileResult := validateFile(ctx, file, targetCtx.spaceDir, linkHook, state.AttachmentIndex)
+		issues := append(fileResult.Issues, immutableResolver.validate(file)...)
+		printValidateWarnings(out, rel, fileResult.Warnings)
 		if len(issues) == 0 {
 			continue
 		}
@@ -326,37 +338,39 @@ func (r *validateImmutableFrontmatterResolver) readBaselineFrontmatter(absPath s
 	return doc.Frontmatter, true
 }
 
-func validateFile(ctx context.Context, path, spaceDir string, linkHook mdconverter.LinkParseHook, attachmentIndex map[string]string) []fs.ValidationIssue {
-	var issues []fs.ValidationIssue
+func validateFile(ctx context.Context, path, spaceDir string, linkHook mdconverter.LinkParseHook, attachmentIndex map[string]string) validateFileResult {
+	result := validateFileResult{}
 
 	// Read full document
 	doc, err := fs.ReadMarkdownDocument(path)
 	if err != nil {
-		return append(issues, fs.ValidationIssue{
+		result.Issues = append(result.Issues, fs.ValidationIssue{
 			Code:    "read_error",
 			Message: err.Error(),
 		})
+		return result
 	}
+	result.Warnings = append(result.Warnings, mermaidValidationWarnings(doc.Body)...)
 
 	// 1. Validate Schema
 	res := fs.ValidateFrontmatterSchema(doc.Frontmatter)
-	issues = append(issues, res.Issues...)
+	result.Issues = append(result.Issues, res.Issues...)
 
 	strictAttachmentIndex, _, err := syncflow.BuildStrictAttachmentIndex(spaceDir, path, doc.Body, attachmentIndex)
 	if err != nil {
-		issues = append(issues, fs.ValidationIssue{
+		result.Issues = append(result.Issues, fs.ValidationIssue{
 			Code:    "conversion_error",
 			Message: err.Error(),
 		})
-		return issues
+		return result
 	}
 	preparedBody, err := syncflow.PrepareMarkdownForAttachmentConversion(spaceDir, path, doc.Body, strictAttachmentIndex)
 	if err != nil {
-		issues = append(issues, fs.ValidationIssue{
+		result.Issues = append(result.Issues, fs.ValidationIssue{
 			Code:    "conversion_error",
 			Message: err.Error(),
 		})
-		return issues
+		return result
 	}
 	mediaHook := syncflow.NewReverseMediaHook(spaceDir, strictAttachmentIndex)
 
@@ -368,13 +382,13 @@ func validateFile(ctx context.Context, path, spaceDir string, linkHook mdconvert
 	}, path)
 
 	if err != nil {
-		issues = append(issues, fs.ValidationIssue{
+		result.Issues = append(result.Issues, fs.ValidationIssue{
 			Code:    "conversion_error",
 			Message: err.Error(),
 		})
 	}
 
-	return issues
+	return result
 }
 
 // runValidateChangedPushFiles validates only the files in changedAbsPaths but builds the full
@@ -436,8 +450,9 @@ func runValidateChangedPushFiles(ctx context.Context, out io.Writer, spaceDir st
 
 		rel, _ := filepath.Rel(targetCtx.spaceDir, file)
 
-		issues := validateFile(ctx, file, targetCtx.spaceDir, linkHook, state.AttachmentIndex)
-		issues = append(issues, immutableResolver.validate(file)...)
+		fileResult := validateFile(ctx, file, targetCtx.spaceDir, linkHook, state.AttachmentIndex)
+		issues := append(fileResult.Issues, immutableResolver.validate(file)...)
+		printValidateWarnings(out, rel, fileResult.Warnings)
 		if len(issues) == 0 {
 			continue
 		}
@@ -511,4 +526,33 @@ func detectDuplicatePageIDs(index syncflow.PageIndex) []string {
 		))
 	}
 	return errs
+}
+
+func printValidateWarnings(out io.Writer, relPath string, warnings []validateWarning) {
+	if len(warnings) == 0 {
+		return
+	}
+
+	_, _ = fmt.Fprintf(out, "Validation warning for %s:\n", filepath.ToSlash(relPath))
+	for _, warning := range warnings {
+		_, _ = fmt.Fprintf(out, "  - [%s] %s\n", warning.Code, warning.Message)
+	}
+}
+
+func mermaidValidationWarnings(body string) []validateWarning {
+	structure := search.ParseMarkdownStructure([]byte(body))
+	warnings := make([]validateWarning, 0)
+	for _, block := range structure.CodeBlocks {
+		if !strings.EqualFold(strings.TrimSpace(block.Language), "mermaid") {
+			continue
+		}
+		warnings = append(warnings, validateWarning{
+			Code: "MERMAID_PRESERVED_AS_CODEBLOCK",
+			Message: fmt.Sprintf(
+				"Mermaid fenced code at line %d will be pushed as a Confluence code block with language mermaid; it will not render as a Mermaid diagram macro",
+				block.Line,
+			),
+		})
+	}
+	return warnings
 }
