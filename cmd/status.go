@@ -36,6 +36,8 @@ type StatusReport struct {
 	MaxVersionDrift int
 }
 
+const statusScopeNote = "Scope: markdown pages only; attachment-only drift is excluded from `conf status` output. Use `git status` or `conf diff` to inspect assets."
+
 var newStatusRemote = func(cfg *config.Config) (StatusRemote, error) {
 	return newConfluenceClientFromConfig(cfg)
 }
@@ -127,6 +129,7 @@ func runStatus(cmd *cobra.Command, target config.Target) error {
 
 	_, _ = fmt.Fprintf(out, "Space: %s\n", spaceKey)
 	_, _ = fmt.Fprintf(out, "Directory: %s\n", initialCtx.spaceDir)
+	_, _ = fmt.Fprintf(out, "Note: %s\n", statusScopeNote)
 
 	printStatusSection(out, "Local not pushed", report.LocalAdded, report.LocalModified, report.LocalDeleted)
 	printStatusSection(out, "Remote not pulled", report.RemoteAdded, report.RemoteModified, report.RemoteDeleted)

@@ -77,6 +77,7 @@ Validation failures must stop `push` immediately.
 
 ## Command Model
 - Commands: `init`, `pull`, `push`, `validate`, `diff`, `search`.
+- `status` reports Markdown page drift only; attachment-only changes should be checked with `git status` or `conf diff`.
 - `[TARGET]` parsing rule:
   - Ends with `.md` => file mode.
   - Otherwise => space mode (`SPACE_KEY`).

@@ -14,6 +14,39 @@ import (
 	"github.com/rgonek/confluence-markdown-sync/internal/fs"
 )
 
+func hydrateDiffPageMetadata(
+	ctx context.Context,
+	remote syncflow.PullRemote,
+	page confluence.Page,
+	relPath string,
+) (confluence.Page, []syncflow.PullDiagnostic) {
+	diagnostics := make([]syncflow.PullDiagnostic, 0, 2)
+
+	status, err := remote.GetContentStatus(ctx, page.ID, page.Status)
+	if err != nil {
+		diagnostics = append(diagnostics, syncflow.PullDiagnostic{
+			Path:    filepath.ToSlash(relPath),
+			Code:    "CONTENT_STATUS_FETCH_FAILED",
+			Message: fmt.Sprintf("fetch content status for page %s: %v", page.ID, err),
+		})
+	} else {
+		page.ContentStatus = status
+	}
+
+	labels, err := remote.GetLabels(ctx, page.ID)
+	if err != nil {
+		diagnostics = append(diagnostics, syncflow.PullDiagnostic{
+			Path:    filepath.ToSlash(relPath),
+			Code:    "LABELS_FETCH_FAILED",
+			Message: fmt.Sprintf("fetch labels for page %s: %v", page.ID, err),
+		})
+	} else {
+		page.Labels = labels
+	}
+
+	return page, diagnostics
+}
+
 func renderDiffMarkdown(
 	ctx context.Context,
 	page confluence.Page,
@@ -36,6 +69,9 @@ func renderDiffMarkdown(
 			Title:   page.Title,
 			ID:      page.ID,
 			Version: page.Version,
+			State:   page.Status,
+			Status:  page.ContentStatus,
+			Labels:  page.Labels,
 		},
 		Body: forward.Markdown,
 	}

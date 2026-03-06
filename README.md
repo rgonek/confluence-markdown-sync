@@ -58,11 +58,12 @@ conf push ENG --on-conflict=cancel
 ```
 
 ## At a glance 👀
-- Commands: `init`, `init agents [TARGET]`, `pull [TARGET]`, `push [TARGET]`, `validate [TARGET]`, `diff [TARGET]`, `relink [TARGET]`
+- Commands: `init`, `init agents [TARGET]`, `pull [TARGET]`, `push [TARGET]`, `status [TARGET]`, `validate [TARGET]`, `diff [TARGET]`, `relink [TARGET]`
 - Version: `conf version` or `conf --version`
 - Target rule: `.md` suffix means file mode; otherwise space mode (`SPACE_KEY`)
 - Required auth: `ATLASSIAN_DOMAIN`, `ATLASSIAN_EMAIL`, `ATLASSIAN_API_TOKEN`
 - Diagram support: PlantUML is preserved as a Confluence extension; Mermaid is preserved as fenced code / ADF `codeBlock` and `validate` warns before push
+- Status scope: `conf status` reports Markdown page drift only; use `git status` or `conf diff` for attachment-only changes
 - Label rules: labels are trimmed, lowercased, deduplicated, and sorted; empty labels and labels containing whitespace are rejected
 - Git remote is optional (local Git is enough)
 

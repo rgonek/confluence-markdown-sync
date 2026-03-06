@@ -6,7 +6,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/rgonek/confluence-markdown-sync/internal/config"
 	"github.com/rgonek/confluence-markdown-sync/internal/confluence"
@@ -194,4 +196,84 @@ func TestBuildStatusReport_Drift(t *testing.T) {
 	target := config.Target{Value: "TEST", Mode: config.TargetModeSpace}
 	ctx := context.Background()
 	_, _ = buildStatusReport(ctx, mock, target, initialPullContext{}, fs.SpaceState{}, "TEST", "filterPath")
+}
+
+func TestRunStatus_ExplainsMarkdownOnlyScopeForAssetDrift(t *testing.T) {
+	runParallelCommandTest(t)
+	repo := t.TempDir()
+	setupGitRepo(t, repo)
+	chdirRepo(t, repo)
+	setupEnv(t)
+
+	spaceDir := filepath.Join(repo, "TEST")
+	if err := os.MkdirAll(filepath.Join(spaceDir, "assets", "1"), 0o750); err != nil {
+		t.Fatalf("mkdir assets: %v", err)
+	}
+
+	writeMarkdown(t, filepath.Join(spaceDir, "page.md"), fs.MarkdownDocument{
+		Frontmatter: fs.Frontmatter{
+			Title:   "Page",
+			ID:      "1",
+			Version: 1,
+		},
+		Body: "body\n",
+	})
+	if err := os.WriteFile(filepath.Join(spaceDir, "assets", "1", "file.png"), []byte("png"), 0o600); err != nil {
+		t.Fatalf("write asset: %v", err)
+	}
+	if err := fs.SaveState(spaceDir, fs.SpaceState{
+		SpaceKey: "TEST",
+		PagePathIndex: map[string]string{
+			"page.md": "1",
+		},
+		AttachmentIndex: map[string]string{
+			"assets/1/file.png": "att-1",
+		},
+	}); err != nil {
+		t.Fatalf("save state: %v", err)
+	}
+
+	runGitForStatus(t, repo, "add", ".")
+	runGitForStatus(t, repo, "commit", "-m", "baseline")
+	tagTime := time.Now().UTC().Format("20060102T150405Z")
+	runGitForStatus(t, repo, "tag", "-a", "confluence-sync/pull/TEST/"+tagTime, "-m", "pull")
+
+	if err := os.Remove(filepath.Join(spaceDir, "assets", "1", "file.png")); err != nil {
+		t.Fatalf("remove asset: %v", err)
+	}
+
+	mock := &mockStatusRemote{
+		space: confluence.Space{ID: "space-1", Key: "TEST"},
+		pages: confluence.PageListResult{
+			Pages: []confluence.Page{
+				{ID: "1", Title: "Page", Version: 1},
+			},
+		},
+		page: confluence.Page{ID: "1", SpaceID: "space-1", Status: "current"},
+	}
+
+	oldNewStatusRemote := newStatusRemote
+	newStatusRemote = func(cfg *config.Config) (StatusRemote, error) {
+		return mock, nil
+	}
+	defer func() { newStatusRemote = oldNewStatusRemote }()
+
+	cmd := newStatusCmd()
+	out := &bytes.Buffer{}
+	cmd.SetOut(out)
+
+	if err := runStatus(cmd, config.Target{Value: "TEST", Mode: config.TargetModeSpace}); err != nil {
+		t.Fatalf("runStatus() error: %v", err)
+	}
+
+	got := out.String()
+	if !strings.Contains(got, statusScopeNote) {
+		t.Fatalf("expected markdown-only scope note, got:\n%s", got)
+	}
+	if strings.Contains(got, "assets/1/file.png") {
+		t.Fatalf("status output should not list attachment-only drift, got:\n%s", got)
+	}
+	if !strings.Contains(got, "added (0)") || !strings.Contains(got, "modified (0)") || !strings.Contains(got, "deleted (0)") {
+		t.Fatalf("expected clean markdown status for asset-only drift, got:\n%s", got)
+	}
 }

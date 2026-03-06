@@ -226,6 +226,7 @@ func runDiffFileMode(
 		return fmt.Errorf("fetch page %s: %w", diffCtx.targetPageID, err)
 	}
 
+	page, metadataDiags := hydrateDiffPageMetadata(ctx, remote, page, relPath)
 	rendered, diagnostics, err := renderDiffMarkdown(
 		ctx,
 		page,
@@ -238,6 +239,7 @@ func runDiffFileMode(
 	if err != nil {
 		return err
 	}
+	diagnostics = append(metadataDiags, diagnostics...)
 
 	for _, diag := range diagnostics {
 		if _, err := fmt.Fprintf(out, "warning: %s [%s] %s\n", diag.Path, diag.Code, diag.Message); err != nil {
@@ -302,6 +304,7 @@ func runDiffSpaceMode(
 			return fmt.Errorf("planned relative path missing for page %s", page.ID)
 		}
 
+		page, metadataDiags := hydrateDiffPageMetadata(ctx, remote, page, relPath)
 		rendered, pageDiags, err := renderDiffMarkdown(
 			ctx,
 			page,
@@ -314,6 +317,7 @@ func runDiffSpaceMode(
 		if err != nil {
 			return err
 		}
+		pageDiags = append(metadataDiags, pageDiags...)
 		diagnostics = append(diagnostics, pageDiags...)
 
 		dstPath := filepath.Join(remoteSnapshot, filepath.FromSlash(relPath))

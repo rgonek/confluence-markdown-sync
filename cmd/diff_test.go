@@ -442,6 +442,72 @@ func TestRunDiff_FileModeIgnoresMetadataOnlyChanges(t *testing.T) {
 	}
 }
 
+func TestRunDiff_FileModeShowsSyncedMetadataParity(t *testing.T) {
+	runParallelCommandTest(t)
+	repo := t.TempDir()
+	spaceDir := filepath.Join(repo, "ENG")
+	if err := os.MkdirAll(spaceDir, 0o750); err != nil {
+		t.Fatalf("mkdir space: %v", err)
+	}
+
+	localFile := filepath.Join(spaceDir, "root.md")
+	writeMarkdown(t, localFile, fs.MarkdownDocument{
+		Frontmatter: fs.Frontmatter{
+			Title:   "Root",
+			ID:      "1",
+			Version: 2,
+		},
+		Body: "same body\n",
+	})
+
+	fake := &cmdFakePullRemote{
+		space: confluence.Space{ID: "space-1", Key: "ENG", Name: "Engineering"},
+		pages: []confluence.Page{
+			{ID: "1", SpaceID: "space-1", Title: "Root", Status: "draft", Version: 2, LastModified: time.Date(2026, time.February, 1, 11, 0, 0, 0, time.UTC)},
+		},
+		pagesByID: map[string]confluence.Page{
+			"1": {
+				ID:           "1",
+				SpaceID:      "space-1",
+				Title:        "Root",
+				Status:       "draft",
+				Version:      2,
+				LastModified: time.Date(2026, time.February, 1, 11, 0, 0, 0, time.UTC),
+				BodyADF:      rawJSON(t, simpleADF("same body")),
+			},
+		},
+		attachments:       map[string][]byte{},
+		contentStatusByID: map[string]string{"1": "Ready to review"},
+		labelsByPage:      map[string][]string{"1": []string{"beta", "alpha"}},
+	}
+
+	oldFactory := newDiffRemote
+	newDiffRemote = func(_ *config.Config) (syncflow.PullRemote, error) { return fake, nil }
+	t.Cleanup(func() { newDiffRemote = oldFactory })
+
+	setupEnv(t)
+	chdirRepo(t, repo)
+
+	cmd := &cobra.Command{}
+	out := &bytes.Buffer{}
+	cmd.SetOut(out)
+
+	if err := runDiff(cmd, config.Target{Mode: config.TargetModeFile, Value: localFile}); err != nil {
+		t.Fatalf("runDiff() error: %v", err)
+	}
+
+	got := out.String()
+	if !strings.Contains(got, "+state: draft") {
+		t.Fatalf("expected state metadata diff, got:\n%s", got)
+	}
+	if !strings.Contains(got, "+status: Ready to review") {
+		t.Fatalf("expected content-status diff, got:\n%s", got)
+	}
+	if !strings.Contains(got, "+labels:") || !strings.Contains(got, "+    - alpha") || !strings.Contains(got, "+    - beta") {
+		t.Fatalf("expected normalized labels diff, got:\n%s", got)
+	}
+}
+
 func diffUnresolvedADF() map[string]any {
 	return map[string]any{
 		"version": 1,

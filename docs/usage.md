@@ -8,6 +8,7 @@ This guide covers day-to-day usage of `conf`.
 
 - `pull` converts Confluence ADF to Markdown.
 - `push` converts Markdown back to ADF and updates Confluence.
+- `status` inspects Markdown page drift against the last sync baseline and current remote state.
 - `validate` checks a workspace before remote writes.
 - `diff` previews local vs remote content.
 - `init agents` scaffolds an `AGENTS.md` file for AI-assisted authoring.
@@ -114,6 +115,18 @@ Validation also emits non-fatal compatibility warnings for content that will syn
 
 Use this before major pushes or in CI.
 
+### `conf status [TARGET]`
+
+Shows a high-level sync summary for Markdown pages.
+
+Highlights:
+
+- compares local Markdown drift against the last sync baseline,
+- checks whether tracked remote pages are ahead, missing, or newly added,
+- focuses on Markdown page files only.
+
+Attachment-only changes are intentionally excluded from `conf status`. Use `git status` or `conf diff` when you need asset visibility.
+
 ### `conf diff [TARGET]`
 
 Shows a local-vs-remote diff.
@@ -122,6 +135,8 @@ Highlights:
 
 - fetches remote content,
 - converts using best-effort forward conversion,
+- includes synced frontmatter parity such as `state`, `status`, and `labels`,
+- strips read-only author/timestamp metadata so the diff stays focused on actionable drift,
 - compares using `git diff --no-index`,
 - supports both file and space targets.
 
