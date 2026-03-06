@@ -303,6 +303,9 @@ func TestReverseLinkHookWithGlobalIndex_ResolvesCrossSpaceLink(t *testing.T) {
 	}
 
 	targetPath := filepath.Join(tdDir, "Target Page.md")
+	if err := os.WriteFile(targetPath, []byte("target"), 0o600); err != nil {
+		t.Fatalf("write target file: %v", err)
+	}
 	hook := NewReverseLinkHookWithGlobalIndex(
 		engDir,
 		PageIndex{"index.md": "1"},
