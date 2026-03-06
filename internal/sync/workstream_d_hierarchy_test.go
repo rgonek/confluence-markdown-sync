@@ -88,9 +88,9 @@ func TestPull_RoundTripsMixedHierarchyToIndexPaths(t *testing.T) {
 	}
 
 	expectedPaths := map[string]string{
-		"Root/Root.md":                               "1",
-		"Root/Direct-Child.md":                      "2",
-		"Root/Section/Folder-Child.md":              "3",
+		"Root/Root.md":                                   "1",
+		"Root/Direct-Child.md":                           "2",
+		"Root/Section/Folder-Child.md":                   "3",
 		"Root/Section/Subsection/Nested-Folder-Child.md": "4",
 	}
 	for relPath, pageID := range expectedPaths {
