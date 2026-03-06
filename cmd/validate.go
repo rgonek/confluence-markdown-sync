@@ -117,12 +117,7 @@ func runValidateTargetWithContext(ctx context.Context, out io.Writer, target con
 		return fmt.Errorf("validation failed: duplicate page IDs detected - rename each file to have a unique id or remove the duplicate id")
 	}
 
-	var globalIndex syncflow.GlobalPageIndex
-	globalIndexRoot := filepath.Dir(targetCtx.spaceDir)
-	if repoRoot, rootErr := gitRepoRoot(); rootErr == nil {
-		globalIndexRoot = repoRoot
-	}
-	globalIndex, err = syncflow.BuildGlobalPageIndex(globalIndexRoot)
+	globalIndex, err := buildWorkspaceGlobalPageIndex(targetCtx.spaceDir)
 	if err != nil {
 		return fmt.Errorf("failed to build global page index: %w", err)
 	}
@@ -417,12 +412,7 @@ func runValidateChangedPushFiles(ctx context.Context, out io.Writer, spaceDir st
 		return fmt.Errorf("validation failed: duplicate page IDs detected - rename each file to have a unique id or remove the duplicate id")
 	}
 
-	var globalIndex syncflow.GlobalPageIndex
-	globalIndexRoot := filepath.Dir(targetCtx.spaceDir)
-	if repoRoot, rootErr := gitRepoRoot(); rootErr == nil {
-		globalIndexRoot = repoRoot
-	}
-	globalIndex, err = syncflow.BuildGlobalPageIndex(globalIndexRoot)
+	globalIndex, err := buildWorkspaceGlobalPageIndex(targetCtx.spaceDir)
 	if err != nil {
 		return fmt.Errorf("failed to build global page index: %w", err)
 	}
@@ -477,6 +467,14 @@ func pushChangedAbsPaths(spaceDir string, changes []syncflow.PushFileChange) []s
 		out = append(out, filepath.Join(spaceDir, filepath.FromSlash(change.Path)))
 	}
 	return out
+}
+
+func buildWorkspaceGlobalPageIndex(spaceDir string) (syncflow.GlobalPageIndex, error) {
+	globalIndexRoot, err := syncflow.ResolveGlobalIndexRoot(spaceDir)
+	if err != nil {
+		return nil, err
+	}
+	return syncflow.BuildGlobalPageIndex(globalIndexRoot)
 }
 
 // detectDuplicatePageIDs returns an error message for each Confluence page ID

@@ -203,6 +203,107 @@ func TestPull_IncrementalRewriteDeleteAndWatermark(t *testing.T) {
 	}
 }
 
+func TestPull_PreservesAbsoluteCrossSpaceLinksWithoutUnresolvedWarnings(t *testing.T) {
+	repo := t.TempDir()
+	engDir := filepath.Join(repo, "Engineering (ENG)")
+	tdDir := filepath.Join(repo, "Technical Docs (TD)")
+	if err := os.MkdirAll(engDir, 0o750); err != nil {
+		t.Fatalf("mkdir eng dir: %v", err)
+	}
+	if err := os.MkdirAll(tdDir, 0o750); err != nil {
+		t.Fatalf("mkdir td dir: %v", err)
+	}
+
+	targetPath := filepath.Join(tdDir, "target.md")
+	if err := fs.WriteMarkdownDocument(targetPath, fs.MarkdownDocument{
+		Frontmatter: fs.Frontmatter{Title: "Target", ID: "200", Version: 1},
+		Body:        "target\n",
+	}); err != nil {
+		t.Fatalf("write cross-space target: %v", err)
+	}
+
+	globalIndex, err := BuildGlobalPageIndex(repo)
+	if err != nil {
+		t.Fatalf("BuildGlobalPageIndex() error: %v", err)
+	}
+
+	fake := &fakePullRemote{
+		space: confluence.Space{ID: "space-1", Key: "ENG", Name: "Engineering"},
+		pages: []confluence.Page{{
+			ID:           "1",
+			SpaceID:      "space-1",
+			Title:        "Root",
+			Version:      2,
+			LastModified: time.Date(2026, time.March, 5, 12, 0, 0, 0, time.UTC),
+		}},
+		pagesByID: map[string]confluence.Page{
+			"1": {
+				ID:           "1",
+				SpaceID:      "space-1",
+				Title:        "Root",
+				Version:      2,
+				LastModified: time.Date(2026, time.March, 5, 12, 0, 0, 0, time.UTC),
+				BodyADF: rawJSON(t, map[string]any{
+					"version": 1,
+					"type":    "doc",
+					"content": []any{
+						map[string]any{
+							"type": "paragraph",
+							"content": []any{
+								map[string]any{
+									"type": "text",
+									"text": "Cross Space",
+									"marks": []any{
+										map[string]any{
+											"type": "link",
+											"attrs": map[string]any{
+												"href":   "https://example.atlassian.net/wiki/pages/viewpage.action?pageId=200",
+												"pageId": "200",
+												"anchor": "section-a",
+											},
+										},
+									},
+								},
+							},
+						},
+					},
+				}),
+			},
+		},
+		attachments: map[string][]byte{},
+	}
+
+	result, err := Pull(context.Background(), fake, PullOptions{
+		SpaceKey:        "ENG",
+		SpaceDir:        engDir,
+		GlobalPageIndex: globalIndex,
+	})
+	if err != nil {
+		t.Fatalf("Pull() error: %v", err)
+	}
+
+	rootDoc, err := fs.ReadMarkdownDocument(filepath.Join(engDir, "Root.md"))
+	if err != nil {
+		t.Fatalf("read Root.md: %v", err)
+	}
+	if !strings.Contains(rootDoc.Body, "[Cross Space](https://example.atlassian.net/wiki/pages/viewpage.action?pageId=200#section-a)") {
+		t.Fatalf("expected preserved absolute cross-space link, got:\n%s", rootDoc.Body)
+	}
+
+	foundPreserved := false
+	for _, d := range result.Diagnostics {
+		if d.Code == "unresolved_reference" {
+			t.Fatalf("did not expect unresolved_reference diagnostic, got %+v", result.Diagnostics)
+		}
+		if d.Code == "CROSS_SPACE_LINK_PRESERVED" {
+			foundPreserved = true
+		}
+	}
+	if !foundPreserved {
+		t.Fatalf("expected CROSS_SPACE_LINK_PRESERVED diagnostic, got %+v", result.Diagnostics)
+	}
+}
+
 func TestPull_FolderListFailureFallsBackToPageHierarchy(t *testing.T) {
 	tmpDir := t.TempDir()
 	spaceDir := filepath.Join(tmpDir, "ENG")

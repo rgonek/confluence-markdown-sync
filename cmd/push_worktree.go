@@ -114,7 +114,7 @@ func runPushInWorktree(
 		return fmt.Errorf("load state: %w", err)
 	}
 
-	globalPageIndex, err := syncflow.BuildGlobalPageIndex(worktreeDir)
+	globalPageIndex, err := buildWorkspaceGlobalPageIndex(wtSpaceDir)
 	if err != nil {
 		return fmt.Errorf("build global page index: %w", err)
 	}

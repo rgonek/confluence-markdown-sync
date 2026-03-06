@@ -55,6 +55,7 @@ type PullOptions struct {
 	SpaceKey          string
 	SpaceDir          string
 	State             fs.SpaceState
+	GlobalPageIndex   GlobalPageIndex
 	PullStartedAt     time.Time
 	OverlapWindow     time.Duration
 	TargetPageID      string
@@ -539,8 +540,18 @@ func Pull(ctx context.Context, remote PullRemote, opts PullOptions) (PullResult,
 			opts.Progress.SetCurrentItem(filepath.Base(outputPath))
 		}
 
+		linkNotices := make([]ForwardLinkNotice, 0)
 		forward, err := converter.Forward(ctx, page.BodyADF, converter.ForwardConfig{
-			LinkHook:  NewForwardLinkHook(outputPath, pagePathByIDAbs, opts.SpaceKey),
+			LinkHook: NewForwardLinkHookWithGlobalIndex(
+				outputPath,
+				spaceDir,
+				pagePathByIDAbs,
+				opts.GlobalPageIndex,
+				opts.SpaceKey,
+				func(notice ForwardLinkNotice) {
+					linkNotices = append(linkNotices, notice)
+				},
+			),
 			MediaHook: NewForwardMediaHook(outputPath, attachmentPathByID),
 		}, outputPath)
 		if err != nil {
@@ -582,6 +593,13 @@ func Pull(ctx context.Context, remote PullRemote, opts PullOptions) (PullResult,
 		relPath = filepath.ToSlash(relPath)
 		updatedMarkdown = append(updatedMarkdown, relPath)
 
+		for _, notice := range linkNotices {
+			diagnostics = append(diagnostics, PullDiagnostic{
+				Path:    relPath,
+				Code:    notice.Code,
+				Message: notice.Message,
+			})
+		}
 		for _, warning := range forward.Warnings {
 			diagnostics = append(diagnostics, PullDiagnostic{
 				Path:    relPath,

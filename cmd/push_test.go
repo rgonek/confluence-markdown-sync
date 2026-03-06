@@ -299,6 +299,127 @@ func TestRunPush_WorksWithoutGitRemoteConfigured(t *testing.T) {
 	}
 }
 
+func TestRunPush_CrossSpaceRelativeLinkParityWithValidate(t *testing.T) {
+	runParallelCommandTest(t)
+
+	testCases := []struct {
+		name           string
+		sourceDirName  string
+		sourceKey      string
+		targetDirName  string
+		targetKey      string
+		targetPageID   string
+		targetFileName string
+	}{
+		{
+			name:           "ENG_to_TD",
+			sourceDirName:  "Engineering (ENG)",
+			sourceKey:      "ENG",
+			targetDirName:  "Technical Docs (TD)",
+			targetKey:      "TD",
+			targetPageID:   "200",
+			targetFileName: "target.md",
+		},
+		{
+			name:           "TD_to_ENG",
+			sourceDirName:  "Technical Docs (TD)",
+			sourceKey:      "TD",
+			targetDirName:  "Engineering (ENG)",
+			targetKey:      "ENG",
+			targetPageID:   "300",
+			targetFileName: "target.md",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := t.TempDir()
+			setupGitRepo(t, repo)
+			setupEnv(t)
+
+			sourceSpaceDir := filepath.Join(repo, tc.sourceDirName)
+			targetSpaceDir := filepath.Join(repo, tc.targetDirName)
+			if err := os.MkdirAll(sourceSpaceDir, 0o750); err != nil {
+				t.Fatalf("mkdir source dir: %v", err)
+			}
+			if err := os.MkdirAll(targetSpaceDir, 0o750); err != nil {
+				t.Fatalf("mkdir target dir: %v", err)
+			}
+
+			targetPath := filepath.Join(targetSpaceDir, tc.targetFileName)
+			writeMarkdown(t, targetPath, fs.MarkdownDocument{
+				Frontmatter: fs.Frontmatter{
+					Title:   "Target",
+					ID:      tc.targetPageID,
+					Version: 1,
+				},
+				Body: "target\n",
+			})
+
+			if err := fs.SaveState(sourceSpaceDir, fs.SpaceState{SpaceKey: tc.sourceKey}); err != nil {
+				t.Fatalf("save source state: %v", err)
+			}
+			if err := fs.SaveState(targetSpaceDir, fs.SpaceState{
+				SpaceKey:      tc.targetKey,
+				PagePathIndex: map[string]string{tc.targetFileName: tc.targetPageID},
+			}); err != nil {
+				t.Fatalf("save target state: %v", err)
+			}
+
+			if err := os.WriteFile(filepath.Join(repo, ".gitignore"), []byte(".env\n.confluence-state.json\n"), 0o600); err != nil {
+				t.Fatalf("write .gitignore: %v", err)
+			}
+
+			runGitForTest(t, repo, "add", ".")
+			runGitForTest(t, repo, "commit", "-m", "baseline")
+			runGitForTest(t, repo, "tag", "-a", fmt.Sprintf("confluence-sync/pull/%s/20260305T120000Z", tc.sourceKey), "-m", "baseline pull")
+
+			linkTargetDir := strings.ReplaceAll(tc.targetDirName, " ", "%20")
+			writeMarkdown(t, filepath.Join(sourceSpaceDir, "new.md"), fs.MarkdownDocument{
+				Frontmatter: fs.Frontmatter{
+					Title: "New Page",
+				},
+				Body: fmt.Sprintf("[Cross Space](../%s/%s#section-a)\n", linkTargetDir, tc.targetFileName),
+			})
+
+			runGitForTest(t, repo, "add", ".")
+			runGitForTest(t, repo, "commit", "-m", "local change")
+
+			fake := newCmdFakePushRemote(1)
+			oldPushFactory := newPushRemote
+			oldPullFactory := newPullRemote
+			newPushRemote = func(_ *config.Config) (syncflow.PushRemote, error) { return fake, nil }
+			newPullRemote = func(_ *config.Config) (syncflow.PullRemote, error) { return fake, nil }
+			t.Cleanup(func() {
+				newPushRemote = oldPushFactory
+				newPullRemote = oldPullFactory
+			})
+
+			chdirRepo(t, sourceSpaceDir)
+
+			validateOut := &bytes.Buffer{}
+			if err := runValidateTargetWithContext(context.Background(), validateOut, config.Target{Mode: config.TargetModeSpace, Value: sourceSpaceDir}); err != nil {
+				t.Fatalf("validate failed before push: %v\nOutput:\n%s", err, validateOut.String())
+			}
+
+			cmd := &cobra.Command{}
+			cmd.SetOut(&bytes.Buffer{})
+			if err := runPush(cmd, config.Target{Mode: config.TargetModeSpace, Value: ""}, OnConflictCancel, false); err != nil {
+				t.Fatalf("runPush() unexpected error: %v", err)
+			}
+
+			if len(fake.updateCalls) == 0 {
+				t.Fatal("expected at least one update call")
+			}
+			body := string(fake.updateCalls[len(fake.updateCalls)-1].Input.BodyADF)
+			expectedFragment := "pageId=" + tc.targetPageID + "#section-a"
+			if !strings.Contains(body, expectedFragment) {
+				t.Fatalf("expected pushed ADF to contain %q, body=%s", expectedFragment, body)
+			}
+		})
+	}
+}
+
 type failingPushRemote struct {
 	*cmdFakePushRemote
 }

@@ -249,10 +249,16 @@ func runPull(cmd *cobra.Command, target config.Target) (runErr error) {
 		}()
 	}
 
+	globalPageIndex, err := syncflow.BuildGlobalPageIndex(repoRoot)
+	if err != nil {
+		return fmt.Errorf("build global page index: %w", err)
+	}
+
 	result, err = syncflow.Pull(ctx, remote, syncflow.PullOptions{
 		SpaceKey:          pullCtx.spaceKey,
 		SpaceDir:          pullCtx.spaceDir,
 		State:             state,
+		GlobalPageIndex:   globalPageIndex,
 		PullStartedAt:     pullStartedAt,
 		OverlapWindow:     syncflow.DefaultPullOverlapWindow,
 		TargetPageID:      pullCtx.targetPageID,
