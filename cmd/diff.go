@@ -147,7 +147,7 @@ func runDiff(cmd *cobra.Command, target config.Target) (runErr error) {
 		return err
 	}
 	for _, diag := range folderDiags {
-		if _, err := fmt.Fprintf(out, "warning: %s [%s] %s\n", diag.Path, diag.Code, diag.Message); err != nil {
+		if err := writeSyncDiagnostic(out, diag); err != nil {
 			return fmt.Errorf("write diagnostic output: %w", err)
 		}
 	}
@@ -242,7 +242,7 @@ func runDiffFileMode(
 	diagnostics = append(metadataDiags, diagnostics...)
 
 	for _, diag := range diagnostics {
-		if _, err := fmt.Fprintf(out, "warning: %s [%s] %s\n", diag.Path, diag.Code, diag.Message); err != nil {
+		if err := writeSyncDiagnostic(out, diag); err != nil {
 			return fmt.Errorf("write diagnostic output: %w", err)
 		}
 	}
@@ -330,7 +330,7 @@ func runDiffSpaceMode(
 	}
 
 	for _, diag := range diagnostics {
-		if _, err := fmt.Fprintf(out, "warning: %s [%s] %s\n", diag.Path, diag.Code, diag.Message); err != nil {
+		if err := writeSyncDiagnostic(out, diag); err != nil {
 			return fmt.Errorf("write diagnostic output: %w", err)
 		}
 	}

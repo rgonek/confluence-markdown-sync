@@ -288,8 +288,9 @@ func runPull(cmd *cobra.Command, target config.Target) (runErr error) {
 	}
 
 	for _, diag := range result.Diagnostics {
-
-		_, _ = fmt.Fprintf(out, "warning: %s [%s] %s\n", diag.Path, diag.Code, diag.Message)
+		if err := writeSyncDiagnostic(out, diag); err != nil {
+			return fmt.Errorf("write diagnostic output: %w", err)
+		}
 	}
 
 	hasChanges := false

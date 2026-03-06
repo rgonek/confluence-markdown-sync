@@ -76,6 +76,7 @@ type PushOptions struct {
 	ArchiveTimeout      time.Duration
 	ArchivePollInterval time.Duration
 	Progress            Progress
+	folderListTracker   *folderListFallbackTracker
 }
 
 // PushCommitPlan describes local paths and metadata for one push commit.

@@ -89,6 +89,7 @@ Pulls remote Confluence content into local Markdown.
 Highlights:
 
 - best-effort conversion (unresolved references become diagnostics),
+- diagnostics distinguish preserved cross-space links (`note`), degraded-but-pullable fallbacks, and broken references left as fallback output,
 - page files follow Confluence hierarchy (folders and parent/child pages become nested directories),
 - pages that have children are written as `<Page>/<Page>.md` so they are distinguishable from folders,
 - same-space links rewritten to relative Markdown links,

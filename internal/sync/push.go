@@ -36,6 +36,7 @@ func Push(ctx context.Context, remote PushRemote, opts PushOptions) (PushResult,
 
 	state := normalizePushState(opts.State)
 	policy := normalizeConflictPolicy(opts.ConflictPolicy)
+	opts.folderListTracker = newFolderListFallbackTracker()
 
 	space, err := remote.GetSpace(ctx, opts.SpaceKey)
 	if err != nil {
@@ -53,11 +54,10 @@ func Push(ctx context.Context, remote PushRemote, opts PushOptions) (PushResult,
 	}
 
 	// Try to list folders, but don't fail the whole push if it's broken (Confluence bug)
-	remoteFolders, err := listAllPushFolders(ctx, remote, confluence.FolderListOptions{
+	remoteFolders, err := listAllPushFoldersWithTracking(ctx, remote, confluence.FolderListOptions{
 		SpaceID: space.ID,
-	})
+	}, opts.folderListTracker, "space-scan")
 	if err != nil {
-		slog.Warn("list_folders_failed_falling_back_to_pages", "error", err.Error())
 		remoteFolders = nil
 	}
 

@@ -133,10 +133,10 @@ func ensureFolderHierarchy(
 
 			// 2. If not found and it's a conflict, try robust listing
 			if !foundExisting && strings.Contains(err.Error(), "400") && (strings.Contains(strings.ToLower(err.Error()), "folder exists with the same title") || strings.Contains(strings.ToLower(err.Error()), "already exists with the same title")) {
-				folders, listErr := listAllPushFolders(ctx, remote, confluence.FolderListOptions{
+				folders, listErr := listAllPushFoldersWithTracking(ctx, remote, confluence.FolderListOptions{
 					SpaceID: spaceID,
 					Title:   seg,
-				})
+				}, opts.folderListTracker, currentPath)
 				if listErr == nil {
 					for _, f := range folders {
 						if strings.EqualFold(strings.TrimSpace(f.Title), strings.TrimSpace(seg)) {
