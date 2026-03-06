@@ -417,23 +417,29 @@ func printPushSyncSummary(out io.Writer, commits []syncflow.PushCommitPlan, diag
 	}
 
 	attachmentDeleted := 0
-	attachmentCreated := 0
+	attachmentUploaded := 0
 	attachmentPreserved := 0
+	attachmentSkipped := 0
 	for _, diag := range diagnostics {
 		switch diag.Code {
 		case "ATTACHMENT_CREATED":
-			attachmentCreated++
+			attachmentUploaded++
 		case "ATTACHMENT_DELETED":
 			attachmentDeleted++
 		case "ATTACHMENT_PRESERVED":
 			attachmentPreserved++
+			attachmentSkipped++
+		default:
+			if strings.HasPrefix(diag.Code, "ATTACHMENT_") && strings.Contains(diag.Code, "SKIPPED") {
+				attachmentSkipped++
+			}
 		}
 	}
 
 	_, _ = fmt.Fprintln(out, "\nSync Summary:")
 	_, _ = fmt.Fprintf(out, "  pages changed: %d (deleted: %d)\n", len(commits), deletedPages)
-	if attachmentCreated > 0 || attachmentDeleted > 0 || attachmentPreserved > 0 {
-		_, _ = fmt.Fprintf(out, "  attachments: created %d, preserved %d, deleted %d\n", attachmentCreated, attachmentPreserved, attachmentDeleted)
+	if attachmentUploaded > 0 || attachmentDeleted > 0 || attachmentPreserved > 0 || attachmentSkipped > 0 {
+		_, _ = fmt.Fprintf(out, "  attachments: uploaded %d, deleted %d, preserved %d, skipped %d\n", attachmentUploaded, attachmentDeleted, attachmentPreserved, attachmentSkipped)
 	}
 	if len(diagnostics) > 0 {
 		_, _ = fmt.Fprintf(out, "  diagnostics: %d\n", len(diagnostics))

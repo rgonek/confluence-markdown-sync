@@ -36,7 +36,7 @@ type StatusReport struct {
 	MaxVersionDrift int
 }
 
-const statusScopeNote = "Scope: markdown pages only; attachment-only drift is excluded from `conf status` output. Use `git status` or `conf diff` to inspect assets."
+const statusScopeNote = "Scope: markdown/page drift only; attachment-only drift is excluded from `conf status` output. Use `git status` or `conf diff` to inspect assets."
 
 var newStatusRemote = func(cfg *config.Config) (StatusRemote, error) {
 	return newConfluenceClientFromConfig(cfg)
@@ -48,6 +48,8 @@ func newStatusCmd() *cobra.Command {
 
 		Short: "Inspect local and remote sync drift",
 		Long: `status prints a high-level sync summary without mutating local files or remote content.
+
+Status scope: markdown/page drift only; attachment-only drift is excluded from ` + "`conf status`" + ` output. Use ` + "`git status`" + ` or ` + "`conf diff`" + ` to inspect assets.
 
 TARGET follows the standard rule:
 - .md suffix => file mode (space inferred from file)

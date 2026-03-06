@@ -91,7 +91,7 @@ func runClean(cmd *cobra.Command, _ []string) error {
 		}
 		reportSkippedCleanSyncBranches(out, syncPlan.SkippedBranches)
 		if len(syncPlan.SkippedBranches) == 0 {
-			_, _ = fmt.Fprintln(out, "clean completed: workspace is already clean")
+			_, _ = fmt.Fprintln(out, "clean completed: workspace is already clean (removed 0 worktree(s), deleted 0 snapshot ref(s), deleted 0 sync branch(es), skipped 0 sync branch(es))")
 		} else {
 			_, _ = fmt.Fprintf(out, "clean completed: removed 0 worktree(s), deleted 0 snapshot ref(s), deleted 0 sync branch(es), skipped %d sync branch(es)\n", len(syncPlan.SkippedBranches))
 		}

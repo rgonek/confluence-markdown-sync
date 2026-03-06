@@ -277,3 +277,171 @@ func TestRunStatus_ExplainsMarkdownOnlyScopeForAssetDrift(t *testing.T) {
 		t.Fatalf("expected clean markdown status for asset-only drift, got:\n%s", got)
 	}
 }
+
+func TestStatusCmdHelp_ExplainsMarkdownPageScope(t *testing.T) {
+	runParallelCommandTest(t)
+
+	cmd := newStatusCmd()
+	if !strings.Contains(cmd.Long, "markdown/page drift only") {
+		t.Fatalf("expected long help to explain markdown/page-only scope, got:\n%s", cmd.Long)
+	}
+	if !strings.Contains(cmd.Long, "attachment-only drift is excluded") {
+		t.Fatalf("expected long help to explain excluded attachment-only drift, got:\n%s", cmd.Long)
+	}
+}
+
+func TestRunStatus_PageAndAssetScopeCases(t *testing.T) {
+	runParallelCommandTest(t)
+
+	testCases := []struct {
+		name             string
+		mutate           func(t *testing.T, spaceDir string)
+		wantPresent      []string
+		wantAbsent       []string
+		wantMarkdownOnly bool
+	}{
+		{
+			name: "page only changes are listed",
+			mutate: func(t *testing.T, spaceDir string) {
+				writeMarkdown(t, filepath.Join(spaceDir, "page.md"), fs.MarkdownDocument{
+					Frontmatter: fs.Frontmatter{
+						Title:   "Page",
+						ID:      "1",
+						Version: 1,
+					},
+					Body: "updated body\n",
+				})
+			},
+			wantPresent: []string{"modified (1):", "- page.md"},
+			wantAbsent:  []string{"assets/1/file.png"},
+		},
+		{
+			name: "asset only changes stay excluded",
+			mutate: func(t *testing.T, spaceDir string) {
+				if err := os.Remove(filepath.Join(spaceDir, "assets", "1", "file.png")); err != nil {
+					t.Fatalf("remove asset: %v", err)
+				}
+			},
+			wantPresent:      []string{"added (0)", "modified (0)", "deleted (0)"},
+			wantAbsent:       []string{"assets/1/file.png"},
+			wantMarkdownOnly: true,
+		},
+		{
+			name: "mixed page and asset changes show only page drift",
+			mutate: func(t *testing.T, spaceDir string) {
+				writeMarkdown(t, filepath.Join(spaceDir, "page.md"), fs.MarkdownDocument{
+					Frontmatter: fs.Frontmatter{
+						Title:   "Page",
+						ID:      "1",
+						Version: 1,
+					},
+					Body: "updated body\n",
+				})
+				if err := os.Remove(filepath.Join(spaceDir, "assets", "1", "file.png")); err != nil {
+					t.Fatalf("remove asset: %v", err)
+				}
+			},
+			wantPresent:      []string{"modified (1):", "- page.md"},
+			wantAbsent:       []string{"assets/1/file.png"},
+			wantMarkdownOnly: true,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			repo, spaceDir := setupStatusScopeRepo(t)
+
+			tc.mutate(t, spaceDir)
+			got := runStatusWithMockRemote(t, repo)
+
+			if tc.wantMarkdownOnly && !strings.Contains(got, statusScopeNote) {
+				t.Fatalf("expected markdown-only scope note, got:\n%s", got)
+			}
+			for _, want := range tc.wantPresent {
+				if !strings.Contains(got, want) {
+					t.Fatalf("expected output to contain %q, got:\n%s", want, got)
+				}
+			}
+			for _, unwanted := range tc.wantAbsent {
+				if strings.Contains(got, unwanted) {
+					t.Fatalf("expected output to exclude %q, got:\n%s", unwanted, got)
+				}
+			}
+		})
+	}
+}
+
+func setupStatusScopeRepo(t *testing.T) (string, string) {
+	t.Helper()
+
+	repo := t.TempDir()
+	setupGitRepo(t, repo)
+	chdirRepo(t, repo)
+	setupEnv(t)
+
+	spaceDir := filepath.Join(repo, "TEST")
+	if err := os.MkdirAll(filepath.Join(spaceDir, "assets", "1"), 0o750); err != nil {
+		t.Fatalf("mkdir assets: %v", err)
+	}
+
+	writeMarkdown(t, filepath.Join(spaceDir, "page.md"), fs.MarkdownDocument{
+		Frontmatter: fs.Frontmatter{
+			Title:   "Page",
+			ID:      "1",
+			Version: 1,
+		},
+		Body: "body\n",
+	})
+	if err := os.WriteFile(filepath.Join(spaceDir, "assets", "1", "file.png"), []byte("png"), 0o600); err != nil {
+		t.Fatalf("write asset: %v", err)
+	}
+	if err := fs.SaveState(spaceDir, fs.SpaceState{
+		SpaceKey: "TEST",
+		PagePathIndex: map[string]string{
+			"page.md": "1",
+		},
+		AttachmentIndex: map[string]string{
+			"assets/1/file.png": "att-1",
+		},
+	}); err != nil {
+		t.Fatalf("save state: %v", err)
+	}
+
+	runGitForStatus(t, repo, "add", ".")
+	runGitForStatus(t, repo, "commit", "-m", "baseline")
+	tagTime := time.Now().UTC().Format("20060102T150405Z")
+	runGitForStatus(t, repo, "tag", "-a", "confluence-sync/pull/TEST/"+tagTime, "-m", "pull")
+
+	return repo, spaceDir
+}
+
+func runStatusWithMockRemote(t *testing.T, repo string) string {
+	t.Helper()
+
+	mock := &mockStatusRemote{
+		space: confluence.Space{ID: "space-1", Key: "TEST"},
+		pages: confluence.PageListResult{
+			Pages: []confluence.Page{
+				{ID: "1", Title: "Page", Version: 1},
+			},
+		},
+		page: confluence.Page{ID: "1", SpaceID: "space-1", Status: "current"},
+	}
+
+	oldNewStatusRemote := newStatusRemote
+	newStatusRemote = func(cfg *config.Config) (StatusRemote, error) {
+		return mock, nil
+	}
+	t.Cleanup(func() { newStatusRemote = oldNewStatusRemote })
+
+	chdirRepo(t, repo)
+	cmd := newStatusCmd()
+	out := &bytes.Buffer{}
+	cmd.SetOut(out)
+
+	if err := runStatus(cmd, config.Target{Value: "TEST", Mode: config.TargetModeSpace}); err != nil {
+		t.Fatalf("runStatus() error: %v", err)
+	}
+
+	return out.String()
+}

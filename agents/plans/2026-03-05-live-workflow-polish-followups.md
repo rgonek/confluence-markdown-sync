@@ -10,6 +10,12 @@ Capture the non-blocking but high-value workflow, diagnostics, and operator-expe
 - The remediation plan covers production blockers.
 - This plan covers workflow smoothness, clarity, and maintainability improvements that should follow once the blocking correctness issues are under control.
 
+## Implementation Progress
+
+- [x] Batch 1 completed: items 1, 2, 5, and 7 are closed with regression coverage on this branch.
+- [x] Item 8 was re-verified as already complete on this branch.
+- [ ] Remaining items: 3, 4, 6, 9, 10, 11, 12, 13, 14, 15, 16, 17, and 18.
+
 ## Improvements
 
 ### 1. Non-Interactive `init` Should Respect Existing Environment Auth

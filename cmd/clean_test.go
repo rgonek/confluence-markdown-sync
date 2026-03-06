@@ -211,6 +211,26 @@ func TestRunClean_PreservesLinkedWorktreeRecoveryArtifacts(t *testing.T) {
 	}
 }
 
+func TestRunClean_AlreadyCleanReportsExplicitNoopSummary(t *testing.T) {
+	runParallelCommandTest(t)
+
+	repo := setupGitRepoForClean(t)
+	chdirRepo(t, repo)
+	setCleanAutomationFlags(t)
+
+	out := runCleanForTest(t)
+
+	if strings.Contains(out, "Deleted snapshot ref:") {
+		t.Fatalf("expected no snapshot refs to be deleted, got:\n%s", out)
+	}
+	if strings.Contains(out, "Deleted sync branch:") {
+		t.Fatalf("expected no sync branches to be deleted, got:\n%s", out)
+	}
+	if !strings.Contains(out, "clean completed: workspace is already clean (removed 0 worktree(s), deleted 0 snapshot ref(s), deleted 0 sync branch(es), skipped 0 sync branch(es))") {
+		t.Fatalf("unexpected summary output:\n%s", out)
+	}
+}
+
 func setupGitRepoForClean(t *testing.T) string {
 	t.Helper()
 
