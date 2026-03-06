@@ -677,3 +677,74 @@ func TestPull_TrashedRecoveryDeletesLocalPage(t *testing.T) {
 		t.Fatalf("expected trashed.md in deleted markdown list, got %v", result.DeletedMarkdown)
 	}
 }
+
+func TestPull_RemovesLocalAttachmentWhenRemoteNoLongerReferencesIt(t *testing.T) {
+	tmpDir := t.TempDir()
+	spaceDir := filepath.Join(tmpDir, "ENG")
+	if err := os.MkdirAll(spaceDir, 0o750); err != nil {
+		t.Fatalf("mkdir space: %v", err)
+	}
+
+	staleAssetPath := filepath.Join(spaceDir, "assets", "1", "att-legacy-binary.bin")
+	if err := os.MkdirAll(filepath.Dir(staleAssetPath), 0o750); err != nil {
+		t.Fatalf("mkdir assets dir: %v", err)
+	}
+	if err := os.WriteFile(staleAssetPath, []byte("legacy"), 0o600); err != nil {
+		t.Fatalf("write stale attachment: %v", err)
+	}
+
+	state := fs.SpaceState{
+		SpaceKey: "ENG",
+		PagePathIndex: map[string]string{
+			"root.md": "1",
+		},
+		AttachmentIndex: map[string]string{
+			filepath.ToSlash("assets/1/att-legacy-binary.bin"): "att-legacy",
+		},
+	}
+
+	remote := &fakePullRemote{
+		space: confluence.Space{ID: "space-1", Key: "ENG"},
+		pages: []confluence.Page{
+			{
+				ID:           "1",
+				SpaceID:      "space-1",
+				Title:        "Root",
+				Version:      2,
+				LastModified: time.Date(2026, time.February, 2, 11, 0, 0, 0, time.UTC),
+			},
+		},
+		pagesByID: map[string]confluence.Page{
+			"1": {
+				ID:           "1",
+				SpaceID:      "space-1",
+				Title:        "Root",
+				Version:      2,
+				LastModified: time.Date(2026, time.February, 2, 11, 0, 0, 0, time.UTC),
+				BodyADF:      []byte(`{"version":1,"type":"doc","content":[]}`),
+			},
+		},
+		attachments: map[string][]byte{},
+	}
+
+	result, err := Pull(context.Background(), remote, PullOptions{
+		SpaceKey: "ENG",
+		SpaceDir: spaceDir,
+		State:    state,
+	})
+	if err != nil {
+		t.Fatalf("Pull() unexpected error: %v", err)
+	}
+
+	if _, err := os.Stat(staleAssetPath); !os.IsNotExist(err) {
+		t.Fatalf("expected stale attachment to be deleted from local workspace, stat=%v", err)
+	}
+
+	if _, exists := result.State.AttachmentIndex[filepath.ToSlash("assets/1/att-legacy-binary.bin")]; exists {
+		t.Fatalf("expected stale attachment index to be removed")
+	}
+
+	if len(result.DeletedAssets) != 1 || result.DeletedAssets[0] != filepath.ToSlash("assets/1/att-legacy-binary.bin") {
+		t.Fatalf("expected deleted assets to include stale attachment, got %+v", result.DeletedAssets)
+	}
+}

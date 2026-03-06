@@ -592,6 +592,12 @@ func pushUpsertPage(
 		attachmentIDByPath[assetRelPath] = uploadedID
 		state.AttachmentIndex[assetRelPath] = uploadedID
 		rollback.trackUploadedAttachment(pageID, uploadedID, assetRelPath)
+		appendPushDiagnostic(
+			diagnostics,
+			assetRelPath,
+			"ATTACHMENT_CREATED",
+			fmt.Sprintf("uploaded attachment %s from %s", uploadedID, assetRelPath),
+		)
 		referencedIDs[uploadedID] = struct{}{}
 		touchedAssets = append(touchedAssets, assetRelPath)
 	}
