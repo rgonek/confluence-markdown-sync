@@ -47,6 +47,11 @@ The agent manages the full sync cycle.
   - PlantUML is supported as a first-class `plantumlcloud` Confluence extension.
   - Mermaid is preserved as fenced code / ADF `codeBlock` content, not a rendered Confluence diagram macro.
   - `validate` should warn before push when Mermaid fences are present so the downgrade is explicit.
+- Extension/macro support contract:
+  - PlantUML: rendered round-trip support via the custom `plantumlcloud` handler.
+  - Mermaid: preserved-but-not-rendered only; keep it as fenced code and expect an ADF `codeBlock` on push.
+  - Raw `adf:extension` payloads: best-effort, low-level preservation fallback for extension nodes without a repo-specific handler; not a verified end-to-end round-trip guarantee.
+  - Unknown Confluence macros/extensions: not a first-class supported authoring target; they may only survive through best-effort raw ADF preservation, and Confluence can still reject them on push. Validate any such workflow in a sandbox before relying on it.
 
 ## Git Workflow Requirements
 - `push` uses an ephemeral sync branch: `sync/<SpaceKey>/<UTC timestamp>`.

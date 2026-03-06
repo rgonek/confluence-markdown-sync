@@ -53,13 +53,25 @@ func renderDiffMarkdown(
 	ctx context.Context,
 	page confluence.Page,
 	spaceKey string,
+	spaceDir string,
 	sourcePath string,
 	relPath string,
 	pagePathByIDAbs map[string]string,
 	attachmentPathByID map[string]string,
+	globalIndex syncflow.GlobalPageIndex,
 ) ([]byte, []syncflow.PullDiagnostic, error) {
+	linkNotices := make([]syncflow.ForwardLinkNotice, 0, 1)
 	forward, err := converter.Forward(ctx, page.BodyADF, converter.ForwardConfig{
-		LinkHook:  syncflow.NewForwardLinkHook(sourcePath, pagePathByIDAbs, spaceKey),
+		LinkHook: syncflow.NewForwardLinkHookWithGlobalIndex(
+			sourcePath,
+			spaceDir,
+			pagePathByIDAbs,
+			globalIndex,
+			spaceKey,
+			func(notice syncflow.ForwardLinkNotice) {
+				linkNotices = append(linkNotices, notice)
+			},
+		),
 		MediaHook: syncflow.NewForwardMediaHook(sourcePath, attachmentPathByID),
 	}, sourcePath)
 	if err != nil {
@@ -83,7 +95,14 @@ func renderDiffMarkdown(
 		return nil, nil, fmt.Errorf("format page %s markdown: %w", page.ID, err)
 	}
 
-	diagnostics := make([]syncflow.PullDiagnostic, 0, len(forward.Warnings))
+	diagnostics := make([]syncflow.PullDiagnostic, 0, len(linkNotices)+len(forward.Warnings))
+	for _, notice := range linkNotices {
+		diagnostics = append(diagnostics, syncflow.PullDiagnostic{
+			Path:    filepath.ToSlash(relPath),
+			Code:    notice.Code,
+			Message: notice.Message,
+		})
+	}
 	for _, warning := range forward.Warnings {
 		diagnostics = append(diagnostics, syncflow.PullDiagnostic{
 			Path:    filepath.ToSlash(relPath),
@@ -92,7 +111,7 @@ func renderDiffMarkdown(
 		})
 	}
 
-	return rendered, diagnostics, nil
+	return rendered, syncflow.NormalizePullDiagnostics(diagnostics), nil
 }
 
 func copyLocalMarkdownSnapshot(spaceDir, snapshotDir string) error {

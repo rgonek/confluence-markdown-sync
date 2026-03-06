@@ -172,6 +172,12 @@ func TestPull_IncrementalRewriteDeleteAndWatermark(t *testing.T) {
 	for _, d := range result.Diagnostics {
 		if d.Code == "unresolved_reference" {
 			foundUnresolved = true
+			if d.Category != "degraded_reference" {
+				t.Fatalf("unresolved_reference category = %q, want degraded_reference", d.Category)
+			}
+			if !d.ActionRequired {
+				t.Fatalf("unresolved_reference should require user action: %+v", d)
+			}
 			break
 		}
 	}
@@ -299,6 +305,12 @@ func TestPull_PreservesAbsoluteCrossSpaceLinksWithoutUnresolvedWarnings(t *testi
 		}
 		if d.Code == "CROSS_SPACE_LINK_PRESERVED" {
 			foundPreserved = true
+			if d.Category != "preserved_external_link" {
+				t.Fatalf("CROSS_SPACE_LINK_PRESERVED category = %q, want preserved_external_link", d.Category)
+			}
+			if d.ActionRequired {
+				t.Fatalf("CROSS_SPACE_LINK_PRESERVED should not require user action: %+v", d)
+			}
 		}
 	}
 	if !foundPreserved {

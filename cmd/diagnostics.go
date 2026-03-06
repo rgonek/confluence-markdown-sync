@@ -14,29 +14,33 @@ func writeSyncDiagnostic(out io.Writer, diag syncflow.PullDiagnostic) error {
 }
 
 func formatSyncDiagnostic(diag syncflow.PullDiagnostic) string {
-	level, qualifier := classifySyncDiagnostic(diag.Code)
+	diag = syncflow.NormalizePullDiagnostic(diag)
+	level, qualifier := classifySyncDiagnostic(diag)
 	message := strings.TrimSpace(diag.Message)
 	if qualifier != "" {
-		message = qualifier + ": " + message
+		message = qualifier + "; action required: " + yesNo(diag.ActionRequired) + ": " + message
 	}
 	return fmt.Sprintf("%s: %s [%s] %s\n", level, diag.Path, diag.Code, message)
 }
 
-func classifySyncDiagnostic(code string) (level string, qualifier string) {
-	switch strings.TrimSpace(code) {
-	case "CROSS_SPACE_LINK_PRESERVED":
-		return "note", "no action required"
-	case "unresolved_reference":
-		return "warning", "broken reference preserved as fallback output"
-	case "FOLDER_LOOKUP_UNAVAILABLE",
-		"CONTENT_STATUS_FETCH_FAILED",
-		"LABELS_FETCH_FAILED",
-		"UNKNOWN_MEDIA_ID_LOOKUP_FAILED",
-		"UNKNOWN_MEDIA_ID_RESOLVED",
-		"UNKNOWN_MEDIA_ID_UNRESOLVED",
-		"ATTACHMENT_DOWNLOAD_SKIPPED":
+func classifySyncDiagnostic(diag syncflow.PullDiagnostic) (level string, qualifier string) {
+	switch strings.TrimSpace(diag.Category) {
+	case syncflow.DiagnosticCategoryPreservedExternalLink:
+		return "note", "preserved external/cross-space link"
+	case syncflow.DiagnosticCategoryDegradedReference:
+		return "warning", "unresolved but safely degraded reference"
+	case syncflow.DiagnosticCategoryBlockingReference:
+		return "error", "broken strict-path reference that blocks push"
+	case syncflow.DiagnosticCategoryDegradedContent:
 		return "warning", "degraded but pullable content"
 	default:
 		return "warning", ""
 	}
+}
+
+func yesNo(value bool) string {
+	if value {
+		return "yes"
+	}
+	return "no"
 }

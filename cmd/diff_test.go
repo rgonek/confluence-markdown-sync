@@ -209,6 +209,109 @@ func TestRunDiff_ReportsBestEffortWarnings(t *testing.T) {
 	if !strings.Contains(got, "[unresolved_reference]") {
 		t.Fatalf("expected unresolved warning, got:\n%s", got)
 	}
+	if !strings.Contains(got, "action required: yes") {
+		t.Fatalf("expected actionable unresolved warning, got:\n%s", got)
+	}
+	if !strings.Contains(got, "unresolved but safely degraded reference") {
+		t.Fatalf("expected degraded-reference classification, got:\n%s", got)
+	}
+}
+
+func TestRunDiff_PreservedAbsoluteCrossSpaceLinkIsNotReportedAsUnresolved(t *testing.T) {
+	runParallelCommandTest(t)
+	repo := t.TempDir()
+	engDir := filepath.Join(repo, "Engineering (ENG)")
+	tdDir := filepath.Join(repo, "Technical Docs (TD)")
+	if err := os.MkdirAll(engDir, 0o750); err != nil {
+		t.Fatalf("mkdir eng dir: %v", err)
+	}
+	if err := os.MkdirAll(tdDir, 0o750); err != nil {
+		t.Fatalf("mkdir td dir: %v", err)
+	}
+
+	targetPath := filepath.Join(tdDir, "target.md")
+	writeMarkdown(t, targetPath, fs.MarkdownDocument{
+		Frontmatter: fs.Frontmatter{Title: "Target", ID: "200", Version: 1},
+		Body:        "target body\n",
+	})
+
+	localFile := filepath.Join(engDir, "root.md")
+	writeMarkdown(t, localFile, fs.MarkdownDocument{
+		Frontmatter: fs.Frontmatter{
+			Title:   "Root",
+			ID:      "1",
+			Version: 1,
+		},
+		Body: "old body\n",
+	})
+
+	fake := &cmdFakePullRemote{
+		space: confluence.Space{ID: "space-1", Key: "ENG", Name: "Engineering"},
+		pages: []confluence.Page{
+			{ID: "1", SpaceID: "space-1", Title: "Root", Version: 2, LastModified: time.Date(2026, time.March, 5, 12, 0, 0, 0, time.UTC)},
+		},
+		pagesByID: map[string]confluence.Page{
+			"1": {
+				ID:           "1",
+				SpaceID:      "space-1",
+				Title:        "Root",
+				Version:      2,
+				LastModified: time.Date(2026, time.March, 5, 12, 0, 0, 0, time.UTC),
+				BodyADF: rawJSON(t, map[string]any{
+					"version": 1,
+					"type":    "doc",
+					"content": []any{
+						map[string]any{
+							"type": "paragraph",
+							"content": []any{
+								map[string]any{
+									"type": "text",
+									"text": "Cross Space",
+									"marks": []any{
+										map[string]any{
+											"type": "link",
+											"attrs": map[string]any{
+												"href":   "https://example.atlassian.net/wiki/pages/viewpage.action?pageId=200",
+												"pageId": "200",
+												"anchor": "section-a",
+											},
+										},
+									},
+								},
+							},
+						},
+					},
+				}),
+			},
+		},
+		attachments: map[string][]byte{},
+	}
+
+	oldFactory := newDiffRemote
+	newDiffRemote = func(_ *config.Config) (syncflow.PullRemote, error) { return fake, nil }
+	t.Cleanup(func() { newDiffRemote = oldFactory })
+
+	setupEnv(t)
+	chdirRepo(t, repo)
+
+	cmd := &cobra.Command{}
+	out := &bytes.Buffer{}
+	cmd.SetOut(out)
+
+	if err := runDiff(cmd, config.Target{Mode: config.TargetModeFile, Value: localFile}); err != nil {
+		t.Fatalf("runDiff() error: %v", err)
+	}
+
+	got := out.String()
+	if strings.Contains(got, "[unresolved_reference]") {
+		t.Fatalf("did not expect unresolved warning for preserved cross-space link, got:\n%s", got)
+	}
+	if !strings.Contains(got, "[CROSS_SPACE_LINK_PRESERVED]") {
+		t.Fatalf("expected preserved cross-space diagnostic, got:\n%s", got)
+	}
+	if !strings.Contains(got, "preserved external/cross-space link; action required: no") {
+		t.Fatalf("expected informational preserved-link classification, got:\n%s", got)
+	}
 }
 
 func TestRunDiff_FolderListFailureFallsBackToPageHierarchy(t *testing.T) {

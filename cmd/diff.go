@@ -154,6 +154,10 @@ func runDiff(cmd *cobra.Command, target config.Target) (runErr error) {
 
 	pagePathByIDAbs, pagePathByIDRel := syncflow.PlanPagePaths(diffCtx.spaceDir, state.PagePathIndex, pages, folderByID)
 	attachmentPathByID := buildDiffAttachmentPathByID(diffCtx.spaceDir, state.AttachmentIndex)
+	globalPageIndex, err := buildWorkspaceGlobalPageIndex(diffCtx.spaceDir)
+	if err != nil {
+		return fmt.Errorf("build global page index: %w", err)
+	}
 
 	tmpRoot, err := os.MkdirTemp("", "conf-diff-*")
 	if err != nil {
@@ -164,7 +168,7 @@ func runDiff(cmd *cobra.Command, target config.Target) (runErr error) {
 	}()
 
 	if target.IsFile() {
-		return runDiffFileMode(ctx, out, remote, diffCtx, pagePathByIDAbs, attachmentPathByID, tmpRoot)
+		return runDiffFileMode(ctx, out, remote, diffCtx, pagePathByIDAbs, attachmentPathByID, globalPageIndex, tmpRoot)
 	}
 
 	return runDiffSpaceMode(
@@ -176,6 +180,7 @@ func runDiff(cmd *cobra.Command, target config.Target) (runErr error) {
 		pagePathByIDAbs,
 		pagePathByIDRel,
 		attachmentPathByID,
+		globalPageIndex,
 		tmpRoot,
 	)
 }
@@ -187,6 +192,7 @@ func runDiffFileMode(
 	diffCtx diffContext,
 	pagePathByIDAbs map[string]string,
 	attachmentPathByID map[string]string,
+	globalPageIndex syncflow.GlobalPageIndex,
 	tmpRoot string,
 ) error {
 	relPath := diffDisplayRelPath(diffCtx.spaceDir, diffCtx.targetFile)
@@ -231,10 +237,12 @@ func runDiffFileMode(
 		ctx,
 		page,
 		diffCtx.spaceKey,
+		diffCtx.spaceDir,
 		diffCtx.targetFile,
 		relPath,
 		pagePathByIDAbs,
 		attachmentPathByID,
+		globalPageIndex,
 	)
 	if err != nil {
 		return err
@@ -266,6 +274,7 @@ func runDiffSpaceMode(
 	pagePathByIDAbs map[string]string,
 	pagePathByIDRel map[string]string,
 	attachmentPathByID map[string]string,
+	globalPageIndex syncflow.GlobalPageIndex,
 	tmpRoot string,
 ) error {
 	localSnapshot := filepath.Join(tmpRoot, "local")
@@ -313,10 +322,12 @@ func runDiffSpaceMode(
 			ctx,
 			page,
 			diffCtx.spaceKey,
+			diffCtx.spaceDir,
 			sourcePath,
 			relPath,
 			pagePathByIDAbs,
 			attachmentPathByID,
+			globalPageIndex,
 		)
 		if err != nil {
 			return err

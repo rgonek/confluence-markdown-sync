@@ -257,10 +257,21 @@ Local state file:
 
 - `.confluence-state.json` (per space, gitignored)
 
-## Diagram Support
+## Extension and Macro Support
 
-- PlantUML: supported as a first-class Confluence extension through `plantumlcloud`, with round-trip preservation in pull and push.
-- Mermaid: preserved as fenced code in Markdown and as ADF `codeBlock` content with language `mermaid` in Confluence. It does not render as a Mermaid macro, and `conf validate` warns before push so the downgrade is explicit.
+| Item | Support level | Markdown / ADF behavior | Notes |
+|------|---------------|-------------------------|-------|
+| PlantUML (`plantumlcloud`) | Rendered round-trip support | Pull/diff use the custom extension handler to turn the Confluence macro into a managed `adf-extension` wrapper with a `puml` code body; validate/push rebuild the same Confluence extension. | This is the only first-class extension handler registered by `conf`. |
+| Mermaid | Preserved but not rendered | Markdown keeps ` ```mermaid ` fences; push writes an ADF `codeBlock` with language `mermaid` instead of a Confluence diagram macro. | `conf validate` warns with `MERMAID_PRESERVED_AS_CODEBLOCK`, and push surfaces the same warning before writing. |
+| Raw ADF extension preservation | Best-effort preservation only | When an extension node has no repo-specific handler, pull/diff can preserve it as a raw ```` ```adf:extension ```` JSON fence that validate/push can pass back through with minimal interpretation. | Treat this as a low-level escape hatch, not as a rendered or human-friendly authoring format. It is not a verified end-to-end round-trip contract; validate in a sandbox before relying on it. |
+| Unknown Confluence macros/extensions | Unsupported as a first-class feature | `conf` does not add custom behavior for unknown macros beyond whatever best-effort raw ADF preservation may be possible for some remote payloads. | If Confluence rejects an unknown or uninstalled macro, push can still fail. Do not assume rendered round-trip support unless a handler is documented explicitly, and sandbox-validate any workflow that depends on this path. |
+
+Practical guidance:
+
+- Use PlantUML when the page must keep rendering as a Confluence diagram macro.
+- Use Mermaid only when preserving the source as code is acceptable.
+- Keep raw `adf:extension` fences unchanged if you need best-effort preservation of an unhandled extension node, and test that workflow in a sandbox before using it in a real space.
+- Do not treat unknown macros/extensions as supported authoring targets just because they may survive a pull in raw ADF form.
 
 ## Typical Team Workflow
 

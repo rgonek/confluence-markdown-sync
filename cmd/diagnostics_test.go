@@ -20,19 +20,25 @@ func TestFormatSyncDiagnostic_Classification(t *testing.T) {
 			name:      "preserved cross-space link is a note",
 			diag:      syncflow.PullDiagnostic{Path: "page.md", Code: "CROSS_SPACE_LINK_PRESERVED", Message: "preserved absolute cross-space link"},
 			wantStart: "note: page.md [CROSS_SPACE_LINK_PRESERVED]",
-			wantText:  "no action required",
+			wantText:  "preserved external/cross-space link; action required: no",
 		},
 		{
-			name:      "unresolved reference is called broken fallback",
+			name:      "unresolved reference is actionable degraded output",
 			diag:      syncflow.PullDiagnostic{Path: "page.md", Code: "unresolved_reference", Message: "page id 404 could not be resolved"},
 			wantStart: "warning: page.md [unresolved_reference]",
-			wantText:  "broken reference preserved as fallback output",
+			wantText:  "unresolved but safely degraded reference; action required: yes",
 		},
 		{
 			name:      "folder fallback is marked degraded but pullable",
 			diag:      syncflow.PullDiagnostic{Path: "folder-1", Code: "FOLDER_LOOKUP_UNAVAILABLE", Message: "falling back to page-only hierarchy"},
 			wantStart: "warning: folder-1 [FOLDER_LOOKUP_UNAVAILABLE]",
-			wantText:  "degraded but pullable content",
+			wantText:  "degraded but pullable content; action required: no",
+		},
+		{
+			name:      "blocking strict-path reference is an error",
+			diag:      syncflow.PullDiagnostic{Path: "page.md", Code: "STRICT_PATH_REFERENCE_BROKEN", Message: "relative link ../missing.md does not resolve"},
+			wantStart: "error: page.md [STRICT_PATH_REFERENCE_BROKEN]",
+			wantText:  "broken strict-path reference that blocks push; action required: yes",
 		},
 	}
 

@@ -63,7 +63,7 @@ conf push ENG --on-conflict=cancel
 - Version: `conf version` or `conf --version`
 - Target rule: `.md` suffix means file mode; otherwise space mode (`SPACE_KEY`)
 - Required auth: `ATLASSIAN_DOMAIN`, `ATLASSIAN_EMAIL`, `ATLASSIAN_API_TOKEN`
-- Diagram support: PlantUML is preserved as a Confluence extension; Mermaid is preserved as fenced code / ADF `codeBlock` and `validate` warns before push
+- Extension support: PlantUML is the only first-class rendered extension handler; Mermaid is preserved as code, and raw `adf:extension` / unknown macro handling is best-effort and should be sandbox-validated before relying on it
 - Status scope: `conf status` reports Markdown page drift only; use `git status` or `conf diff` for attachment-only changes
 - Label rules: labels are trimmed, lowercased, deduplicated, and sorted; empty labels and labels containing whitespace are rejected
 - Search filters: `--space`, repeatable `--label`, `--heading`, `--created-by`, `--updated-by`, date bounds, and `--result-detail`
@@ -75,6 +75,15 @@ conf push ENG --on-conflict=cancel
 - Security policy: `SECURITY.md`
 - Support policy: `SUPPORT.md`
 - License: `LICENSE`
+
+## Extension and macro support 🧩
+
+| Item | Support level | What `conf` does | Notes |
+|------|---------------|------------------|-------|
+| PlantUML (`plantumlcloud`) | Rendered round-trip support | Pull converts the Confluence extension into Markdown with a managed `adf-extension` wrapper and `puml` body; push reconstructs the Confluence macro. | This is the only first-class custom extension handler in the repo today. |
+| Mermaid | Preserved but not rendered | Keeps Mermaid as fenced code in Markdown and pushes it back as an ADF `codeBlock` with `language: mermaid`. | `conf validate`/`conf push` warn with `MERMAID_PRESERVED_AS_CODEBLOCK` so the render downgrade is explicit. |
+| Raw ADF extension preservation | Best-effort preservation only | Unhandled extension nodes can fall back to raw ```` ```adf:extension ```` JSON blocks so the original ADF payload can be carried through Markdown with minimal interpretation. | This is a low-level escape hatch, not a rendered feature contract or a verified end-to-end round-trip guarantee. Validate any workflow that depends on it in a sandbox before relying on it. |
+| Unknown Confluence macros/extensions | Unsupported as a first-class feature | `conf` does not ship custom handlers for unknown macros, beyond whatever best-effort raw ADF preservation may be possible for some remote extension payloads. | Do not assume unknown macros will round-trip or render correctly. Push can still fail if Confluence rejects the macro or if the instance does not have the required app installed; sandbox validation is recommended before depending on this path. |
 
 ## Development 🧑‍💻
 - `make build`

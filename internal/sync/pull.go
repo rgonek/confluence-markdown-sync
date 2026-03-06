@@ -68,9 +68,11 @@ type PullOptions struct {
 
 // PullDiagnostic captures non-fatal conversion diagnostics.
 type PullDiagnostic struct {
-	Path    string
-	Code    string
-	Message string
+	Path           string
+	Code           string
+	Message        string
+	Category       string
+	ActionRequired bool
 }
 
 // PullResult captures pull execution outputs.
@@ -674,7 +676,7 @@ func Pull(ctx context.Context, remote PullRemote, opts PullOptions) (PullResult,
 	return PullResult{
 		State:            state,
 		MaxVersion:       maxVersion,
-		Diagnostics:      diagnostics,
+		Diagnostics:      NormalizePullDiagnostics(diagnostics),
 		UpdatedMarkdown:  updatedMarkdown,
 		DeletedMarkdown:  deletedMarkdown,
 		DownloadedAssets: downloadedAssets,
