@@ -56,20 +56,18 @@ func (c *Client) SetContentStatus(ctx context.Context, pageID string, pageStatus
 	if id == "" {
 		return errors.New("page ID is required")
 	}
+	statusName = strings.TrimSpace(statusName)
+	if statusName == "" {
+		return errors.New("status name is required")
+	}
 
 	query := url.Values{}
 	query.Set("status", normalizeContentStatePageStatus(pageStatus))
 
 	payload := struct {
-		ContentState struct {
-			Name string `json:"name"`
-		} `json:"contentState"`
+		Name string `json:"name"`
 	}{
-		ContentState: struct {
-			Name string `json:"name"`
-		}{
-			Name: statusName,
-		},
+		Name: statusName,
 	}
 
 	req, err := c.newRequest(

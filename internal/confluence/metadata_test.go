@@ -18,7 +18,7 @@ func TestClient_ContentStatus(t *testing.T) {
 		switch r.Method {
 		case http.MethodGet:
 			w.Header().Set("Content-Type", "application/json")
-			if _, err := io.WriteString(w, `{"contentState":{"name":"Ready to review","color":"yellow","id":80}}`); err != nil {
+			if _, err := io.WriteString(w, `{"name":"Ready to review","color":"yellow","id":80}`); err != nil {
 				t.Fatalf("write response: %v", err)
 			}
 		case http.MethodPut:
@@ -26,15 +26,15 @@ func TestClient_ContentStatus(t *testing.T) {
 			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 				t.Fatalf("decode request body: %v", err)
 			}
-			contentState, ok := body["contentState"].(map[string]any)
-			if !ok {
-				t.Fatalf("contentState payload = %#v, want object", body["contentState"])
+			contentState, hasContentState := body["contentState"]
+			if hasContentState {
+				t.Fatalf("contentState payload = %#v; expected top-level name payload", contentState)
 			}
-			if got := contentState["name"]; got != "Ready to review" {
-				t.Fatalf("contentState.name = %v, want Ready to review", got)
+			if got := body["name"]; got != "Ready to review" {
+				t.Fatalf("name payload = %v, want Ready to review", got)
 			}
 			w.Header().Set("Content-Type", "application/json")
-			if _, err := io.WriteString(w, `{"contentState":{"name":"Ready to review"}}`); err != nil {
+			if _, err := io.WriteString(w, `{"name":"Ready to review","color":"yellow","id":80}`); err != nil {
 				t.Fatalf("write response: %v", err)
 			}
 		case http.MethodDelete:

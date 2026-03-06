@@ -170,6 +170,146 @@ func TestPush_RollbackRestoresMetadataOnSyncFailure(t *testing.T) {
 	}
 }
 
+func TestPush_RollbackDeletesCreatedPageWhenMetadataSyncStatusFails(t *testing.T) {
+	spaceDir := t.TempDir()
+	mdPath := filepath.Join(spaceDir, "new.md")
+
+	if err := fs.WriteMarkdownDocument(mdPath, fs.MarkdownDocument{
+		Frontmatter: fs.Frontmatter{
+			Title:  "New",
+			Status: "In progress",
+			Labels: []string{"team"},
+		},
+		Body: "content\n",
+	}); err != nil {
+		t.Fatalf("write markdown: %v", err)
+	}
+
+	remote := newRollbackPushRemote()
+	remote.failSetContentStatus = true
+
+	result, err := Push(context.Background(), remote, PushOptions{
+		SpaceKey:       "ENG",
+		SpaceDir:       spaceDir,
+		Domain:         "https://example.atlassian.net",
+		State:          fs.SpaceState{SpaceKey: "ENG"},
+		ConflictPolicy: PushConflictPolicyCancel,
+		Changes: []PushFileChange{{
+			Type: PushChangeAdd,
+			Path: "new.md",
+		}},
+	})
+	if err == nil {
+		t.Fatal("expected metadata sync failure")
+	}
+	if !strings.Contains(err.Error(), "sync metadata for new.md: set content status") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if remote.createPageCalls != 1 {
+		t.Fatalf("create page calls = %d, want 1", remote.createPageCalls)
+	}
+	if len(remote.setContentStatusCalls) != 1 {
+		t.Fatalf("set content status calls = %d, want 1", len(remote.setContentStatusCalls))
+	}
+	if got := remote.setContentStatusArgs[0]; got.PageID == "" || got.PageStatus != "current" || got.StatusName != "In progress" {
+		t.Fatalf("unexpected set content status call: %+v", remote.setContentStatusArgs[0])
+	}
+	if len(remote.deletePageCalls) != 1 {
+		t.Fatalf("delete page calls = %d, want 1", len(remote.deletePageCalls))
+	}
+	if remote.deletePageOpts[0].Purge || remote.deletePageOpts[0].Draft {
+		t.Fatalf("rollback should not purge or draft-delete current page: %+v", remote.deletePageOpts[0])
+	}
+
+	hasPageRollback := false
+	for _, diag := range result.Diagnostics {
+		if diag.Code == "ROLLBACK_PAGE_DELETED" {
+			hasPageRollback = true
+			break
+		}
+	}
+	if !hasPageRollback {
+		t.Fatalf("expected ROLLBACK_PAGE_DELETED diagnostic, got %+v", result.Diagnostics)
+	}
+}
+
+func TestPush_RollbackReportsContentStatusRestoreFailure(t *testing.T) {
+	spaceDir := t.TempDir()
+	mdPath := filepath.Join(spaceDir, "root.md")
+
+	if err := fs.WriteMarkdownDocument(mdPath, fs.MarkdownDocument{
+		Frontmatter: fs.Frontmatter{
+			Title:   "Root",
+			ID:      "1",
+			Version: 1,
+			Labels:  []string{"team"},
+		},
+		Body: "content\n",
+	}); err != nil {
+		t.Fatalf("write markdown: %v", err)
+	}
+
+	remote := newRollbackPushRemote()
+	remote.pagesByID["1"] = confluence.Page{
+		ID:           "1",
+		SpaceID:      "space-1",
+		Title:        "Root",
+		Status:       "current",
+		Version:      1,
+		ParentPageID: "",
+		BodyADF:      []byte(`{"version":1,"type":"doc","content":[]}`),
+	}
+	remote.pages = append(remote.pages, remote.pagesByID["1"])
+	remote.contentStatuses["1"] = "In review"
+	remote.labelsByPage["1"] = []string{}
+	remote.failAddLabels = true
+	remote.failSetContentStatus = true
+
+	result, err := Push(context.Background(), remote, PushOptions{
+		SpaceKey:       "ENG",
+		SpaceDir:       spaceDir,
+		Domain:         "https://example.atlassian.net",
+		State:          fs.SpaceState{SpaceKey: "ENG", PagePathIndex: map[string]string{"root.md": "1"}},
+		ConflictPolicy: PushConflictPolicyCancel,
+		Changes: []PushFileChange{{
+			Type: PushChangeModify,
+			Path: "root.md",
+		}},
+	})
+	if err == nil {
+		t.Fatal("expected metadata sync failure")
+	}
+	if !strings.Contains(err.Error(), "sync metadata for root.md: add labels") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(remote.deleteContentStatusArgs) != 1 {
+		t.Fatalf("delete content status calls = %d, want 1", len(remote.deleteContentStatusArgs))
+	}
+	if len(remote.setContentStatusArgs) != 1 {
+		t.Fatalf("set content status calls = %d, want 1", len(remote.setContentStatusArgs))
+	}
+	if remote.setContentStatusArgs[0].StatusName != "In review" {
+		t.Fatalf("unexpected rollback set content status call: %+v", remote.setContentStatusArgs[0])
+	}
+
+	if got := strings.TrimSpace(remote.contentStatuses["1"]); got != "" {
+		t.Fatalf("content status after failed rollback = %q, want empty", got)
+	}
+
+	hasFailureDiag := false
+	for _, diag := range result.Diagnostics {
+		if diag.Code == "ROLLBACK_CONTENT_STATUS_FAILED" {
+			hasFailureDiag = true
+			break
+		}
+	}
+	if !hasFailureDiag {
+		t.Fatalf("expected ROLLBACK_CONTENT_STATUS_FAILED diagnostic, got %+v", result.Diagnostics)
+	}
+}
+
 func TestPush_RollbackDeletesCreatedDraftPageWithDraftDeleteOption(t *testing.T) {
 	spaceDir := t.TempDir()
 	mdPath := filepath.Join(spaceDir, "draft.md")

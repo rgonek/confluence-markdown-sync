@@ -153,6 +153,8 @@ type rollbackPushRemote struct {
 	archiveTaskWaitErr       error
 	failUpdate               bool
 	failAddLabels            bool
+	failSetContentStatus     bool
+	failDeleteContentStatus  bool
 	rejectParentID           string
 	rejectParentErr          error
 	updateInputsByPageID     map[string]confluence.PageUpsertInput
@@ -201,6 +203,9 @@ func (f *rollbackPushRemote) SetContentStatus(_ context.Context, pageID string, 
 		PageStatus: strings.TrimSpace(pageStatus),
 		StatusName: strings.TrimSpace(statusName),
 	})
+	if f.failSetContentStatus {
+		return errors.New("simulated set content status failure")
+	}
 	f.contentStatuses[pageID] = strings.TrimSpace(statusName)
 	return nil
 }
@@ -211,6 +216,9 @@ func (f *rollbackPushRemote) DeleteContentStatus(_ context.Context, pageID strin
 		PageID:     pageID,
 		PageStatus: strings.TrimSpace(pageStatus),
 	})
+	if f.failDeleteContentStatus {
+		return errors.New("simulated delete content status failure")
+	}
 	f.contentStatuses[pageID] = ""
 	return nil
 }
