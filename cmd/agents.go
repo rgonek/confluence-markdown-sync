@@ -102,7 +102,7 @@ This space directory contains technical documentation for [%s].
 You are a technical writer and software engineer. Your goal is to maintain high-quality, accurate, and developer-friendly documentation.
 
 ## Space-Specific Rules
-- **Diagrams**: Use Mermaid or PlantUML for all architecture diagrams.
+- **Diagrams**: Use PlantUML when the page needs a rendered Confluence diagram. Mermaid fences are preserved as code blocks and will not render as Mermaid macros.
 - **Code Snippets**: Always specify the language for syntax highlighting.
 - **API Docs**: Ensure all endpoints include request/response examples.
 - **Links**: Use relative Markdown links for cross-references between pages.

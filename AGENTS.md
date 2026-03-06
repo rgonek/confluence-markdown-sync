@@ -43,6 +43,10 @@ The agent manages the full sync cycle.
 - `validate`/`push` run with strict resolution (`ErrUnresolved` => conversion failure).
 - `validate` must use the same strict reverse-conversion profile and hook adapters as `push`.
 - Hooks return mapping decisions only; sync orchestration owns downloads/uploads and file writes/deletes.
+- Diagram contract:
+  - PlantUML is supported as a first-class `plantumlcloud` Confluence extension.
+  - Mermaid is preserved as fenced code / ADF `codeBlock` content, not a rendered Confluence diagram macro.
+  - `validate` should warn before push when Mermaid fences are present so the downgrade is explicit.
 
 ## Git Workflow Requirements
 - `push` uses an ephemeral sync branch: `sync/<SpaceKey>/<UTC timestamp>`.

@@ -109,6 +109,8 @@ Checks include:
 - link/asset resolution,
 - strict Markdown -> ADF conversion compatibility.
 
+Validation also emits non-fatal compatibility warnings for content that will sync successfully but will not render as a first-class Confluence feature. Today that includes Mermaid fenced code blocks, which are preserved as ADF `codeBlock` nodes instead of diagram macros.
+
 Use this before major pushes or in CI.
 
 ### `conf diff [TARGET]`
@@ -224,6 +226,11 @@ Markdown frontmatter keys:
 Local state file:
 
 - `.confluence-state.json` (per space, gitignored)
+
+## Diagram Support
+
+- PlantUML: supported as a first-class Confluence extension through `plantumlcloud`, with round-trip preservation in pull and push.
+- Mermaid: preserved as fenced code in Markdown and as ADF `codeBlock` content with language `mermaid` in Confluence. It does not render as a Mermaid macro, and `conf validate` warns before push so the downgrade is explicit.
 
 ## Typical Team Workflow
 

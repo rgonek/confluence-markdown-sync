@@ -84,3 +84,21 @@ func TestReverseStrict(t *testing.T) {
 		t.Error("Expected error in strict mode for unresolved link, got nil")
 	}
 }
+
+func TestReverse_MermaidCodeFenceProducesCodeBlockADF(t *testing.T) {
+	ctx := context.Background()
+	markdown := []byte("```mermaid\ngraph TD\n  A --> B\n```\n")
+
+	res, err := Reverse(ctx, markdown, ReverseConfig{Strict: true}, "test.md")
+	if err != nil {
+		t.Fatalf("Reverse failed: %v", err)
+	}
+
+	adfStr := string(res.ADF)
+	if !strings.Contains(adfStr, "\"type\":\"codeBlock\"") {
+		t.Fatalf("expected Mermaid ADF to contain codeBlock node, got %s", adfStr)
+	}
+	if !strings.Contains(adfStr, "\"language\":\"mermaid\"") {
+		t.Fatalf("expected Mermaid ADF to preserve mermaid language, got %s", adfStr)
+	}
+}
