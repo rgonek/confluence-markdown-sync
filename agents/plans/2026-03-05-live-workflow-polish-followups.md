@@ -14,8 +14,9 @@ Capture the non-blocking but high-value workflow, diagnostics, and operator-expe
 
 - [x] Batch 1 completed: items 1, 2, 5, and 7 are closed with regression coverage on this branch.
 - [x] Batch 2 completed: items 3, 6, 12, and 13 are closed with regression coverage on this branch.
+- [x] Batch 3 completed: items 10, 11, and 18 are closed, and follow-up hardening landed for items 6, 12, and 13.
 - [x] Item 8 was re-verified as already complete on this branch.
-- [ ] Remaining items: 4, 9, 10, 11, 14, 15, 16, 17, and 18.
+- [ ] Remaining items: 4, 9, 14, 15, 16, and 17.
 
 ## Improvements
 

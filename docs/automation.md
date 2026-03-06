@@ -112,6 +112,149 @@ conf validate ENG
 conf push ENG --yes --non-interactive --on-conflict=cancel
 ```
 
+## Live Sandbox Smoke-Test Runbook
+
+Use this runbook for manual live verification against an explicit non-production Confluence space. It is intentionally operator-driven and repeatable; do **not** run it in the repository root and do **not** point it at production content.
+
+### Preconditions And Guardrails
+
+Before you start:
+
+- use a dedicated sandbox space key that is approved for destructive testing,
+- run in a temporary workspace directory **outside** the `confluence-markdown-sync` repository,
+- use a dedicated scratch page in that sandbox space (do not edit shared team pages),
+- keep `id` and `space` frontmatter unchanged, and do not hand-edit `version`,
+- expect to restore the scratch page to its original content before deleting the workspace,
+- stop immediately if the target space is not clearly non-production.
+
+Recommended environment contract:
+
+```powershell
+$RepoRoot      = 'C:\Dev\confluence-markdown-sync'
+$Conf          = Join-Path $RepoRoot 'conf.exe'
+$SandboxSpace  = 'SANDBOX'
+$SmokeRoot     = Join-Path $env:TEMP ("conf-live-smoke-" + (Get-Date -Format 'yyyyMMdd-HHmmss'))
+$WorkspaceA    = Join-Path $SmokeRoot 'workspace-a'
+$WorkspaceB    = Join-Path $SmokeRoot 'workspace-b'
+```
+
+Credentials must already be available through `ATLASSIAN_DOMAIN`, `ATLASSIAN_EMAIL`, and `ATLASSIAN_API_TOKEN` (or the legacy `CONFLUENCE_*` names). Build `conf` from the repo root first if needed:
+
+```powershell
+Set-Location $RepoRoot
+make build
+```
+
+### 1. Bootstrap Two Isolated Sandbox Workspaces
+
+Use two workspaces so you can exercise both the happy path and a real remote-ahead conflict.
+
+```powershell
+New-Item -ItemType Directory -Force -Path $WorkspaceA, $WorkspaceB | Out-Null
+
+Set-Location $WorkspaceA
+& $Conf init
+& $Conf pull $SandboxSpace --yes --non-interactive --skip-missing-assets --force
+
+Set-Location $WorkspaceB
+& $Conf init
+& $Conf pull $SandboxSpace --yes --non-interactive --skip-missing-assets --force
+```
+
+After the first pull, pick one existing scratch page in the sandbox and set its relative path explicitly in both workspaces. Example:
+
+```powershell
+$ScratchRelative = 'SANDBOX\Smoke Tests\CLI Smoke Test Scratch.md'
+$ScratchFileA    = Join-Path $WorkspaceA $ScratchRelative
+$ScratchFileB    = Join-Path $WorkspaceB $ScratchRelative
+Copy-Item $ScratchFileA "$ScratchFileA.pre-smoke.bak" -Force
+```
+
+If the scratch page does not already exist, create it manually in the sandbox first and rerun `conf pull`; do not improvise with a production page.
+
+### 2. Run The Pull -> Edit -> Validate -> Diff -> Push -> Pull Cycle
+
+Append a timestamped marker to the scratch page without touching frontmatter:
+
+```powershell
+$StampA = Get-Date -Format 'yyyy-MM-ddTHH:mm:ssK'
+Add-Content -Path $ScratchFileA -Value "`nSmoke test marker A: $StampA`n"
+
+Set-Location $WorkspaceA
+& $Conf validate $ScratchFileA
+& $Conf diff $ScratchFileA
+& $Conf push $ScratchFileA --yes --non-interactive --on-conflict=cancel
+& $Conf pull $SandboxSpace --yes --non-interactive
+git --no-pager status --short
+```
+
+Expected outcome:
+
+- `validate` succeeds (warnings may appear, but there should be no hard failures),
+- `diff` shows only the intended scratch-page change,
+- `push` succeeds without touching unrelated pages,
+- the follow-up `pull` leaves the workspace clean except for the intentional scratch-page edit now reflected in Git history/state.
+
+### 3. Simulate A Real Remote-Ahead Conflict
+
+`WorkspaceB` is still based on the pre-push state, so it can be used to simulate a genuine conflict against the same page.
+
+```powershell
+$StampB = Get-Date -Format 'yyyy-MM-ddTHH:mm:ssK'
+Add-Content -Path $ScratchFileB -Value "`nSmoke test marker B: $StampB`n"
+
+Set-Location $WorkspaceB
+& $Conf validate $ScratchFileB
+& $Conf push $ScratchFileB --yes --non-interactive --on-conflict=pull-merge
+```
+
+Expected outcome:
+
+- `push` detects that the remote page is ahead,
+- `--on-conflict=pull-merge` triggers a pull of the newer remote state,
+- the command stops for operator review instead of silently overwriting the remote page.
+
+Inspect the result before resolving:
+
+```powershell
+git --no-pager status --short
+git --no-pager diff -- $ScratchRelative
+```
+
+Then resolve the scratch page in `WorkspaceB` so it contains the final intended test content, validate again, preview it, and complete the push:
+
+```powershell
+& $Conf validate $ScratchFileB
+& $Conf diff $ScratchFileB
+& $Conf push $ScratchFileB --yes --non-interactive --on-conflict=cancel
+& $Conf pull $SandboxSpace --yes --non-interactive
+```
+
+If you specifically want to exercise interactive pull conflict handling, keep an uncommitted edit in `WorkspaceB`, run `conf pull $ScratchFileB` **without** `--non-interactive`, and verify the `Keep both` / `Use Remote` / `Use Local` prompt flow described earlier in this document.
+
+### 4. Cleanup And Restore Expectations
+
+The sandbox should end the smoke test in the same remote state it started from. Restore the original scratch-page content from the backup captured in `WorkspaceA`, then push that restoration before deleting the temporary workspaces.
+
+```powershell
+Copy-Item "$ScratchFileA.pre-smoke.bak" $ScratchFileA -Force
+
+Set-Location $WorkspaceA
+& $Conf validate $ScratchFileA
+& $Conf diff $ScratchFileA
+& $Conf push $ScratchFileA --yes --non-interactive --on-conflict=cancel
+& $Conf pull $SandboxSpace --yes --non-interactive
+
+Remove-Item $SmokeRoot -Recurse -Force
+```
+
+Cleanup checklist:
+
+- the scratch page content is restored (or intentionally left in a known baseline state for the next run),
+- no temporary workspace under `$SmokeRoot` remains,
+- no live sandbox content was ever pulled into the repository root,
+- any unexpected diagnostics or partial rollback messages are captured before the next release candidate is approved.
+
 ## CI Pipeline Example
 
 ```yaml

@@ -338,6 +338,29 @@ ORDER BY space_key`)
 	return spaces, rows.Err()
 }
 
+// ListPathsBySpace returns all distinct indexed source paths for spaceKey, sorted.
+func (s *Store) ListPathsBySpace(spaceKey string) ([]string, error) {
+	rows, err := s.db.Query(`
+SELECT DISTINCT path
+FROM documents
+WHERE space_key = ?
+ORDER BY path`, spaceKey)
+	if err != nil {
+		return nil, fmt.Errorf("sqlitestore.ListPathsBySpace: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var paths []string
+	for rows.Next() {
+		var path string
+		if err := rows.Scan(&path); err != nil {
+			return nil, fmt.Errorf("sqlitestore.ListPathsBySpace scan: %w", err)
+		}
+		paths = append(paths, path)
+	}
+	return paths, rows.Err()
+}
+
 // UpdateMeta records the current UTC timestamp as the last-indexed-at time.
 func (s *Store) UpdateMeta() error {
 	ts := time.Now().UTC().Format(time.RFC3339)

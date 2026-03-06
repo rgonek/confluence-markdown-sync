@@ -78,10 +78,17 @@ func restorePageContentSnapshot(ctx context.Context, remote PushRemote, pageID s
 	return nil
 }
 
-func capturePageMetadataSnapshot(ctx context.Context, remote PushRemote, pageID string, pageStatus string) (pushMetadataSnapshot, error) {
-	status, err := remote.GetContentStatus(ctx, pageID, pageStatus)
-	if err != nil {
-		return pushMetadataSnapshot{}, fmt.Errorf("get content status: %w", err)
+func capturePageMetadataSnapshot(ctx context.Context, remote PushRemote, pageID string, pageStatus string, contentStatusMode tenantContentStatusMode, trackContentStatus bool) (pushMetadataSnapshot, error) {
+	status := ""
+	if contentStatusMode != tenantContentStatusModeDisabled && trackContentStatus {
+		var err error
+		status, err = remote.GetContentStatus(ctx, pageID, pageStatus)
+		if err != nil {
+			if !isCompatibilityProbeError(err) {
+				return pushMetadataSnapshot{}, fmt.Errorf("get content status: %w", err)
+			}
+			trackContentStatus = false
+		}
 	}
 
 	labels, err := remote.GetLabels(ctx, pageID)
@@ -90,9 +97,10 @@ func capturePageMetadataSnapshot(ctx context.Context, remote PushRemote, pageID 
 	}
 
 	return pushMetadataSnapshot{
-		ContentStatus: strings.TrimSpace(status),
-		PageStatus:    normalizePageLifecycleState(pageStatus),
-		Labels:        fs.NormalizeLabels(labels),
+		ContentStatus:      strings.TrimSpace(status),
+		PageStatus:         normalizePageLifecycleState(pageStatus),
+		TrackContentStatus: trackContentStatus && contentStatusMode != tenantContentStatusModeDisabled,
+		Labels:             fs.NormalizeLabels(labels),
 	}, nil
 }
 
@@ -100,27 +108,39 @@ type metadataRestoreResult struct {
 	ContentStatusRestored bool
 }
 
-func restorePageMetadataSnapshot(ctx context.Context, remote PushRemote, pageID string, snapshot pushMetadataSnapshot) (metadataRestoreResult, error) {
+func restorePageMetadataSnapshot(ctx context.Context, remote PushRemote, pageID string, snapshot pushMetadataSnapshot, contentStatusMode tenantContentStatusMode) (metadataRestoreResult, error) {
 	targetStatus := strings.TrimSpace(snapshot.ContentStatus)
 	pageStatus := normalizePageLifecycleState(snapshot.PageStatus)
-	currentStatus, err := remote.GetContentStatus(ctx, pageID, pageStatus)
-	if err != nil {
-		return metadataRestoreResult{}, fmt.Errorf("get content status: %w", err)
-	}
-	currentStatus = strings.TrimSpace(currentStatus)
 	result := metadataRestoreResult{}
-
-	if currentStatus != targetStatus {
-		if targetStatus == "" {
-			if err := remote.DeleteContentStatus(ctx, pageID, pageStatus); err != nil {
-				return metadataRestoreResult{}, fmt.Errorf("delete content status: %w", err)
+	if contentStatusMode != tenantContentStatusModeDisabled && snapshot.TrackContentStatus {
+		currentStatus, err := remote.GetContentStatus(ctx, pageID, pageStatus)
+		if err != nil {
+			if !isCompatibilityProbeError(err) {
+				return metadataRestoreResult{}, fmt.Errorf("get content status: %w", err)
 			}
 		} else {
-			if err := remote.SetContentStatus(ctx, pageID, pageStatus, targetStatus); err != nil {
-				return metadataRestoreResult{}, fmt.Errorf("set content status: %w", err)
+			currentStatus = strings.TrimSpace(currentStatus)
+
+			if currentStatus != targetStatus {
+				if targetStatus == "" {
+					if err := remote.DeleteContentStatus(ctx, pageID, pageStatus); err != nil {
+						if !isCompatibilityProbeError(err) {
+							return metadataRestoreResult{}, fmt.Errorf("delete content status: %w", err)
+						}
+					} else {
+						result.ContentStatusRestored = true
+					}
+				} else {
+					if err := remote.SetContentStatus(ctx, pageID, pageStatus, targetStatus); err != nil {
+						if !isCompatibilityProbeError(err) {
+							return metadataRestoreResult{}, fmt.Errorf("set content status: %w", err)
+						}
+					} else {
+						result.ContentStatusRestored = true
+					}
+				}
 			}
 		}
-		result.ContentStatusRestored = true
 	}
 
 	remoteLabels, err := remote.GetLabels(ctx, pageID)

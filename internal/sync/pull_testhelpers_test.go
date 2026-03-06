@@ -15,6 +15,7 @@ type fakePullRemote struct {
 	pages             []confluence.Page
 	folderByID        map[string]confluence.Folder
 	folderErr         error
+	getFolderCalls    []string
 	changes           []confluence.Change
 	listChangesFunc   func(opts confluence.ChangeListOptions) (confluence.ChangeListResult, error)
 	pagesByID         map[string]confluence.Page
@@ -23,6 +24,8 @@ type fakePullRemote struct {
 	labels            map[string][]string
 	users             map[string]confluence.User
 	contentStatuses   map[string]string
+	contentStatusErr  error
+	getStatusCalls    []string
 	lastChangeSince   time.Time
 	getPageHook       func(pageID string)
 }
@@ -47,6 +50,7 @@ func (f *fakePullRemote) ListPages(_ context.Context, _ confluence.PageListOptio
 }
 
 func (f *fakePullRemote) GetFolder(_ context.Context, folderID string) (confluence.Folder, error) {
+	f.getFolderCalls = append(f.getFolderCalls, folderID)
 	if f.folderErr != nil {
 		return confluence.Folder{}, f.folderErr
 	}
@@ -77,6 +81,10 @@ func (f *fakePullRemote) GetPage(_ context.Context, pageID string) (confluence.P
 }
 
 func (f *fakePullRemote) GetContentStatus(_ context.Context, pageID string, _ string) (string, error) {
+	f.getStatusCalls = append(f.getStatusCalls, pageID)
+	if f.contentStatusErr != nil {
+		return "", f.contentStatusErr
+	}
 	if f.contentStatuses == nil {
 		return "", nil
 	}

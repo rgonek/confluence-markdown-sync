@@ -77,6 +77,8 @@ type PushOptions struct {
 	ArchivePollInterval time.Duration
 	Progress            Progress
 	folderListTracker   *folderListFallbackTracker
+	folderMode          tenantFolderMode
+	contentStatusMode   tenantContentStatusMode
 }
 
 // PushCommitPlan describes local paths and metadata for one push commit.
@@ -106,9 +108,10 @@ type PushResult struct {
 }
 
 type pushMetadataSnapshot struct {
-	ContentStatus string
-	PageStatus    string
-	Labels        []string
+	ContentStatus      string
+	PageStatus         string
+	TrackContentStatus bool
+	Labels             []string
 }
 
 type pushContentSnapshot struct {
@@ -127,6 +130,7 @@ type rollbackAttachment struct {
 
 type pushRollbackTracker struct {
 	relPath            string
+	contentStatusMode  tenantContentStatusMode
 	createdPageID      string
 	createdPageStatus  string
 	uploadedAssets     []rollbackAttachment

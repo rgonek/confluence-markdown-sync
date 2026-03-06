@@ -57,13 +57,16 @@ func runRecover(cmd *cobra.Command, _ []string) error {
 	}
 	currentBranch = strings.TrimSpace(currentBranch)
 
-	runs, err := listRecoveryRuns(client, currentBranch)
+	runs, warnings, err := listRecoveryRuns(client, currentBranch)
 	if err != nil {
 		return err
 	}
 
 	_, _ = fmt.Fprintf(out, "Repository: %s\n", client.RootDir)
 	_, _ = fmt.Fprintf(out, "Branch: %s\n", currentBranch)
+	for _, warning := range warnings {
+		_, _ = fmt.Fprintf(out, "warning: %s\n", warning)
+	}
 
 	if len(runs) == 0 {
 		_, _ = fmt.Fprintln(out, "recover: no retained failed push artifacts found")
@@ -136,22 +139,22 @@ type recoveryRun struct {
 	CurrentBranch       bool
 }
 
-func listRecoveryRuns(client *git.Client, currentBranch string) ([]recoveryRun, error) {
+func listRecoveryRuns(client *git.Client, currentBranch string) ([]recoveryRun, []string, error) {
 	snapshotRefs, err := listCleanSnapshotRefs(client)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	syncBranches, err := listCleanSyncBranches(client)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	worktreeBranches, err := listCleanWorktreeBranches(client)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	metadataByKey, err := listRecoveryMetadata(client.RootDir)
+	metadataByKey, warnings, err := listRecoveryMetadata(client.RootDir)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	snapshotSet := make(map[string]struct{}, len(snapshotRefs))
@@ -237,7 +240,7 @@ func listRecoveryRuns(client *git.Client, currentBranch string) ([]recoveryRun, 
 		}
 		return runs[i].Timestamp < runs[j].Timestamp
 	})
-	return runs, nil
+	return runs, warnings, nil
 }
 
 func selectRecoveryRuns(runs []recoveryRun, selector string) []recoveryRun {
@@ -330,17 +333,18 @@ type recoveryMetadata struct {
 	FailureReason  string `json:"failure_reason,omitempty"`
 }
 
-func listRecoveryMetadata(repoRoot string) (map[string]recoveryMetadata, error) {
+func listRecoveryMetadata(repoRoot string) (map[string]recoveryMetadata, []string, error) {
 	root := filepath.Join(repoRoot, ".git", "confluence-recovery")
 	entries, err := os.ReadDir(root)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return map[string]recoveryMetadata{}, nil
+			return map[string]recoveryMetadata{}, nil, nil
 		}
-		return nil, fmt.Errorf("read recovery metadata root: %w", err)
+		return nil, nil, fmt.Errorf("read recovery metadata root: %w", err)
 	}
 
 	result := make(map[string]recoveryMetadata)
+	warnings := make([]string, 0)
 	for _, entry := range entries {
 		if !entry.IsDir() {
 			continue
@@ -349,19 +353,22 @@ func listRecoveryMetadata(repoRoot string) (map[string]recoveryMetadata, error) 
 		spaceDir := filepath.Join(root, spaceKey)
 		files, err := os.ReadDir(spaceDir)
 		if err != nil {
-			return nil, fmt.Errorf("read recovery metadata %s: %w", spaceDir, err)
+			return nil, nil, fmt.Errorf("read recovery metadata %s: %w", spaceDir, err)
 		}
 		for _, file := range files {
 			if file.IsDir() || filepath.Ext(file.Name()) != ".json" {
 				continue
 			}
-			raw, err := os.ReadFile(filepath.Join(spaceDir, file.Name()))
+			metadataPath := filepath.Join(spaceDir, file.Name())
+			raw, err := os.ReadFile(metadataPath)
 			if err != nil {
-				return nil, fmt.Errorf("read recovery metadata %s: %w", file.Name(), err)
+				warnings = append(warnings, fmt.Sprintf("skipping unreadable recovery metadata %s: %v", file.Name(), err))
+				continue
 			}
 			var metadata recoveryMetadata
 			if err := json.Unmarshal(raw, &metadata); err != nil {
-				return nil, fmt.Errorf("decode recovery metadata %s: %w", file.Name(), err)
+				warnings = append(warnings, fmt.Sprintf("skipping unreadable recovery metadata %s: %v", file.Name(), err))
+				continue
 			}
 			if metadata.SpaceKey == "" {
 				metadata.SpaceKey = spaceKey
@@ -372,7 +379,7 @@ func listRecoveryMetadata(repoRoot string) (map[string]recoveryMetadata, error) 
 			result[recoveryRunKey(metadata.SpaceKey, metadata.Timestamp)] = metadata
 		}
 	}
-	return result, nil
+	return result, warnings, nil
 }
 
 func writeRecoveryMetadata(repoRoot string, metadata recoveryMetadata) error {

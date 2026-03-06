@@ -428,6 +428,71 @@ func TestResolveFolderHierarchyFromPages_DeduplicatesFallbackDiagnostics(t *test
 	}
 }
 
+type folderLookupErrorByIDRemote struct {
+	*fakePullRemote
+	errorsByFolderID map[string]error
+}
+
+func (r *folderLookupErrorByIDRemote) GetFolder(ctx context.Context, folderID string) (confluence.Folder, error) {
+	r.getFolderCalls = append(r.getFolderCalls, folderID)
+	if err, ok := r.errorsByFolderID[folderID]; ok {
+		return confluence.Folder{}, err
+	}
+	return r.fakePullRemote.GetFolder(ctx, folderID)
+}
+
+func TestResolveFolderHierarchyFromPages_DeduplicatesFallbackDiagnosticsAcrossFolderURLs(t *testing.T) {
+	var logs bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelInfo})))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+
+	pages := []confluence.Page{
+		{ID: "1", Title: "Root", ParentPageID: "folder-1", ParentType: "folder"},
+		{ID: "2", Title: "Child", ParentPageID: "folder-2", ParentType: "folder"},
+	}
+	remote := &folderLookupErrorByIDRemote{
+		fakePullRemote: &fakePullRemote{},
+		errorsByFolderID: map[string]error{
+			"folder-1": &confluence.APIError{
+				StatusCode: 500,
+				Method:     "GET",
+				URL:        "/wiki/api/v2/folders/folder-1",
+				Message:    "Internal Server Error",
+			},
+			"folder-2": &confluence.APIError{
+				StatusCode: 500,
+				Method:     "GET",
+				URL:        "/wiki/api/v2/folders/folder-2",
+				Message:    "Internal Server Error",
+			},
+		},
+	}
+
+	_, diagnostics, err := resolveFolderHierarchyFromPages(context.Background(), remote, pages)
+	if err != nil {
+		t.Fatalf("resolveFolderHierarchyFromPages() error: %v", err)
+	}
+
+	fallbackDiagnostics := 0
+	for _, diag := range diagnostics {
+		if diag.Code == "FOLDER_LOOKUP_UNAVAILABLE" {
+			fallbackDiagnostics++
+		}
+	}
+	if fallbackDiagnostics != 1 {
+		t.Fatalf("expected one deduplicated fallback diagnostic across folder URLs, got %+v", diagnostics)
+	}
+
+	gotLogs := logs.String()
+	if count := strings.Count(gotLogs, "folder_lookup_unavailable_falling_back_to_pages"); count != 1 {
+		t.Fatalf("expected one warning log across folder URLs, got %d:\n%s", count, gotLogs)
+	}
+	if count := strings.Count(gotLogs, "folder_lookup_unavailable_repeats_suppressed"); count != 1 {
+		t.Fatalf("expected one suppression log across folder URLs, got %d:\n%s", count, gotLogs)
+	}
+}
+
 func TestPull_ForceFullPullsAllPagesWithoutIncrementalChanges(t *testing.T) {
 	tmpDir := t.TempDir()
 	spaceDir := filepath.Join(tmpDir, "ENG")

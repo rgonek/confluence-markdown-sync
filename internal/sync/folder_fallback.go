@@ -3,6 +3,7 @@ package sync
 import (
 	"errors"
 	"log/slog"
+	"net/url"
 	"strconv"
 	"strings"
 	"sync"
@@ -94,10 +95,41 @@ func folderFallbackFingerprint(err error) string {
 	if errors.As(err, &apiErr) {
 		return strings.Join([]string{
 			strings.TrimSpace(apiErr.Method),
-			strings.TrimSpace(apiErr.URL),
+			folderFallbackFailureClass(apiErr.URL),
 			strconv.Itoa(apiErr.StatusCode),
 			strings.TrimSpace(apiErr.Message),
 		}, "|")
 	}
 	return strings.TrimSpace(err.Error())
+}
+
+func folderFallbackFailureClass(rawURL string) string {
+	path := normalizeFolderFallbackURLPath(rawURL)
+	switch {
+	case path == "/wiki/api/v2/folders":
+		return "folder-list"
+	case strings.HasPrefix(path, "/wiki/api/v2/folders/"):
+		return "folder-item"
+	case path != "":
+		return path
+	default:
+		return "unknown-folder-api"
+	}
+}
+
+func normalizeFolderFallbackURLPath(rawURL string) string {
+	rawURL = strings.TrimSpace(rawURL)
+	if rawURL == "" {
+		return ""
+	}
+
+	if parsed, err := url.Parse(rawURL); err == nil && strings.TrimSpace(parsed.Path) != "" {
+		rawURL = parsed.Path
+	} else if idx := strings.Index(rawURL, "?"); idx >= 0 {
+		rawURL = rawURL[:idx]
+	}
+
+	rawURL = strings.TrimSpace(rawURL)
+	rawURL = strings.TrimSuffix(rawURL, "/")
+	return rawURL
 }

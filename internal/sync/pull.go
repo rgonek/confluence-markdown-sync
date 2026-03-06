@@ -109,6 +109,7 @@ func Pull(ctx context.Context, remote PullRemote, opts PullOptions) (PullResult,
 		overlapWindow = DefaultPullOverlapWindow
 	}
 	diagnostics := []PullDiagnostic{}
+	capabilities := newTenantCapabilityCache()
 
 	userCache := map[string]string{}
 	getUserDisplayName := func(ctx context.Context, accountID string) string {
@@ -169,7 +170,16 @@ func Pull(ctx context.Context, remote PullRemote, opts PullOptions) (PullResult,
 		opts.Progress.SetTotal(len(pages))
 	}
 
-	folderByID, folderDiags, err := resolveFolderHierarchyFromPages(ctx, remote, pages)
+	folderMode, folderModeDiags, err := capabilities.detectPullFolderMode(ctx, remote, pages)
+	if err != nil {
+		return PullResult{}, fmt.Errorf("probe folder capability: %w", err)
+	}
+	diagnostics = append(diagnostics, folderModeDiags...)
+
+	contentStatusMode, contentStatusDiags := capabilities.detectPullContentStatusMode(ctx, remote, pages)
+	diagnostics = append(diagnostics, contentStatusDiags...)
+
+	folderByID, folderDiags, err := resolveFolderHierarchyFromPagesWithMode(ctx, remote, pages, folderMode)
 	if err != nil {
 		return PullResult{}, err
 	}
@@ -257,21 +267,28 @@ func Pull(ctx context.Context, remote PullRemote, opts PullOptions) (PullResult,
 				return fmt.Errorf("fetch page %s: %w", pageID, err)
 			}
 
-			status, err := remote.GetContentStatus(gCtx, pageID, page.Status)
-			if err != nil {
+			if contentStatusMode == tenantContentStatusModeDisabled {
 				existingFM, ok := readExistingFrontmatter(pageID)
 				if ok && existingFM.Status != "" {
 					page.ContentStatus = existingFM.Status
 				}
-				diagMu.Lock()
-				diagnostics = append(diagnostics, PullDiagnostic{
-					Path:    pageID,
-					Code:    "CONTENT_STATUS_FETCH_FAILED",
-					Message: fmt.Sprintf("fetch content status for page %s: %v", pageID, err),
-				})
-				diagMu.Unlock()
 			} else {
-				page.ContentStatus = status
+				status, err := remote.GetContentStatus(gCtx, pageID, page.Status)
+				if err != nil {
+					existingFM, ok := readExistingFrontmatter(pageID)
+					if ok && existingFM.Status != "" {
+						page.ContentStatus = existingFM.Status
+					}
+					diagMu.Lock()
+					diagnostics = append(diagnostics, PullDiagnostic{
+						Path:    pageID,
+						Code:    "CONTENT_STATUS_FETCH_FAILED",
+						Message: fmt.Sprintf("fetch content status for page %s: %v", pageID, err),
+					})
+					diagMu.Unlock()
+				} else {
+					page.ContentStatus = status
+				}
 			}
 
 			labels, err := remote.GetLabels(gCtx, pageID)

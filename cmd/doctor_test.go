@@ -177,6 +177,60 @@ func TestRunDoctor_RepairRemovesOnlySafeIssues(t *testing.T) {
 	}
 }
 
+func TestRunDoctor_RepairScopesStaleSyncBranchesToTargetSpace(t *testing.T) {
+	runParallelCommandTest(t)
+
+	repo := t.TempDir()
+	setupGitRepo(t, repo)
+	chdirRepo(t, repo)
+	if err := os.WriteFile(filepath.Join(repo, "README.md"), []byte("baseline\n"), 0o600); err != nil {
+		t.Fatalf("write baseline: %v", err)
+	}
+	runGitForTest(t, repo, "add", "README.md")
+	runGitForTest(t, repo, "commit", "-m", "baseline")
+
+	spaceDir := filepath.Join(repo, "TEST")
+	if err := os.MkdirAll(spaceDir, 0o750); err != nil {
+		t.Fatalf("mkdir space dir: %v", err)
+	}
+
+	state := fs.NewSpaceState()
+	state.SpaceKey = "TEST"
+	if err := fs.SaveState(spaceDir, state); err != nil {
+		t.Fatalf("write state: %v", err)
+	}
+
+	testBranch := "sync/TEST/20260305T211238Z"
+	otherBranch := "sync/OTHER/20260305T211239Z"
+	runGitForTest(t, repo, "branch", testBranch, "main")
+	runGitForTest(t, repo, "branch", otherBranch, "main")
+
+	out := new(bytes.Buffer)
+	cmd := newDoctorCmd()
+	cmd.SetOut(out)
+	cmd.SetErr(new(bytes.Buffer))
+
+	target := config.Target{Value: spaceDir, Mode: config.TargetModeSpace}
+	if err := runDoctor(cmd, target, true); err != nil {
+		t.Fatalf("runDoctor repair failed: %v", err)
+	}
+
+	if branchList := strings.TrimSpace(runGitForTest(t, repo, "branch", "--list", testBranch)); branchList != "" {
+		t.Fatalf("expected TEST sync branch to be deleted, got %q", branchList)
+	}
+	if branchList := strings.TrimSpace(runGitForTest(t, repo, "branch", "--list", otherBranch)); branchList == "" {
+		t.Fatalf("expected OTHER sync branch to be preserved")
+	}
+
+	got := out.String()
+	if !strings.Contains(got, "deleted stale recovery branch "+testBranch) {
+		t.Fatalf("expected repair output to mention TEST branch deletion, got:\n%s", got)
+	}
+	if strings.Contains(got, otherBranch) {
+		t.Fatalf("expected repair output to exclude unrelated OTHER branch, got:\n%s", got)
+	}
+}
+
 func writeDoctorMarkdown(t *testing.T, path, id, body string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {

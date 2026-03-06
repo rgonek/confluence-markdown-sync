@@ -128,8 +128,11 @@ func runDoctor(cmd *cobra.Command, target config.Target, repair bool) error {
 }
 
 // buildDoctorReport scans the space directory and state for consistency issues.
-func buildDoctorReport(_ context.Context, spaceDir, _ string, state fs.SpaceState) (DoctorReport, error) {
-	report := DoctorReport{SpaceDir: spaceDir}
+func buildDoctorReport(_ context.Context, spaceDir, spaceKey string, state fs.SpaceState) (DoctorReport, error) {
+	report := DoctorReport{
+		SpaceDir: spaceDir,
+		SpaceKey: strings.TrimSpace(spaceKey),
+	}
 
 	// 1. Check every state entry: file must exist and its id frontmatter must match.
 	for relPath, pageID := range state.PagePathIndex {
@@ -435,6 +438,11 @@ func listDoctorMarkdownPaths(spaceDir string) ([]string, error) {
 }
 
 func appendDoctorGitIssues(report *DoctorReport) {
+	targetSpaceKey := fs.SanitizePathSegment(report.SpaceKey)
+	if targetSpaceKey == "" {
+		return
+	}
+
 	client, err := git.NewClient()
 	if err != nil {
 		return
@@ -457,6 +465,9 @@ func appendDoctorGitIssues(report *DoctorReport) {
 		if branch == currentBranch {
 			continue
 		}
+		if !doctorSyncBranchMatchesSpace(branch, targetSpaceKey) {
+			continue
+		}
 		if _, ok := managedSnapshotRefForSyncBranch(branch); !ok {
 			continue
 		}
@@ -472,4 +483,9 @@ func appendDoctorGitIssues(report *DoctorReport) {
 		))
 	}
 	sortDoctorIssues(report.Issues)
+}
+
+func doctorSyncBranchMatchesSpace(branch, targetSpaceKey string) bool {
+	parts := strings.Split(strings.TrimSpace(branch), "/")
+	return len(parts) == 3 && parts[0] == "sync" && parts[1] == targetSpaceKey
 }

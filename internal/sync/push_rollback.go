@@ -10,10 +10,11 @@ import (
 	"github.com/rgonek/confluence-markdown-sync/internal/confluence"
 )
 
-func newPushRollbackTracker(relPath string, diagnostics *[]PushDiagnostic) *pushRollbackTracker {
+func newPushRollbackTracker(relPath string, contentStatusMode tenantContentStatusMode, diagnostics *[]PushDiagnostic) *pushRollbackTracker {
 	return &pushRollbackTracker{
-		relPath:     relPath,
-		diagnostics: diagnostics,
+		relPath:           relPath,
+		contentStatusMode: contentStatusMode,
+		diagnostics:       diagnostics,
 	}
 }
 
@@ -107,7 +108,7 @@ func (r *pushRollbackTracker) rollback(ctx context.Context, remote PushRemote) e
 
 	if r.metadataRestoreReq && r.metadataSnapshot != nil && strings.TrimSpace(r.metadataPageID) != "" {
 		slog.Info("push_rollback_step", "path", r.relPath, "step", "metadata", "page_id", r.metadataPageID)
-		restoreResult, err := restorePageMetadataSnapshot(ctx, remote, r.metadataPageID, *r.metadataSnapshot)
+		restoreResult, err := restorePageMetadataSnapshot(ctx, remote, r.metadataPageID, *r.metadataSnapshot, r.contentStatusMode)
 		if err != nil {
 			slog.Warn("push_rollback_step_failed", "path", r.relPath, "step", "metadata", "page_id", r.metadataPageID, "error", err.Error())
 			if strings.Contains(err.Error(), "content status") {

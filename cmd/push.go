@@ -276,17 +276,21 @@ func runPush(cmd *cobra.Command, target config.Target, onConflict string, dryRun
 
 	defer func() {
 		if runErr == nil {
-			_ = deleteRecoveryMetadata(gitClient.RootDir, refKey, tsStr)
+			if err := deleteRecoveryMetadata(gitClient.RootDir, refKey, tsStr); err != nil {
+				_, _ = fmt.Fprintf(out, "warning: failed to clean up recovery metadata: %v\n", err)
+			}
 			return
 		}
-		_ = writeRecoveryMetadata(gitClient.RootDir, recoveryMetadata{
+		if err := writeRecoveryMetadata(gitClient.RootDir, recoveryMetadata{
 			SpaceKey:       refKey,
 			Timestamp:      tsStr,
 			SyncBranch:     syncBranchName,
 			SnapshotRef:    snapshotName,
 			OriginalBranch: strings.TrimSpace(currentBranch),
 			FailureReason:  runErr.Error(),
-		})
+		}); err != nil {
+			_, _ = fmt.Fprintf(out, "warning: failed to persist recovery metadata: %v\n", err)
+		}
 	}()
 
 	return runPushInWorktree(ctx, cmd, out, target, spaceKey, spaceDir, onConflict, tsStr,

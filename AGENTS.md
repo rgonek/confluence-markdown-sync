@@ -92,6 +92,10 @@ Validation failures must stop `push` immediately.
   - `--label LABEL` — filter by label (repeatable).
   - `--heading TEXT` — restrict to sections under matching headings.
   - `--reindex` — force full rebuild.
+  - `--result-detail full|standard|minimal` — control payload size/detail.
+  - `--created-by USER` / `--updated-by USER` — filter by creator or last updater.
+  - `--created-after DATE` / `--created-before DATE` — bound created timestamps.
+  - `--updated-after DATE` / `--updated-before DATE` — bound updated timestamps.
   - `--list-labels` / `--list-spaces` — facet discovery.
   - `--format text|json|auto` — output format (auto: TTY→text, pipe→json).
   - `--limit N` (default 20) — max results.

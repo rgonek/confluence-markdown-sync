@@ -133,15 +133,18 @@ type rollbackPushRemote struct {
 	pagesByID                map[string]confluence.Page
 	contentStatuses          map[string]string
 	labelsByPage             map[string][]string
+	folders                  []confluence.Folder
 	nextPageID               int
 	nextAttachmentID         int
 	createPageCalls          int
+	createFolderCalls        int
 	updatePageCalls          int
 	uploadAttachmentCalls    int
 	archiveTaskCalls         []string
 	deletePageCalls          []string
 	deletePageOpts           []confluence.PageDeleteOptions
 	deleteAttachmentCalls    []string
+	getContentStatusCalls    []string
 	setContentStatusCalls    []string
 	setContentStatusArgs     []contentStatusCall
 	deleteContentStatusCalls []string
@@ -151,6 +154,8 @@ type rollbackPushRemote struct {
 	archiveTaskStatus        confluence.ArchiveTaskStatus
 	archivePagesErr          error
 	archiveTaskWaitErr       error
+	listFoldersErr           error
+	getContentStatusErr      error
 	failUpdate               bool
 	failAddLabels            bool
 	failSetContentStatus     bool
@@ -193,6 +198,10 @@ func (f *rollbackPushRemote) GetPage(_ context.Context, pageID string) (confluen
 }
 
 func (f *rollbackPushRemote) GetContentStatus(_ context.Context, pageID string, _ string) (string, error) {
+	f.getContentStatusCalls = append(f.getContentStatusCalls, pageID)
+	if f.getContentStatusErr != nil {
+		return "", f.getContentStatusErr
+	}
 	return f.contentStatuses[pageID], nil
 }
 
@@ -356,11 +365,17 @@ func (f *rollbackPushRemote) DeleteAttachment(_ context.Context, attachmentID st
 }
 
 func (f *rollbackPushRemote) CreateFolder(_ context.Context, input confluence.FolderCreateInput) (confluence.Folder, error) {
-	return confluence.Folder{ID: "folder-1", SpaceID: input.SpaceID, Title: input.Title, ParentID: input.ParentID}, nil
+	f.createFolderCalls++
+	folder := confluence.Folder{ID: fmt.Sprintf("folder-%d", f.createFolderCalls), SpaceID: input.SpaceID, Title: input.Title, ParentID: input.ParentID, ParentType: input.ParentType}
+	f.folders = append(f.folders, folder)
+	return folder, nil
 }
 
 func (f *rollbackPushRemote) ListFolders(_ context.Context, _ confluence.FolderListOptions) (confluence.FolderListResult, error) {
-	return confluence.FolderListResult{}, nil
+	if f.listFoldersErr != nil {
+		return confluence.FolderListResult{}, f.listFoldersErr
+	}
+	return confluence.FolderListResult{Folders: append([]confluence.Folder(nil), f.folders...)}, nil
 }
 
 func (f *rollbackPushRemote) DeleteFolder(_ context.Context, _ string) error {

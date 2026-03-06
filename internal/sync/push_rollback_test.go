@@ -170,6 +170,70 @@ func TestPush_RollbackRestoresMetadataOnSyncFailure(t *testing.T) {
 	}
 }
 
+func TestPush_RollbackCompatibilityModeSkipsContentStatusRestoreButRestoresLabels(t *testing.T) {
+	remote := newRollbackPushRemote()
+	remote.pagesByID["1"] = confluence.Page{
+		ID:      "1",
+		SpaceID: "space-1",
+		Title:   "Root",
+		Status:  "current",
+		Version: 1,
+		BodyADF: []byte(`{"version":1,"type":"doc","content":[]}`),
+	}
+	remote.pages = append(remote.pages, remote.pagesByID["1"])
+	remote.labelsByPage["1"] = []string{}
+	remote.getContentStatusErr = &confluence.APIError{
+		StatusCode: 501,
+		Method:     "GET",
+		URL:        "/wiki/rest/api/content/1/state",
+		Message:    "Not Implemented",
+	}
+	diagnostics := []PushDiagnostic{}
+	rollback := newPushRollbackTracker("root.md", tenantContentStatusModeDisabled, &diagnostics)
+	rollback.trackMetadataSnapshot("1", pushMetadataSnapshot{
+		ContentStatus: "legacy-status",
+		PageStatus:    "current",
+		Labels:        []string{"legacy"},
+	})
+
+	if err := rollback.rollback(context.Background(), remote); err != nil {
+		t.Fatalf("rollback() unexpected error: %v", err)
+	}
+
+	if got := len(remote.getContentStatusCalls); got != 0 {
+		t.Fatalf("get content status calls = %d, want 0 in compatibility mode rollback", got)
+	}
+	if len(remote.setContentStatusArgs) != 0 {
+		t.Fatalf("set content status args = %d, want 0 in compatibility mode rollback", len(remote.setContentStatusArgs))
+	}
+	if len(remote.deleteContentStatusArgs) != 0 {
+		t.Fatalf("delete content status args = %d, want 0 in compatibility mode rollback", len(remote.deleteContentStatusArgs))
+	}
+	if got := remote.labelsByPage["1"]; len(got) != 1 || got[0] != "legacy" {
+		t.Fatalf("labels after rollback = %v, want [legacy]", got)
+	}
+	if len(remote.addLabelsCalls) != 1 {
+		t.Fatalf("add labels calls = %d, want 1 rollback label restore attempt", len(remote.addLabelsCalls))
+	}
+
+	hasMetadataRollback := false
+	hasContentStatusRollback := false
+	for _, diag := range diagnostics {
+		switch diag.Code {
+		case "ROLLBACK_METADATA_RESTORED":
+			hasMetadataRollback = true
+		case "ROLLBACK_CONTENT_STATUS_RESTORED":
+			hasContentStatusRollback = true
+		}
+	}
+	if !hasMetadataRollback {
+		t.Fatalf("expected ROLLBACK_METADATA_RESTORED diagnostic, got %+v", diagnostics)
+	}
+	if hasContentStatusRollback {
+		t.Fatalf("did not expect content-status rollback diagnostic in compatibility mode, got %+v", diagnostics)
+	}
+}
+
 func TestPush_RollbackDeletesCreatedPageWhenMetadataSyncStatusFails(t *testing.T) {
 	spaceDir := t.TempDir()
 	mdPath := filepath.Join(spaceDir, "new.md")

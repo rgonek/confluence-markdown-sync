@@ -109,8 +109,15 @@ func listAllPages(ctx context.Context, remote PullRemote, opts confluence.PageLi
 }
 
 func resolveFolderHierarchyFromPages(ctx context.Context, remote PullRemote, pages []confluence.Page) (map[string]confluence.Folder, []PullDiagnostic, error) {
+	return resolveFolderHierarchyFromPagesWithMode(ctx, remote, pages, tenantFolderModeNative)
+}
+
+func resolveFolderHierarchyFromPagesWithMode(ctx context.Context, remote PullRemote, pages []confluence.Page, mode tenantFolderMode) (map[string]confluence.Folder, []PullDiagnostic, error) {
 	folderByID := map[string]confluence.Folder{}
 	diagnostics := []PullDiagnostic{}
+	if mode == tenantFolderModePageFallback {
+		return folderByID, diagnostics, nil
+	}
 	fallbackTracker := NewFolderLookupFallbackTracker()
 
 	queue := []string{}

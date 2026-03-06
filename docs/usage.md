@@ -185,7 +185,10 @@ Highlights:
 - two backends available: `--engine sqlite` (default, SQLite FTS5) and `--engine bleve`,
 - index stored in `.confluence-search-index/` (local-only, gitignored),
 - index updated automatically after each `conf pull` (non-fatal),
+- deleted Markdown paths are removed from the index during incremental updates and post-pull space refreshes,
 - results grouped by file with heading context and snippets,
+- metadata filters support creator/updater and created/updated date windows,
+- `--result-detail` controls whether JSON/text results include full document payloads or a smaller projection,
 - `--format auto` defaults to text on TTY, JSON when piped.
 
 Key flags:
@@ -201,6 +204,13 @@ Key flags:
 | `--list-labels` | false | List all indexed labels and exit |
 | `--list-spaces` | false | List all indexed spaces and exit |
 | `--format` | auto | Output format: `text`, `json`, or `auto` |
+| `--result-detail` | full | Result verbosity: `full`, `standard`, or `minimal` |
+| `--created-by USER` | | Filter to pages created by this user |
+| `--updated-by USER` | | Filter to pages last updated by this user |
+| `--created-after DATE` | | Filter to pages created on or after a date (`YYYY-MM-DD` or RFC3339) |
+| `--created-before DATE` | | Filter to pages created on or before a date |
+| `--updated-after DATE` | | Filter to pages updated on or after a date |
+| `--updated-before DATE` | | Filter to pages updated on or before a date |
 
 Examples:
 
@@ -220,6 +230,9 @@ conf search --list-spaces
 
 # Agent-friendly (piped → JSON automatically)
 conf search "security review" --format json | ConvertFrom-Json
+
+# Use metadata filters and smaller result payloads
+conf search "oauth" --created-by alice --updated-after 2024-01-01 --result-detail minimal
 ```
 
 ## Metadata and State

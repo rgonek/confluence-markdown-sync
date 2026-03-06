@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bytes"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -79,6 +80,35 @@ func TestRunRecover_DiscardAllPreservesCurrentRecoveryBranch(t *testing.T) {
 	}
 
 	_ = spaceDir
+}
+
+func TestRunRecover_SkipsCorruptRecoveryMetadataFiles(t *testing.T) {
+	runParallelCommandTest(t)
+
+	repo, spaceDir, syncBranch, _ := createFailedPushRecoveryRun(t)
+	badMetadataDir := filepath.Join(repo, ".git", "confluence-recovery", "ENG")
+	if err := os.MkdirAll(badMetadataDir, 0o750); err != nil {
+		t.Fatalf("mkdir bad metadata dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(badMetadataDir, "bad.json"), []byte("{not valid json"), 0o600); err != nil {
+		t.Fatalf("write bad metadata: %v", err)
+	}
+	chdirRepo(t, spaceDir)
+
+	out, err := runRecoverForTest(t)
+	if err != nil {
+		t.Fatalf("recover inspection failed: %v\nOutput:\n%s", err, out)
+	}
+
+	if !strings.Contains(out, syncBranch) {
+		t.Fatalf("expected recover output to include valid sync branch %q, got:\n%s", syncBranch, out)
+	}
+	if !strings.Contains(out, "warning: skipping unreadable recovery metadata") {
+		t.Fatalf("expected warning for corrupt recovery metadata, got:\n%s", out)
+	}
+	if !strings.Contains(out, "bad.json") {
+		t.Fatalf("expected warning to mention corrupt metadata file, got:\n%s", out)
+	}
 }
 
 func createFailedPushRecoveryRun(t *testing.T) (repo string, spaceDir string, syncBranch string, snapshotRef string) {

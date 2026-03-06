@@ -8,6 +8,7 @@ Write docs like code. Publish to Confluence with confidence. ✍️
 - 📝 Markdown-first authoring with Confluence as the destination.
 - 🛡️ Safe sync model with validation before remote writes.
 - 👀 Clear preview step via `conf diff` before push.
+- 🔎 Local full-text search across synced Markdown with SQLite or Bleve backends.
 - 🤖 Works in local repos and automation pipelines.
 
 ## Install 🛠️
@@ -58,18 +59,19 @@ conf push ENG --on-conflict=cancel
 ```
 
 ## At a glance 👀
-- Commands: `init`, `init agents [TARGET]`, `pull [TARGET]`, `push [TARGET]`, `recover`, `status [TARGET]`, `clean`, `validate [TARGET]`, `diff [TARGET]`, `relink [TARGET]`
+- Commands: `init`, `init agents [TARGET]`, `pull [TARGET]`, `push [TARGET]`, `recover`, `status [TARGET]`, `clean`, `validate [TARGET]`, `diff [TARGET]`, `relink [TARGET]`, `search QUERY`
 - Version: `conf version` or `conf --version`
 - Target rule: `.md` suffix means file mode; otherwise space mode (`SPACE_KEY`)
 - Required auth: `ATLASSIAN_DOMAIN`, `ATLASSIAN_EMAIL`, `ATLASSIAN_API_TOKEN`
 - Diagram support: PlantUML is preserved as a Confluence extension; Mermaid is preserved as fenced code / ADF `codeBlock` and `validate` warns before push
 - Status scope: `conf status` reports Markdown page drift only; use `git status` or `conf diff` for attachment-only changes
 - Label rules: labels are trimmed, lowercased, deduplicated, and sorted; empty labels and labels containing whitespace are rejected
+- Search filters: `--space`, repeatable `--label`, `--heading`, `--created-by`, `--updated-by`, date bounds, and `--result-detail`
 - Git remote is optional (local Git is enough)
 
 ## Docs 📚
 - Usage and command reference: `docs/usage.md`
-- Automation and CI behavior: `docs/automation.md`
+- Automation, CI behavior, and live sandbox smoke-test runbook: `docs/automation.md`
 - Security policy: `SECURITY.md`
 - Support policy: `SUPPORT.md`
 - License: `LICENSE`

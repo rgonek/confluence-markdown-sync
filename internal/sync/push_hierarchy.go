@@ -95,7 +95,34 @@ func ensureFolderHierarchy(
 
 		if existingID, ok := folderIDByPath[currentPath]; ok && strings.TrimSpace(existingID) != "" {
 			parentID = strings.TrimSpace(existingID)
-			parentType = "folder"
+			if opts.folderMode == tenantFolderModePageFallback {
+				parentType = "page"
+			} else {
+				parentType = "folder"
+			}
+			continue
+		}
+
+		if opts.folderMode == tenantFolderModePageFallback {
+			pageCreated, pageErr := remote.CreatePage(ctx, confluence.PageUpsertInput{
+				SpaceID:      spaceID,
+				ParentPageID: parentID,
+				Title:        seg,
+				Status:       "current",
+				BodyADF:      []byte(`{"version":1,"type":"doc","content":[]}`),
+			})
+			if pageErr != nil {
+				return nil, fmt.Errorf("create compatibility hierarchy page %q: %w", currentPath, pageErr)
+			}
+
+			createdID := strings.TrimSpace(pageCreated.ID)
+			if createdID == "" {
+				return nil, fmt.Errorf("create compatibility hierarchy page %q returned empty page ID", currentPath)
+			}
+
+			folderIDByPath[currentPath] = createdID
+			parentID = createdID
+			parentType = "page"
 			continue
 		}
 

@@ -74,22 +74,39 @@ func walkAndFixMediaNodes(node any, pageID string) bool {
 	return modified
 }
 
-func syncPageMetadata(ctx context.Context, remote PushRemote, pageID string, doc fs.MarkdownDocument) error {
+func syncPageMetadata(ctx context.Context, remote PushRemote, pageID string, doc fs.MarkdownDocument, existingPage bool, capabilities *tenantCapabilityCache, diagnostics *[]PushDiagnostic) error {
 	// 1. Sync Content Status
 	targetStatus := strings.TrimSpace(doc.Frontmatter.Status)
 	pageStatus := normalizePageLifecycleState(doc.Frontmatter.State)
-	currentStatus, err := remote.GetContentStatus(ctx, pageID, pageStatus)
-	if err != nil {
-		return fmt.Errorf("get content status: %w", err)
-	}
-	if targetStatus != currentStatus {
-		if targetStatus == "" {
-			if err := remote.DeleteContentStatus(ctx, pageID, pageStatus); err != nil {
-				return fmt.Errorf("delete content status: %w", err)
+	contentStatusMode := capabilities.currentPushContentStatusMode()
+	if contentStatusMode != tenantContentStatusModeDisabled && shouldSyncContentStatus(existingPage, doc) {
+		currentStatus, err := remote.GetContentStatus(ctx, pageID, pageStatus)
+		if err != nil {
+			if !isCompatibilityProbeError(err) {
+				return fmt.Errorf("get content status: %w", err)
 			}
-		} else {
-			if err := remote.SetContentStatus(ctx, pageID, pageStatus, targetStatus); err != nil {
-				return fmt.Errorf("set content status: %w", err)
+			for _, diag := range capabilities.disablePushContentStatusMode() {
+				appendPushDiagnostic(diagnostics, diag.Path, diag.Code, diag.Message)
+			}
+		} else if targetStatus != currentStatus {
+			if targetStatus == "" {
+				if err := remote.DeleteContentStatus(ctx, pageID, pageStatus); err != nil {
+					if !isCompatibilityProbeError(err) {
+						return fmt.Errorf("delete content status: %w", err)
+					}
+					for _, diag := range capabilities.disablePushContentStatusMode() {
+						appendPushDiagnostic(diagnostics, diag.Path, diag.Code, diag.Message)
+					}
+				}
+			} else {
+				if err := remote.SetContentStatus(ctx, pageID, pageStatus, targetStatus); err != nil {
+					if !isCompatibilityProbeError(err) {
+						return fmt.Errorf("set content status: %w", err)
+					}
+					for _, diag := range capabilities.disablePushContentStatusMode() {
+						appendPushDiagnostic(diagnostics, diag.Path, diag.Code, diag.Message)
+					}
+				}
 			}
 		}
 	}
@@ -134,4 +151,8 @@ func syncPageMetadata(ctx context.Context, remote PushRemote, pageID string, doc
 	}
 
 	return nil
+}
+
+func shouldSyncContentStatus(existingPage bool, doc fs.MarkdownDocument) bool {
+	return existingPage || strings.TrimSpace(doc.Frontmatter.Status) != ""
 }
