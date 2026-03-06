@@ -217,6 +217,276 @@ func TestRunDiff_ReportsBestEffortWarnings(t *testing.T) {
 	}
 }
 
+func TestRunDiff_SpaceModeReportsPlannedPathMoves(t *testing.T) {
+	runParallelCommandTest(t)
+	repo := t.TempDir()
+	spaceDir := filepath.Join(repo, "ENG")
+	if err := os.MkdirAll(filepath.Join(spaceDir, "Policies"), 0o750); err != nil {
+		t.Fatalf("mkdir policies dir: %v", err)
+	}
+
+	writeMarkdown(t, filepath.Join(spaceDir, "Policies", "Child.md"), fs.MarkdownDocument{
+		Frontmatter: fs.Frontmatter{
+			Title:   "Child",
+			ID:      "2",
+			Version: 1,
+		},
+		Body: "same body\n",
+	})
+
+	if err := fs.SaveState(spaceDir, fs.SpaceState{
+		PagePathIndex: map[string]string{
+			"Policies/Child.md": "2",
+		},
+		AttachmentIndex: map[string]string{},
+	}); err != nil {
+		t.Fatalf("save state: %v", err)
+	}
+
+	modifiedAt := time.Date(2026, time.March, 6, 12, 0, 0, 0, time.UTC)
+	fake := &cmdFakePullRemote{
+		space: confluence.Space{ID: "space-1", Key: "ENG", Name: "Engineering"},
+		pages: []confluence.Page{
+			{ID: "2", SpaceID: "space-1", Title: "Child", ParentPageID: "folder-2", ParentType: "folder", Version: 2, LastModified: modifiedAt},
+		},
+		folderByID: map[string]confluence.Folder{
+			"folder-2": {ID: "folder-2", Title: "Archive"},
+		},
+		pagesByID: map[string]confluence.Page{
+			"2": {
+				ID:           "2",
+				SpaceID:      "space-1",
+				Title:        "Child",
+				ParentPageID: "folder-2",
+				ParentType:   "folder",
+				Version:      2,
+				LastModified: modifiedAt,
+				BodyADF:      rawJSON(t, simpleADF("same body")),
+			},
+		},
+		attachments: map[string][]byte{},
+	}
+
+	oldFactory := newDiffRemote
+	newDiffRemote = func(_ *config.Config) (syncflow.PullRemote, error) { return fake, nil }
+	t.Cleanup(func() { newDiffRemote = oldFactory })
+
+	setupEnv(t)
+	chdirRepo(t, repo)
+
+	cmd := &cobra.Command{}
+	out := &bytes.Buffer{}
+	cmd.SetOut(out)
+
+	if err := runDiff(cmd, config.Target{Mode: config.TargetModeSpace, Value: "ENG"}); err != nil {
+		t.Fatalf("runDiff() error: %v", err)
+	}
+
+	got := out.String()
+	if !strings.Contains(got, "[PAGE_PATH_MOVED]") {
+		t.Fatalf("expected path move diagnostic, got:\n%s", got)
+	}
+	if !strings.Contains(got, "Policies/Child.md") || !strings.Contains(got, "Archive/Child.md") {
+		t.Fatalf("expected old and new paths in diff output, got:\n%s", got)
+	}
+}
+
+func TestRunDiff_FileModeReportsPlannedPathMoves(t *testing.T) {
+	runParallelCommandTest(t)
+	repo := t.TempDir()
+	spaceDir := filepath.Join(repo, "ENG")
+	if err := os.MkdirAll(filepath.Join(spaceDir, "Policies"), 0o750); err != nil {
+		t.Fatalf("mkdir policies dir: %v", err)
+	}
+
+	localFile := filepath.Join(spaceDir, "Policies", "Child.md")
+	writeMarkdown(t, localFile, fs.MarkdownDocument{
+		Frontmatter: fs.Frontmatter{
+			Title:   "Child",
+			ID:      "2",
+			Version: 1,
+		},
+		Body: "same body\n",
+	})
+
+	if err := fs.SaveState(spaceDir, fs.SpaceState{
+		PagePathIndex: map[string]string{
+			"Policies/Child.md": "2",
+		},
+		AttachmentIndex: map[string]string{},
+	}); err != nil {
+		t.Fatalf("save state: %v", err)
+	}
+
+	modifiedAt := time.Date(2026, time.March, 6, 12, 0, 0, 0, time.UTC)
+	fake := &cmdFakePullRemote{
+		space: confluence.Space{ID: "space-1", Key: "ENG", Name: "Engineering"},
+		pages: []confluence.Page{
+			{ID: "2", SpaceID: "space-1", Title: "Child", ParentPageID: "folder-2", ParentType: "folder", Version: 2, LastModified: modifiedAt},
+		},
+		folderByID: map[string]confluence.Folder{
+			"folder-2": {ID: "folder-2", Title: "Archive"},
+		},
+		pagesByID: map[string]confluence.Page{
+			"2": {
+				ID:           "2",
+				SpaceID:      "space-1",
+				Title:        "Child",
+				ParentPageID: "folder-2",
+				ParentType:   "folder",
+				Version:      2,
+				LastModified: modifiedAt,
+				BodyADF:      rawJSON(t, simpleADF("same body")),
+			},
+		},
+		attachments: map[string][]byte{},
+	}
+
+	oldFactory := newDiffRemote
+	newDiffRemote = func(_ *config.Config) (syncflow.PullRemote, error) { return fake, nil }
+	t.Cleanup(func() { newDiffRemote = oldFactory })
+
+	setupEnv(t)
+	chdirRepo(t, repo)
+
+	cmd := &cobra.Command{}
+	out := &bytes.Buffer{}
+	cmd.SetOut(out)
+
+	if err := runDiff(cmd, config.Target{Mode: config.TargetModeFile, Value: localFile}); err != nil {
+		t.Fatalf("runDiff() error: %v", err)
+	}
+
+	got := out.String()
+	if !strings.Contains(got, "[PAGE_PATH_MOVED]") {
+		t.Fatalf("expected path move diagnostic, got:\n%s", got)
+	}
+	if !strings.Contains(got, "Policies/Child.md") || !strings.Contains(got, "Archive/Child.md") {
+		t.Fatalf("expected old and new paths in diff output, got:\n%s", got)
+	}
+}
+
+func TestRunDiff_FileModeUsesPlannedPathContextForMovedPageLinks(t *testing.T) {
+	runParallelCommandTest(t)
+	repo := t.TempDir()
+	spaceDir := filepath.Join(repo, "ENG")
+	if err := os.MkdirAll(filepath.Join(spaceDir, "Policies"), 0o750); err != nil {
+		t.Fatalf("mkdir policies dir: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(spaceDir, "Archive"), 0o750); err != nil {
+		t.Fatalf("mkdir archive dir: %v", err)
+	}
+
+	localFile := filepath.Join(spaceDir, "Policies", "Child.md")
+	writeMarkdown(t, localFile, fs.MarkdownDocument{
+		Frontmatter: fs.Frontmatter{
+			Title:   "Child",
+			ID:      "2",
+			Version: 1,
+		},
+		Body: "old body\n",
+	})
+	writeMarkdown(t, filepath.Join(spaceDir, "Archive", "Reference.md"), fs.MarkdownDocument{
+		Frontmatter: fs.Frontmatter{
+			Title:   "Reference",
+			ID:      "3",
+			Version: 1,
+		},
+		Body: "reference body\n",
+	})
+
+	if err := fs.SaveState(spaceDir, fs.SpaceState{
+		PagePathIndex: map[string]string{
+			"Policies/Child.md":    "2",
+			"Archive/Reference.md": "3",
+		},
+		AttachmentIndex: map[string]string{},
+	}); err != nil {
+		t.Fatalf("save state: %v", err)
+	}
+
+	modifiedAt := time.Date(2026, time.March, 6, 12, 0, 0, 0, time.UTC)
+	fake := &cmdFakePullRemote{
+		space: confluence.Space{ID: "space-1", Key: "ENG", Name: "Engineering"},
+		pages: []confluence.Page{
+			{ID: "2", SpaceID: "space-1", Title: "Child", ParentPageID: "folder-2", ParentType: "folder", Version: 2, LastModified: modifiedAt},
+			{ID: "3", SpaceID: "space-1", Title: "Reference", ParentPageID: "folder-2", ParentType: "folder", Version: 1, LastModified: modifiedAt},
+		},
+		folderByID: map[string]confluence.Folder{
+			"folder-2": {ID: "folder-2", Title: "Archive"},
+		},
+		pagesByID: map[string]confluence.Page{
+			"2": {
+				ID:           "2",
+				SpaceID:      "space-1",
+				Title:        "Child",
+				ParentPageID: "folder-2",
+				ParentType:   "folder",
+				Version:      2,
+				LastModified: modifiedAt,
+				BodyADF: rawJSON(t, map[string]any{
+					"version": 1,
+					"type":    "doc",
+					"content": []any{
+						map[string]any{
+							"type": "paragraph",
+							"content": []any{
+								map[string]any{
+									"type": "text",
+									"text": "Reference",
+									"marks": []any{
+										map[string]any{
+											"type": "link",
+											"attrs": map[string]any{
+												"href":   "https://example.atlassian.net/wiki/pages/viewpage.action?pageId=3",
+												"pageId": "3",
+											},
+										},
+									},
+								},
+							},
+						},
+					},
+				}),
+			},
+			"3": {
+				ID:           "3",
+				SpaceID:      "space-1",
+				Title:        "Reference",
+				ParentPageID: "folder-2",
+				ParentType:   "folder",
+				Version:      1,
+				LastModified: modifiedAt,
+				BodyADF:      rawJSON(t, simpleADF("reference body")),
+			},
+		},
+		attachments: map[string][]byte{},
+	}
+
+	oldFactory := newDiffRemote
+	newDiffRemote = func(_ *config.Config) (syncflow.PullRemote, error) { return fake, nil }
+	t.Cleanup(func() { newDiffRemote = oldFactory })
+
+	setupEnv(t)
+	chdirRepo(t, repo)
+
+	cmd := &cobra.Command{}
+	out := &bytes.Buffer{}
+	cmd.SetOut(out)
+
+	if err := runDiff(cmd, config.Target{Mode: config.TargetModeFile, Value: localFile}); err != nil {
+		t.Fatalf("runDiff() error: %v", err)
+	}
+
+	got := out.String()
+	if !strings.Contains(got, "+[Reference](Reference.md)") {
+		t.Fatalf("expected moved page to render relative link from planned path context, got:\n%s", got)
+	}
+	if strings.Contains(got, "../Archive/Reference.md") {
+		t.Fatalf("expected moved page diff to avoid old-path link context, got:\n%s", got)
+	}
+}
+
 func TestRunDiff_PreservedAbsoluteCrossSpaceLinkIsNotReportedAsUnresolved(t *testing.T) {
 	runParallelCommandTest(t)
 	repo := t.TempDir()

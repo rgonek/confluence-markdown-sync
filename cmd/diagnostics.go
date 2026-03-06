@@ -27,6 +27,8 @@ func classifySyncDiagnostic(diag syncflow.PullDiagnostic) (level string, qualifi
 	switch strings.TrimSpace(diag.Category) {
 	case syncflow.DiagnosticCategoryPreservedExternalLink:
 		return "note", "preserved external/cross-space link"
+	case syncflow.DiagnosticCategoryPathChange:
+		return "note", "planned markdown path changed"
 	case syncflow.DiagnosticCategoryDegradedReference:
 		return "warning", "unresolved but safely degraded reference"
 	case syncflow.DiagnosticCategoryBlockingReference:

@@ -40,6 +40,12 @@ func TestFormatSyncDiagnostic_Classification(t *testing.T) {
 			wantStart: "error: page.md [STRICT_PATH_REFERENCE_BROKEN]",
 			wantText:  "broken strict-path reference that blocks push; action required: yes",
 		},
+		{
+			name:      "page path move is a note",
+			diag:      syncflow.PullDiagnostic{Path: "legacy/page.md", Code: "PAGE_PATH_MOVED", Message: "planned markdown path changed from legacy/page.md to archive/page.md"},
+			wantStart: "note: legacy/page.md [PAGE_PATH_MOVED]",
+			wantText:  "planned markdown path changed; action required: no",
+		},
 	}
 
 	for _, tc := range cases {

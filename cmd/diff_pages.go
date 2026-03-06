@@ -11,6 +11,14 @@ import (
 	syncflow "github.com/rgonek/confluence-markdown-sync/internal/sync"
 )
 
+type diffFolderLookupRemote interface {
+	GetFolder(ctx context.Context, folderID string) (confluence.Folder, error)
+}
+
+type diffPageLookupRemote interface {
+	GetPage(ctx context.Context, pageID string) (confluence.Page, error)
+}
+
 func listAllDiffPages(ctx context.Context, remote syncflow.PullRemote, opts confluence.PageListOptions) ([]confluence.Page, error) {
 	result := []confluence.Page{}
 	cursor := opts.Cursor
@@ -29,7 +37,7 @@ func listAllDiffPages(ctx context.Context, remote syncflow.PullRemote, opts conf
 	return result, nil
 }
 
-func recoverMissingPagesForDiff(ctx context.Context, remote syncflow.PullRemote, spaceID string, localPageIDs map[string]string, remotePages []confluence.Page) ([]confluence.Page, error) {
+func recoverMissingPagesForDiff(ctx context.Context, remote diffPageLookupRemote, spaceID string, localPageIDs map[string]string, remotePages []confluence.Page) ([]confluence.Page, error) {
 	remoteByID := make(map[string]struct{}, len(remotePages))
 	for _, p := range remotePages {
 		remoteByID[p.ID] = struct{}{}
@@ -69,7 +77,7 @@ func recoverMissingPagesForDiff(ctx context.Context, remote syncflow.PullRemote,
 	return result, nil
 }
 
-func resolveDiffFolderHierarchyFromPages(ctx context.Context, remote syncflow.PullRemote, pages []confluence.Page) (map[string]confluence.Folder, []syncflow.PullDiagnostic, error) {
+func resolveDiffFolderHierarchyFromPages(ctx context.Context, remote diffFolderLookupRemote, pages []confluence.Page) (map[string]confluence.Folder, []syncflow.PullDiagnostic, error) {
 	folderByID := map[string]confluence.Folder{}
 	diagnostics := []syncflow.PullDiagnostic{}
 	fallbackTracker := syncflow.NewFolderLookupFallbackTracker()

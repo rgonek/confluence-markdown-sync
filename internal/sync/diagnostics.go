@@ -7,6 +7,7 @@ const (
 	DiagnosticCategoryDegradedReference     = "degraded_reference"
 	DiagnosticCategoryBlockingReference     = "blocking_reference"
 	DiagnosticCategoryDegradedContent       = "degraded_content"
+	DiagnosticCategoryPathChange            = "path_change"
 )
 
 func NormalizePullDiagnostic(diag PullDiagnostic) PullDiagnostic {
@@ -39,6 +40,8 @@ func classifyPullDiagnostic(code string) (category string, actionRequired bool) 
 		return DiagnosticCategoryDegradedReference, true
 	case "STRICT_PATH_REFERENCE_BROKEN":
 		return DiagnosticCategoryBlockingReference, true
+	case "PAGE_PATH_MOVED":
+		return DiagnosticCategoryPathChange, false
 	case "FOLDER_LOOKUP_UNAVAILABLE",
 		"CONTENT_STATUS_FETCH_FAILED",
 		"LABELS_FETCH_FAILED",

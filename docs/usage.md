@@ -92,6 +92,9 @@ Highlights:
 - diagnostics distinguish preserved cross-space links (`note`), degraded-but-pullable fallbacks, and broken references left as fallback output,
 - page files follow Confluence hierarchy (folders and parent/child pages become nested directories),
 - pages that have children are written as `<Page>/<Page>.md` so they are distinguishable from folders,
+- leaf-page title renames can keep the existing Markdown path when the effective parent directory is unchanged,
+- pages that own subtree directories move when their self-owned directory segment changes,
+- hierarchy moves and ancestor/path-segment sanitization changes move the Markdown file and emit `PAGE_PATH_MOVED` notes with old/new paths,
 - same-space links rewritten to relative Markdown links,
 - attachments downloaded into `assets/<page-id>/<attachment-id>-<filename>`,
 - `--force` (`-f`) forces a full-space refresh (all tracked pages are re-pulled even when incremental changes are empty),
@@ -124,6 +127,7 @@ Highlights:
 
 - compares local Markdown drift against the last sync baseline,
 - checks whether tracked remote pages are ahead, missing, or newly added,
+- surfaces planned tracked-page path relocations that would happen on the next pull,
 - focuses on Markdown page files only.
 
 Attachment-only changes are intentionally excluded from `conf status`. Use `git status` or `conf diff` when you need asset visibility.
@@ -136,6 +140,7 @@ Highlights:
 
 - fetches remote content,
 - converts using best-effort forward conversion,
+- reports planned Markdown path moves before showing the diff so hierarchy-driven renames are explicit,
 - includes synced frontmatter parity such as `state`, `status`, and `labels`,
 - strips read-only author/timestamp metadata so the diff stays focused on actionable drift,
 - compares using `git diff --no-index`,

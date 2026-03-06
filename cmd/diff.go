@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/rgonek/confluence-markdown-sync/internal/config"
@@ -168,6 +169,7 @@ func runDiff(cmd *cobra.Command, target config.Target) (runErr error) {
 	}
 
 	pagePathByIDAbs, pagePathByIDRel := syncflow.PlanPagePaths(diffCtx.spaceDir, state.PagePathIndex, pages, folderByID)
+	pathMoves := syncflow.PlannedPagePathMoves(state.PagePathIndex, pagePathByIDRel)
 	attachmentPathByID := buildDiffAttachmentPathByID(diffCtx.spaceDir, state.AttachmentIndex)
 	globalPageIndex, err := buildWorkspaceGlobalPageIndex(diffCtx.spaceDir)
 	if err != nil {
@@ -183,7 +185,7 @@ func runDiff(cmd *cobra.Command, target config.Target) (runErr error) {
 	}()
 
 	if target.IsFile() {
-		result, err := runDiffFileMode(ctx, out, remote, diffCtx, pagePathByIDAbs, attachmentPathByID, globalPageIndex, tmpRoot)
+		result, err := runDiffFileMode(ctx, out, remote, diffCtx, pagePathByIDAbs, pathMoves, attachmentPathByID, globalPageIndex, tmpRoot)
 		report.Diagnostics = append(report.Diagnostics, reportDiagnosticsFromPull(result.Diagnostics, diffCtx.spaceDir)...)
 		report.MutatedFiles = append(report.MutatedFiles, result.ChangedFiles...)
 		return err
@@ -197,6 +199,7 @@ func runDiff(cmd *cobra.Command, target config.Target) (runErr error) {
 		pages,
 		pagePathByIDAbs,
 		pagePathByIDRel,
+		pathMoves,
 		attachmentPathByID,
 		globalPageIndex,
 		tmpRoot,
@@ -212,6 +215,7 @@ func runDiffFileMode(
 	remote syncflow.PullRemote,
 	diffCtx diffContext,
 	pagePathByIDAbs map[string]string,
+	pathMoves []syncflow.PlannedPagePathMove,
 	attachmentPathByID map[string]string,
 	globalPageIndex syncflow.GlobalPageIndex,
 	tmpRoot string,
@@ -270,12 +274,16 @@ func runDiffFileMode(
 	}
 
 	page, metadataDiags := hydrateDiffPageMetadata(ctx, remote, page, relPath)
+	renderSourcePath := diffCtx.targetFile
+	if plannedSourcePath, ok := pagePathByIDAbs[page.ID]; ok && strings.TrimSpace(plannedSourcePath) != "" {
+		renderSourcePath = plannedSourcePath
+	}
 	rendered, diagnostics, err := renderDiffMarkdown(
 		ctx,
 		page,
 		diffCtx.spaceKey,
 		diffCtx.spaceDir,
-		diffCtx.targetFile,
+		renderSourcePath,
 		relPath,
 		pagePathByIDAbs,
 		attachmentPathByID,
@@ -285,6 +293,12 @@ func runDiffFileMode(
 		return result, err
 	}
 	diagnostics = append(metadataDiags, diagnostics...)
+	for _, move := range pathMoves {
+		if move.PageID == diffCtx.targetPageID {
+			diagnostics = append([]syncflow.PullDiagnostic{syncflow.PagePathMoveDiagnostic(move)}, diagnostics...)
+			break
+		}
+	}
 	result.Diagnostics = append(result.Diagnostics, diagnostics...)
 
 	for _, diag := range diagnostics {
@@ -315,6 +329,7 @@ func runDiffSpaceMode(
 	pages []confluence.Page,
 	pagePathByIDAbs map[string]string,
 	pagePathByIDRel map[string]string,
+	pathMoves []syncflow.PlannedPagePathMove,
 	attachmentPathByID map[string]string,
 	globalPageIndex syncflow.GlobalPageIndex,
 	tmpRoot string,
@@ -346,6 +361,9 @@ func runDiffSpaceMode(
 	sort.Strings(pageIDs)
 
 	diagnostics := make([]syncflow.PullDiagnostic, 0)
+	for _, move := range pathMoves {
+		diagnostics = append(diagnostics, syncflow.PagePathMoveDiagnostic(move))
+	}
 	metadataSummaries := make([]diffMetadataSummary, 0, len(pageIDs))
 	for _, pageID := range pageIDs {
 		page, err := remote.GetPage(ctx, pageID)

@@ -49,10 +49,11 @@ func TestStatusCmd(t *testing.T) {
 
 // mockStatusRemote implements the StatusRemote interface for testing
 type mockStatusRemote struct {
-	space confluence.Space
-	pages confluence.PageListResult
-	page  confluence.Page
-	err   error
+	space   confluence.Space
+	pages   confluence.PageListResult
+	page    confluence.Page
+	folders map[string]confluence.Folder
+	err     error
 }
 
 func (m *mockStatusRemote) GetSpace(_ context.Context, _ string) (confluence.Space, error) {
@@ -65,6 +66,20 @@ func (m *mockStatusRemote) ListPages(_ context.Context, _ confluence.PageListOpt
 
 func (m *mockStatusRemote) GetPage(_ context.Context, _ string) (confluence.Page, error) {
 	return m.page, m.err
+}
+
+func (m *mockStatusRemote) GetFolder(_ context.Context, folderID string) (confluence.Folder, error) {
+	if m.err != nil {
+		return confluence.Folder{}, m.err
+	}
+	if m.folders == nil {
+		return confluence.Folder{}, confluence.ErrNotFound
+	}
+	folder, ok := m.folders[folderID]
+	if !ok {
+		return confluence.Folder{}, confluence.ErrNotFound
+	}
+	return folder, nil
 }
 
 func TestListAllPagesForStatus(t *testing.T) {

@@ -371,6 +371,91 @@ func TestRunStatus_PageAndAssetScopeCases(t *testing.T) {
 	}
 }
 
+func TestRunStatus_ShowsPlannedPathMoves(t *testing.T) {
+	runParallelCommandTest(t)
+	repo := t.TempDir()
+	setupGitRepo(t, repo)
+	chdirRepo(t, repo)
+	setupEnv(t)
+
+	spaceDir := filepath.Join(repo, "TEST")
+	if err := os.MkdirAll(filepath.Join(spaceDir, "Policies"), 0o750); err != nil {
+		t.Fatalf("mkdir policies: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(spaceDir, "Archive"), 0o750); err != nil {
+		t.Fatalf("mkdir archive: %v", err)
+	}
+
+	writeMarkdown(t, filepath.Join(spaceDir, "Policies", "Child.md"), fs.MarkdownDocument{
+		Frontmatter: fs.Frontmatter{
+			Title:   "Child",
+			ID:      "2",
+			Version: 1,
+		},
+		Body: "body\n",
+	})
+	writeMarkdown(t, filepath.Join(spaceDir, "Archive", "Reference.md"), fs.MarkdownDocument{
+		Frontmatter: fs.Frontmatter{
+			Title:   "Reference",
+			ID:      "3",
+			Version: 1,
+		},
+		Body: "reference\n",
+	})
+	if err := fs.SaveState(spaceDir, fs.SpaceState{
+		SpaceKey: "TEST",
+		PagePathIndex: map[string]string{
+			"Policies/Child.md":    "2",
+			"Archive/Reference.md": "3",
+		},
+	}); err != nil {
+		t.Fatalf("save state: %v", err)
+	}
+
+	runGitForStatus(t, repo, "add", ".")
+	runGitForStatus(t, repo, "commit", "-m", "baseline")
+	tagTime := time.Now().UTC().Format("20060102T150405Z")
+	runGitForStatus(t, repo, "tag", "-a", "confluence-sync/pull/TEST/"+tagTime, "-m", "pull")
+
+	modifiedAt := time.Date(2026, time.March, 6, 12, 0, 0, 0, time.UTC)
+	fake := &cmdFakePullRemote{
+		space: confluence.Space{ID: "space-1", Key: "TEST", Name: "Test Space"},
+		pages: []confluence.Page{
+			{ID: "2", SpaceID: "space-1", Title: "Child", ParentPageID: "folder-2", ParentType: "folder", Version: 1, LastModified: modifiedAt},
+			{ID: "3", SpaceID: "space-1", Title: "Reference", ParentPageID: "folder-2", ParentType: "folder", Version: 1, LastModified: modifiedAt},
+		},
+		folderByID: map[string]confluence.Folder{
+			"folder-2": {ID: "folder-2", Title: "Archive"},
+		},
+		pagesByID: map[string]confluence.Page{
+			"2": {ID: "2", SpaceID: "space-1", Title: "Child", ParentPageID: "folder-2", ParentType: "folder", Version: 1, LastModified: modifiedAt, Status: "current"},
+			"3": {ID: "3", SpaceID: "space-1", Title: "Reference", ParentPageID: "folder-2", ParentType: "folder", Version: 1, LastModified: modifiedAt, Status: "current"},
+		},
+	}
+
+	oldNewStatusRemote := newStatusRemote
+	newStatusRemote = func(cfg *config.Config) (StatusRemote, error) {
+		return fake, nil
+	}
+	t.Cleanup(func() { newStatusRemote = oldNewStatusRemote })
+
+	cmd := newStatusCmd()
+	out := &bytes.Buffer{}
+	cmd.SetOut(out)
+
+	if err := runStatus(cmd, config.Target{Value: "TEST", Mode: config.TargetModeSpace}); err != nil {
+		t.Fatalf("runStatus() error: %v", err)
+	}
+
+	got := out.String()
+	if !strings.Contains(got, "Planned path moves (1)") {
+		t.Fatalf("expected planned path move section, got:\n%s", got)
+	}
+	if !strings.Contains(got, "Policies/Child.md -> Archive/Child.md") {
+		t.Fatalf("expected planned move detail, got:\n%s", got)
+	}
+}
+
 func setupStatusScopeRepo(t *testing.T) (string, string) {
 	t.Helper()
 

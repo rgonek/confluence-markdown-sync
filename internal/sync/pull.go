@@ -204,6 +204,10 @@ func Pull(ctx context.Context, remote PullRemote, opts PullOptions) (PullResult,
 	sort.Strings(pageIDs)
 
 	pagePathByIDAbs, pagePathByIDRel := PlanPagePaths(spaceDir, state.PagePathIndex, pages, folderByID)
+	pathMoves := PlannedPagePathMoves(state.PagePathIndex, pagePathByIDRel)
+	for _, move := range pathMoves {
+		diagnostics = append(diagnostics, pagePathMoveDiagnostic(move))
+	}
 
 	if opts.Progress != nil {
 		opts.Progress.SetDescription("Identifying changed pages")
@@ -217,8 +221,8 @@ func Pull(ctx context.Context, remote PullRemote, opts PullOptions) (PullResult,
 		for _, pageID := range changedPageIDs {
 			changedSet[pageID] = struct{}{}
 		}
-		for _, pageID := range movedPageIDs(state.PagePathIndex, pagePathByIDRel) {
-			changedSet[pageID] = struct{}{}
+		for _, move := range pathMoves {
+			changedSet[move.PageID] = struct{}{}
 		}
 		changedPageIDs = sortedStringKeys(changedSet)
 	}
