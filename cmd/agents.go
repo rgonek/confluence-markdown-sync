@@ -102,11 +102,13 @@ This space directory contains technical documentation for [%s].
 You are a technical writer and software engineer. Your goal is to maintain high-quality, accurate, and developer-friendly documentation.
 
 ## Space-Specific Rules
-- **Diagrams**: Use PlantUML when the page needs a rendered Confluence diagram. Mermaid fences are preserved as code blocks and will not render as Mermaid macros.
+- **Diagrams**: Use PlantUML when the page needs a rendered Confluence diagram. Mermaid fences are preserved as fenced code blocks (ADF `+"`codeBlock`"+`) and will not render as Confluence diagram macros.
+- **Cross-space links**: Relative Markdown links to pages in sibling space directories are resolved at push time and are fully supported.
 - **Code Snippets**: Always specify the language for syntax highlighting.
 - **API Docs**: Ensure all endpoints include request/response examples.
-- **Links**: Use relative Markdown links for cross-references between pages.
+- **Links**: Use relative Markdown links for cross-references between pages in the same space.
 - **Assets**: Store all images in the `+"`assets/`"+` directory.
+- **Frontmatter**: Do not edit `+"`id`"+` or `+"`version`"+` in frontmatter. `+"`state`"+`, `+"`status`"+`, and `+"`labels`"+` are user-editable.
 
 ## Sync Workflow
 1. `+"`conf pull`"+` to get the latest state.
@@ -129,6 +131,7 @@ You are an internal communications specialist. Your goal is to ensure documentat
 - **Formatting**: Use bold text for key terms and bullet points for readability.
 - **Tone**: Maintain a professional yet welcoming tone.
 - **Links**: Ensure all links to external portals (Workday, etc.) are up to date.
+- **Frontmatter**: Do not edit `+"`id`"+` or `+"`version`"+` in frontmatter. `+"`state`"+`, `+"`status`"+`, and `+"`labels`"+` are user-editable.
 
 ## Sync Workflow
 1. `+"`conf pull`"+`
@@ -151,6 +154,7 @@ You are a project manager. Your goal is to keep stakeholders informed and ensure
 - **Action Items**: Use checklist format `+"`- [ ]`"+` for tasks.
 - **Roadmaps**: Use tables for high-level project timelines and milestones.
 - **Status Updates**: Use traffic light emojis (🟢, 🟡, 🔴) to indicate project health.
+- **Frontmatter**: Do not edit `+"`id`"+` or `+"`version`"+` in frontmatter. `+"`state`"+`, `+"`status`"+`, and `+"`labels`"+` are user-editable.
 
 ## Sync Workflow
 1. `+"`conf pull`"+`
@@ -173,6 +177,7 @@ You are a product manager. Your goal is to define clear, actionable requirements
 - **Acceptance Criteria**: Use numbered lists for explicit testable conditions.
 - **Design Links**: Always include links to Figma/Sketch prototypes where applicable.
 - **Prioritization**: Clearly mark "Must Have", "Should Have", and "Could Have" features.
+- **Frontmatter**: Do not edit `+"`id`"+` or `+"`version`"+` in frontmatter. `+"`state`"+`, `+"`status`"+`, and `+"`labels`"+` are user-editable.
 
 ## Sync Workflow
 1. `+"`conf pull`"+`
@@ -195,6 +200,7 @@ You are a support specialist and technical communicator. Your goal is to solve u
 - **Step-by-Step**: Use numbered lists for procedures.
 - **Troubleshooting**: Always include a "Symptoms" and "Resolution" section.
 - **Callouts**: Use bolding or blockquotes for critical warnings or tips.
+- **Frontmatter**: Do not edit `+"`id`"+` or `+"`version`"+` in frontmatter. `+"`state`"+`, `+"`status`"+`, and `+"`labels`"+` are user-editable.
 
 ## Sync Workflow
 1. `+"`conf pull`"+`
@@ -210,7 +216,7 @@ func getGeneralAgentsTemplate(spaceKey string) string {
 This space directory is managed by `+"`conf`"+`.
 
 ## Rules
-- Do not edit `+"`id`"+` or `+"`space`"+` in frontmatter.
+- Do not edit `+"`id`"+` or `+"`version`"+` in frontmatter.
 - `+"`state`"+` (draft/current), `+"`status`"+` (lozenge), and `+"`labels`"+` are user-editable.
 - Always `+"`pull`"+` before `+"`push`"+`.
 - Run `+"`validate`"+` before publishing.
