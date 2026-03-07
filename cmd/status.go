@@ -22,19 +22,23 @@ type StatusRemote interface {
 	GetSpace(ctx context.Context, spaceKey string) (confluence.Space, error)
 	ListPages(ctx context.Context, opts confluence.PageListOptions) (confluence.PageListResult, error)
 	GetPage(ctx context.Context, pageID string) (confluence.Page, error)
+	GetFolder(ctx context.Context, folderID string) (confluence.Folder, error)
 }
 
 // StatusReport contains the results of a sync drift inspection.
 type StatusReport struct {
-	LocalAdded      []string
-	LocalModified   []string
-	LocalDeleted    []string
-	RemoteAdded     []string
-	RemoteModified  []string
-	RemoteDeleted   []string
-	ConflictAhead   []string // pages that are both locally modified AND ahead on remote
-	MaxVersionDrift int
+	LocalAdded       []string
+	LocalModified    []string
+	LocalDeleted     []string
+	RemoteAdded      []string
+	RemoteModified   []string
+	RemoteDeleted    []string
+	PlannedPathMoves []syncflow.PlannedPagePathMove
+	ConflictAhead    []string // pages that are both locally modified AND ahead on remote
+	MaxVersionDrift  int
 }
+
+const statusScopeNote = "Scope: markdown/page drift only; attachment-only drift is excluded from `conf status` output. Use `git status` or `conf diff` to inspect assets."
 
 var newStatusRemote = func(cfg *config.Config) (StatusRemote, error) {
 	return newConfluenceClientFromConfig(cfg)
@@ -46,6 +50,8 @@ func newStatusCmd() *cobra.Command {
 
 		Short: "Inspect local and remote sync drift",
 		Long: `status prints a high-level sync summary without mutating local files or remote content.
+
+Status scope: markdown/page drift only; attachment-only drift is excluded from ` + "`conf status`" + ` output. Use ` + "`git status`" + ` or ` + "`conf diff`" + ` to inspect assets.
 
 TARGET follows the standard rule:
 - .md suffix => file mode (space inferred from file)
@@ -127,9 +133,11 @@ func runStatus(cmd *cobra.Command, target config.Target) error {
 
 	_, _ = fmt.Fprintf(out, "Space: %s\n", spaceKey)
 	_, _ = fmt.Fprintf(out, "Directory: %s\n", initialCtx.spaceDir)
+	_, _ = fmt.Fprintf(out, "Note: %s\n", statusScopeNote)
 
 	printStatusSection(out, "Local not pushed", report.LocalAdded, report.LocalModified, report.LocalDeleted)
 	printStatusSection(out, "Remote not pulled", report.RemoteAdded, report.RemoteModified, report.RemoteDeleted)
+	printPlannedPathMoves(out, report.PlannedPathMoves)
 
 	if len(report.ConflictAhead) > 0 {
 		_, _ = fmt.Fprintf(out, "\nConflict ahead (%d) — locally modified AND remote is ahead:\n", len(report.ConflictAhead))
@@ -169,6 +177,10 @@ func buildStatusReport(
 	remotePages, err := listAllPagesForStatus(ctx, remote, confluence.PageListOptions{SpaceID: space.ID, SpaceKey: space.Key, Status: "current", Limit: 100})
 	if err != nil {
 		return StatusReport{}, fmt.Errorf("list remote pages: %w", err)
+	}
+	remotePages, err = recoverMissingPagesForDiff(ctx, remote, space.ID, state.PagePathIndex, remotePages)
+	if err != nil {
+		return StatusReport{}, fmt.Errorf("recover tracked pages for status: %w", err)
 	}
 
 	pathByID := make(map[string]string, len(state.PagePathIndex))
@@ -249,19 +261,36 @@ func buildStatusReport(
 	sort.Strings(remoteModified)
 	sort.Strings(remoteDeleted)
 
+	folderByID, _, err := resolveDiffFolderHierarchyFromPages(ctx, remote, remotePages)
+	if err != nil {
+		return StatusReport{}, fmt.Errorf("resolve folder hierarchy: %w", err)
+	}
+	_, plannedPathByID := syncflow.PlanPagePaths(initialCtx.spaceDir, state.PagePathIndex, remotePages, folderByID)
+	plannedPathMoves := syncflow.PlannedPagePathMoves(state.PagePathIndex, plannedPathByID)
+	if targetRelPath != "" {
+		filteredMoves := make([]syncflow.PlannedPagePathMove, 0, len(plannedPathMoves))
+		for _, move := range plannedPathMoves {
+			if move.PreviousPath == targetRelPath {
+				filteredMoves = append(filteredMoves, move)
+			}
+		}
+		plannedPathMoves = filteredMoves
+	}
+
 	// ConflictAhead = pages that are BOTH locally modified AND ahead on remote.
 	conflictAhead := computeConflictAhead(localModified, remoteModified)
 	sort.Strings(conflictAhead)
 
 	return StatusReport{
-		LocalAdded:      localAdded,
-		LocalModified:   localModified,
-		LocalDeleted:    localDeleted,
-		RemoteAdded:     remoteAdded,
-		RemoteModified:  remoteModified,
-		RemoteDeleted:   remoteDeleted,
-		ConflictAhead:   conflictAhead,
-		MaxVersionDrift: maxVersionDrift,
+		LocalAdded:       localAdded,
+		LocalModified:    localModified,
+		LocalDeleted:     localDeleted,
+		RemoteAdded:      remoteAdded,
+		RemoteModified:   remoteModified,
+		RemoteDeleted:    remoteDeleted,
+		PlannedPathMoves: plannedPathMoves,
+		ConflictAhead:    conflictAhead,
+		MaxVersionDrift:  maxVersionDrift,
 	}, nil
 }
 
@@ -349,6 +378,16 @@ func printStatusList(out io.Writer, label string, items []string) {
 	_, _ = fmt.Fprintf(out, "  %s (%d):\n", label, len(items))
 	for _, item := range items {
 		_, _ = fmt.Fprintf(out, "    - %s\n", item)
+	}
+}
+
+func printPlannedPathMoves(out io.Writer, moves []syncflow.PlannedPagePathMove) {
+	if len(moves) == 0 {
+		return
+	}
+	_, _ = fmt.Fprintf(out, "\nPlanned path moves (%d) — next pull would relocate tracked markdown:\n", len(moves))
+	for _, move := range moves {
+		_, _ = fmt.Fprintf(out, "  - %s -> %s\n", move.PreviousPath, move.PlannedPath)
 	}
 }
 

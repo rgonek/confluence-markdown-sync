@@ -155,6 +155,18 @@ func TestArchiveAndDeleteEndpoints(t *testing.T) {
 			if got := r.URL.Query().Get("purge"); got != "true" {
 				t.Fatalf("purge query = %q, want true", got)
 			}
+			if got := r.URL.Query().Get("draft"); got != "" {
+				t.Fatalf("draft query = %q, want empty", got)
+			}
+			w.WriteHeader(http.StatusNoContent)
+		case r.Method == http.MethodDelete && r.URL.Path == "/wiki/api/v2/pages/84":
+			deleteCalls++
+			if got := r.URL.Query().Get("draft"); got != "true" {
+				t.Fatalf("draft query = %q, want true", got)
+			}
+			if got := r.URL.Query().Get("purge"); got != "" {
+				t.Fatalf("purge query = %q, want empty", got)
+			}
 			w.WriteHeader(http.StatusNoContent)
 		default:
 			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.String())
@@ -179,15 +191,18 @@ func TestArchiveAndDeleteEndpoints(t *testing.T) {
 		t.Fatalf("task ID = %q, want task-9001", archiveResult.TaskID)
 	}
 
-	if err := client.DeletePage(context.Background(), "42", true); err != nil {
+	if err := client.DeletePage(context.Background(), "42", PageDeleteOptions{Purge: true}); err != nil {
 		t.Fatalf("DeletePage() unexpected error: %v", err)
+	}
+	if err := client.DeletePage(context.Background(), "84", PageDeleteOptions{Draft: true}); err != nil {
+		t.Fatalf("DeletePage() draft unexpected error: %v", err)
 	}
 
 	if archiveCalls != 1 {
 		t.Fatalf("archive calls = %d, want 1", archiveCalls)
 	}
-	if deleteCalls != 1 {
-		t.Fatalf("delete calls = %d, want 1", deleteCalls)
+	if deleteCalls != 2 {
+		t.Fatalf("delete calls = %d, want 2", deleteCalls)
 	}
 }
 

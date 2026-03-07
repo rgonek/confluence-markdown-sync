@@ -120,6 +120,7 @@ type searchRunOptions struct {
 
 func runSearch(cmd *cobra.Command, query string, opts searchRunOptions) error {
 	out := cmd.OutOrStdout()
+	errOut := cmd.ErrOrStderr()
 
 	repoRoot, err := gitRepoRoot()
 	if err != nil {
@@ -154,20 +155,24 @@ func runSearch(cmd *cobra.Command, query string, opts searchRunOptions) error {
 
 	indexer := search.NewIndexer(store, repoRoot)
 
+	format := resolveSearchFormat(opts.format, out)
+
 	if opts.reindex {
 		count, err := indexer.Reindex()
 		if err != nil {
 			return fmt.Errorf("search: reindex: %w", err)
 		}
-		_, _ = fmt.Fprintf(out, "Reindexed %d document(s)\n", count)
+		progressOut := out
+		if format == "json" {
+			progressOut = errOut
+		}
+		_, _ = fmt.Fprintf(progressOut, "Reindexed %d document(s)\n", count)
 	} else {
 		_, err := indexer.IncrementalUpdate()
 		if err != nil {
 			return fmt.Errorf("search: incremental update: %w", err)
 		}
 	}
-
-	format := resolveSearchFormat(opts.format, out)
 
 	if opts.listLabels {
 		labels, err := store.ListLabels()
@@ -254,8 +259,7 @@ func openSearchStore(engine, repoRoot string) (search.Store, error) {
 		dbPath := filepath.Join(indexRoot, "search.db")
 		return sqlitestore.Open(dbPath)
 	case "bleve":
-		blevePath := filepath.Join(indexRoot, "bleve")
-		return blevestore.Open(blevePath)
+		return blevestore.Open(repoRoot)
 	default:
 		return nil, fmt.Errorf("search: unknown engine %q (valid values: sqlite, bleve)", engine)
 	}
@@ -342,13 +346,16 @@ func printSearchResults(out io.Writer, results []search.SearchResult, format str
 	return nil
 }
 
-// updateSearchIndexForSpace opens the default SQLite search store and runs an
-// incremental update scoped to a single space directory. Errors are non-fatal
-// from the caller's perspective — the function itself returns the error so the
-// caller can emit a warning.
+// updateSearchIndexForSpace opens the configured search store and refreshes a
+// single pulled space. Errors are non-fatal from the caller's perspective —
+// the function itself returns the error so the caller can emit a warning.
 func updateSearchIndexForSpace(repoRoot, spaceDir, spaceKey string, out io.Writer) error {
-	dbPath := filepath.Join(repoRoot, searchIndexDir, "search.db")
-	store, err := sqlitestore.Open(dbPath)
+	searchCfg, err := config.LoadSearchConfig(repoRoot)
+	if err != nil {
+		return fmt.Errorf("load search config: %w", err)
+	}
+
+	store, err := openSearchStore(searchCfg.Engine, repoRoot)
 	if err != nil {
 		return fmt.Errorf("open search store: %w", err)
 	}
@@ -358,6 +365,9 @@ func updateSearchIndexForSpace(repoRoot, spaceDir, spaceKey string, out io.Write
 	count, err := indexer.IndexSpace(spaceDir, spaceKey)
 	if err != nil {
 		return fmt.Errorf("index space %s: %w", spaceKey, err)
+	}
+	if err := store.UpdateMeta(); err != nil {
+		return fmt.Errorf("update search index metadata: %w", err)
 	}
 	if count > 0 {
 		_, _ = fmt.Fprintf(out, "Updated search index: %d document(s) for space %s\n", count, spaceKey)

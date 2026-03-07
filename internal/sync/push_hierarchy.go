@@ -95,7 +95,34 @@ func ensureFolderHierarchy(
 
 		if existingID, ok := folderIDByPath[currentPath]; ok && strings.TrimSpace(existingID) != "" {
 			parentID = strings.TrimSpace(existingID)
-			parentType = "folder"
+			if opts.folderMode == tenantFolderModePageFallback {
+				parentType = "page"
+			} else {
+				parentType = "folder"
+			}
+			continue
+		}
+
+		if opts.folderMode == tenantFolderModePageFallback {
+			pageCreated, pageErr := remote.CreatePage(ctx, confluence.PageUpsertInput{
+				SpaceID:      spaceID,
+				ParentPageID: parentID,
+				Title:        seg,
+				Status:       "current",
+				BodyADF:      []byte(`{"version":1,"type":"doc","content":[]}`),
+			})
+			if pageErr != nil {
+				return nil, fmt.Errorf("create compatibility hierarchy page %q: %w", currentPath, pageErr)
+			}
+
+			createdID := strings.TrimSpace(pageCreated.ID)
+			if createdID == "" {
+				return nil, fmt.Errorf("create compatibility hierarchy page %q returned empty page ID", currentPath)
+			}
+
+			folderIDByPath[currentPath] = createdID
+			parentID = createdID
+			parentType = "page"
 			continue
 		}
 
@@ -133,10 +160,10 @@ func ensureFolderHierarchy(
 
 			// 2. If not found and it's a conflict, try robust listing
 			if !foundExisting && strings.Contains(err.Error(), "400") && (strings.Contains(strings.ToLower(err.Error()), "folder exists with the same title") || strings.Contains(strings.ToLower(err.Error()), "already exists with the same title")) {
-				folders, listErr := listAllPushFolders(ctx, remote, confluence.FolderListOptions{
+				folders, listErr := listAllPushFoldersWithTracking(ctx, remote, confluence.FolderListOptions{
 					SpaceID: spaceID,
 					Title:   seg,
-				})
+				}, opts.folderListTracker, currentPath)
 				if listErr == nil {
 					for _, f := range folders {
 						if strings.EqualFold(strings.TrimSpace(f.Title), strings.TrimSpace(seg)) {
@@ -328,13 +355,13 @@ func normalizePushState(state fs.SpaceState) fs.SpaceState {
 	if state.AttachmentIndex == nil {
 		state.AttachmentIndex = map[string]string{}
 	}
-
 	normalizedPageIndex := make(map[string]string, len(state.PagePathIndex))
 	for path, id := range state.PagePathIndex {
 		normalizedPageIndex[normalizeRelPath(path)] = id
 	}
 	state.PagePathIndex = normalizedPageIndex
 	state.AttachmentIndex = cloneStringMap(state.AttachmentIndex)
+	state.FolderPathIndex = cloneStringMap(state.FolderPathIndex)
 	return state
 }
 
@@ -585,7 +612,8 @@ func cleanupPendingPrecreatedPages(
 			continue
 		}
 
-		if err := remote.DeletePage(ctx, pageID, true); err != nil && !errors.Is(err, confluence.ErrNotFound) {
+		deleteOpts := deleteOptionsForPageLifecycle(precreatedPages[relPath].Status, false)
+		if err := remote.DeletePage(ctx, pageID, deleteOpts); err != nil && !errors.Is(err, confluence.ErrNotFound) {
 			appendPushDiagnostic(
 				diagnostics,
 				relPath,

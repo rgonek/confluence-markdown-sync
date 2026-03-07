@@ -23,6 +23,9 @@ type Store interface {
 	// ListSpaces returns all distinct space key values present in the index, sorted.
 	ListSpaces() ([]string, error)
 
+	// ListPathsBySpace returns distinct indexed source paths for a space.
+	ListPathsBySpace(spaceKey string) ([]string, error)
+
 	// UpdateMeta records the current UTC timestamp as the last-indexed-at time.
 	UpdateMeta() error
 

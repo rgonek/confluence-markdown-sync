@@ -1,8 +1,10 @@
 package sync
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,6 +14,147 @@ import (
 	"github.com/rgonek/confluence-markdown-sync/internal/confluence"
 	"github.com/rgonek/confluence-markdown-sync/internal/fs"
 )
+
+func TestPull_ReportsHierarchyPathMoveDiagnostics(t *testing.T) {
+	tmpDir := t.TempDir()
+	spaceDir := filepath.Join(tmpDir, "ENG")
+	if err := os.MkdirAll(filepath.Join(spaceDir, "Policies"), 0o750); err != nil {
+		t.Fatalf("mkdir policies dir: %v", err)
+	}
+
+	writeDoc := fs.MarkdownDocument{
+		Frontmatter: fs.Frontmatter{
+			Title:   "Child",
+			ID:      "2",
+			Version: 1,
+		},
+		Body: "local child\n",
+	}
+	if err := fs.WriteMarkdownDocument(filepath.Join(spaceDir, "Policies", "Child.md"), writeDoc); err != nil {
+		t.Fatalf("write old child doc: %v", err)
+	}
+
+	modifiedAt := time.Date(2026, time.March, 6, 12, 0, 0, 0, time.UTC)
+	emptyADF := map[string]any{"version": 1, "type": "doc", "content": []any{}}
+	fake := &fakePullRemote{
+		space: confluence.Space{ID: "space-1", Key: "ENG", Name: "Engineering"},
+		pages: []confluence.Page{
+			{ID: "2", SpaceID: "space-1", Title: "Child", ParentPageID: "folder-2", ParentType: "folder", Version: 2, LastModified: modifiedAt},
+		},
+		folderByID: map[string]confluence.Folder{
+			"folder-2": {ID: "folder-2", Title: "Archive"},
+		},
+		pagesByID: map[string]confluence.Page{
+			"2": {ID: "2", SpaceID: "space-1", Title: "Child", ParentPageID: "folder-2", ParentType: "folder", Version: 2, LastModified: modifiedAt, BodyADF: rawJSON(t, emptyADF)},
+		},
+	}
+
+	result, err := Pull(context.Background(), fake, PullOptions{
+		SpaceKey: "ENG",
+		SpaceDir: spaceDir,
+		State: fs.SpaceState{
+			PagePathIndex: map[string]string{
+				"Policies/Child.md": "2",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Pull() error: %v", err)
+	}
+
+	if _, err := os.Stat(filepath.Join(spaceDir, "Archive", "Child.md")); err != nil {
+		t.Fatalf("expected moved markdown at Archive/Child.md: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(spaceDir, "Policies", "Child.md")); !os.IsNotExist(err) {
+		t.Fatalf("old markdown path should be deleted, stat error=%v", err)
+	}
+
+	movedDiag := findPullDiagnostic(result.Diagnostics, "PAGE_PATH_MOVED")
+	if movedDiag == nil {
+		t.Fatalf("expected PAGE_PATH_MOVED diagnostic, got %+v", result.Diagnostics)
+	}
+	if movedDiag.Path != "Policies/Child.md" {
+		t.Fatalf("moved diagnostic path = %q, want Policies/Child.md", movedDiag.Path)
+	}
+	if !strings.Contains(movedDiag.Message, "Policies/Child.md") || !strings.Contains(movedDiag.Message, "Archive/Child.md") {
+		t.Fatalf("move diagnostic message = %q, want old and new paths", movedDiag.Message)
+	}
+}
+
+func TestPull_ReportsSanitizedPathMoveDiagnostics(t *testing.T) {
+	tmpDir := t.TempDir()
+	spaceDir := filepath.Join(tmpDir, "ENG")
+	if err := os.MkdirAll(filepath.Join(spaceDir, "Ops"), 0o750); err != nil {
+		t.Fatalf("mkdir ops dir: %v", err)
+	}
+
+	writeDoc := fs.MarkdownDocument{
+		Frontmatter: fs.Frontmatter{
+			Title:   "Child",
+			ID:      "2",
+			Version: 1,
+		},
+		Body: "local child\n",
+	}
+	if err := fs.WriteMarkdownDocument(filepath.Join(spaceDir, "Ops", "Child.md"), writeDoc); err != nil {
+		t.Fatalf("write old child doc: %v", err)
+	}
+
+	modifiedAt := time.Date(2026, time.March, 6, 13, 0, 0, 0, time.UTC)
+	emptyADF := map[string]any{"version": 1, "type": "doc", "content": []any{}}
+	fake := &fakePullRemote{
+		space: confluence.Space{ID: "space-1", Key: "ENG", Name: "Engineering"},
+		pages: []confluence.Page{
+			{ID: "2", SpaceID: "space-1", Title: "Child", ParentPageID: "folder-1", ParentType: "folder", Version: 2, LastModified: modifiedAt},
+		},
+		folderByID: map[string]confluence.Folder{
+			"folder-1": {ID: "folder-1", Title: "Ops!"},
+		},
+		pagesByID: map[string]confluence.Page{
+			"2": {ID: "2", SpaceID: "space-1", Title: "Child", ParentPageID: "folder-1", ParentType: "folder", Version: 2, LastModified: modifiedAt, BodyADF: rawJSON(t, emptyADF)},
+		},
+	}
+
+	result, err := Pull(context.Background(), fake, PullOptions{
+		SpaceKey: "ENG",
+		SpaceDir: spaceDir,
+		State: fs.SpaceState{
+			PagePathIndex: map[string]string{
+				"Ops/Child.md": "2",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Pull() error: %v", err)
+	}
+
+	if _, err := os.Stat(filepath.Join(spaceDir, "Ops!", "Child.md")); err != nil {
+		t.Fatalf("expected moved markdown at Ops!/Child.md: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(spaceDir, "Ops", "Child.md")); !os.IsNotExist(err) {
+		t.Fatalf("old markdown path should be deleted, stat error=%v", err)
+	}
+
+	movedDiag := findPullDiagnostic(result.Diagnostics, "PAGE_PATH_MOVED")
+	if movedDiag == nil {
+		t.Fatalf("expected PAGE_PATH_MOVED diagnostic, got %+v", result.Diagnostics)
+	}
+	if movedDiag.Path != "Ops/Child.md" {
+		t.Fatalf("moved diagnostic path = %q, want Ops/Child.md", movedDiag.Path)
+	}
+	if !strings.Contains(movedDiag.Message, "Ops/Child.md") || !strings.Contains(movedDiag.Message, "Ops!/Child.md") {
+		t.Fatalf("move diagnostic message = %q, want old and new paths", movedDiag.Message)
+	}
+}
+
+func findPullDiagnostic(diags []PullDiagnostic, code string) *PullDiagnostic {
+	for i := range diags {
+		if diags[i].Code == code {
+			return &diags[i]
+		}
+	}
+	return nil
+}
 
 func TestPull_IncrementalRewriteDeleteAndWatermark(t *testing.T) {
 	tmpDir := t.TempDir()
@@ -170,6 +313,12 @@ func TestPull_IncrementalRewriteDeleteAndWatermark(t *testing.T) {
 	for _, d := range result.Diagnostics {
 		if d.Code == "unresolved_reference" {
 			foundUnresolved = true
+			if d.Category != "degraded_reference" {
+				t.Fatalf("unresolved_reference category = %q, want degraded_reference", d.Category)
+			}
+			if !d.ActionRequired {
+				t.Fatalf("unresolved_reference should require user action: %+v", d)
+			}
 			break
 		}
 	}
@@ -200,6 +349,113 @@ func TestPull_IncrementalRewriteDeleteAndWatermark(t *testing.T) {
 	}
 	if _, exists := result.State.AttachmentIndex["assets/999/att-old-legacy.png"]; exists {
 		t.Fatalf("state attachment_index should not include legacy asset")
+	}
+}
+
+func TestPull_PreservesAbsoluteCrossSpaceLinksWithoutUnresolvedWarnings(t *testing.T) {
+	repo := t.TempDir()
+	engDir := filepath.Join(repo, "Engineering (ENG)")
+	tdDir := filepath.Join(repo, "Technical Docs (TD)")
+	if err := os.MkdirAll(engDir, 0o750); err != nil {
+		t.Fatalf("mkdir eng dir: %v", err)
+	}
+	if err := os.MkdirAll(tdDir, 0o750); err != nil {
+		t.Fatalf("mkdir td dir: %v", err)
+	}
+
+	targetPath := filepath.Join(tdDir, "target.md")
+	if err := fs.WriteMarkdownDocument(targetPath, fs.MarkdownDocument{
+		Frontmatter: fs.Frontmatter{Title: "Target", ID: "200", Version: 1},
+		Body:        "target\n",
+	}); err != nil {
+		t.Fatalf("write cross-space target: %v", err)
+	}
+
+	globalIndex, err := BuildGlobalPageIndex(repo)
+	if err != nil {
+		t.Fatalf("BuildGlobalPageIndex() error: %v", err)
+	}
+
+	fake := &fakePullRemote{
+		space: confluence.Space{ID: "space-1", Key: "ENG", Name: "Engineering"},
+		pages: []confluence.Page{{
+			ID:           "1",
+			SpaceID:      "space-1",
+			Title:        "Root",
+			Version:      2,
+			LastModified: time.Date(2026, time.March, 5, 12, 0, 0, 0, time.UTC),
+		}},
+		pagesByID: map[string]confluence.Page{
+			"1": {
+				ID:           "1",
+				SpaceID:      "space-1",
+				Title:        "Root",
+				Version:      2,
+				LastModified: time.Date(2026, time.March, 5, 12, 0, 0, 0, time.UTC),
+				BodyADF: rawJSON(t, map[string]any{
+					"version": 1,
+					"type":    "doc",
+					"content": []any{
+						map[string]any{
+							"type": "paragraph",
+							"content": []any{
+								map[string]any{
+									"type": "text",
+									"text": "Cross Space",
+									"marks": []any{
+										map[string]any{
+											"type": "link",
+											"attrs": map[string]any{
+												"href":   "https://example.atlassian.net/wiki/pages/viewpage.action?pageId=200",
+												"pageId": "200",
+												"anchor": "section-a",
+											},
+										},
+									},
+								},
+							},
+						},
+					},
+				}),
+			},
+		},
+		attachments: map[string][]byte{},
+	}
+
+	result, err := Pull(context.Background(), fake, PullOptions{
+		SpaceKey:        "ENG",
+		SpaceDir:        engDir,
+		GlobalPageIndex: globalIndex,
+	})
+	if err != nil {
+		t.Fatalf("Pull() error: %v", err)
+	}
+
+	rootDoc, err := fs.ReadMarkdownDocument(filepath.Join(engDir, "Root.md"))
+	if err != nil {
+		t.Fatalf("read Root.md: %v", err)
+	}
+	if !strings.Contains(rootDoc.Body, "[Cross Space](https://example.atlassian.net/wiki/pages/viewpage.action?pageId=200#section-a)") {
+		t.Fatalf("expected preserved absolute cross-space link, got:\n%s", rootDoc.Body)
+	}
+
+	foundPreserved := false
+	for _, d := range result.Diagnostics {
+		if d.Code == "unresolved_reference" {
+			t.Fatalf("did not expect unresolved_reference diagnostic, got %+v", result.Diagnostics)
+		}
+		if d.Code == "CROSS_SPACE_LINK_PRESERVED" {
+			foundPreserved = true
+			if d.Category != "preserved_external_link" {
+				t.Fatalf("CROSS_SPACE_LINK_PRESERVED category = %q, want preserved_external_link", d.Category)
+			}
+			if d.ActionRequired {
+				t.Fatalf("CROSS_SPACE_LINK_PRESERVED should not require user action: %+v", d)
+			}
+		}
+	}
+	if !foundPreserved {
+		t.Fatalf("expected CROSS_SPACE_LINK_PRESERVED diagnostic, got %+v", result.Diagnostics)
 	}
 }
 
@@ -265,6 +521,128 @@ func TestPull_FolderListFailureFallsBackToPageHierarchy(t *testing.T) {
 	}
 	if !foundFolderWarning {
 		t.Fatalf("expected FOLDER_LOOKUP_UNAVAILABLE diagnostic, got %+v", result.Diagnostics)
+	}
+}
+
+func TestResolveFolderHierarchyFromPages_DeduplicatesFallbackDiagnostics(t *testing.T) {
+	var logs bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelWarn})))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+
+	pages := []confluence.Page{
+		{ID: "1", Title: "Root", ParentPageID: "folder-1", ParentType: "folder"},
+		{ID: "2", Title: "Child", ParentPageID: "folder-2", ParentType: "folder"},
+	}
+	errBoom := &confluence.APIError{
+		StatusCode: 500,
+		Method:     "GET",
+		URL:        "/wiki/api/v2/folders",
+		Message:    "Internal Server Error",
+	}
+	remote := &fakePullRemote{
+		folderErr: errBoom,
+	}
+
+	_, diagnostics, err := resolveFolderHierarchyFromPages(context.Background(), remote, pages)
+	if err != nil {
+		t.Fatalf("resolveFolderHierarchyFromPages() error: %v", err)
+	}
+
+	fallbackDiagnostics := 0
+	for _, diag := range diagnostics {
+		if diag.Code != "FOLDER_LOOKUP_UNAVAILABLE" {
+			continue
+		}
+		fallbackDiagnostics++
+		if strings.Contains(diag.Message, "Internal Server Error") {
+			t.Fatalf("expected concise diagnostic without raw API error, got %q", diag.Message)
+		}
+		if strings.Contains(diag.Message, "/wiki/api/v2/folders") {
+			t.Fatalf("expected concise diagnostic without raw API URL, got %q", diag.Message)
+		}
+		if !strings.Contains(diag.Message, "falling back to page-only hierarchy for affected pages") {
+			t.Fatalf("expected concise fallback explanation, got %q", diag.Message)
+		}
+	}
+	if fallbackDiagnostics != 1 {
+		t.Fatalf("expected one deduplicated fallback diagnostic, got %+v", diagnostics)
+	}
+
+	gotLogs := logs.String()
+	if strings.Count(gotLogs, "folder_lookup_unavailable_falling_back_to_pages") != 1 {
+		t.Fatalf("expected one warning log with raw error details, got:\n%s", gotLogs)
+	}
+	if !strings.Contains(gotLogs, "Internal Server Error") {
+		t.Fatalf("expected raw error details in logs, got:\n%s", gotLogs)
+	}
+	if !strings.Contains(gotLogs, "/wiki/api/v2/folders") {
+		t.Fatalf("expected raw API URL in logs, got:\n%s", gotLogs)
+	}
+}
+
+type folderLookupErrorByIDRemote struct {
+	*fakePullRemote
+	errorsByFolderID map[string]error
+}
+
+func (r *folderLookupErrorByIDRemote) GetFolder(ctx context.Context, folderID string) (confluence.Folder, error) {
+	r.getFolderCalls = append(r.getFolderCalls, folderID)
+	if err, ok := r.errorsByFolderID[folderID]; ok {
+		return confluence.Folder{}, err
+	}
+	return r.fakePullRemote.GetFolder(ctx, folderID)
+}
+
+func TestResolveFolderHierarchyFromPages_DeduplicatesFallbackDiagnosticsAcrossFolderURLs(t *testing.T) {
+	var logs bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelInfo})))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+
+	pages := []confluence.Page{
+		{ID: "1", Title: "Root", ParentPageID: "folder-1", ParentType: "folder"},
+		{ID: "2", Title: "Child", ParentPageID: "folder-2", ParentType: "folder"},
+	}
+	remote := &folderLookupErrorByIDRemote{
+		fakePullRemote: &fakePullRemote{},
+		errorsByFolderID: map[string]error{
+			"folder-1": &confluence.APIError{
+				StatusCode: 500,
+				Method:     "GET",
+				URL:        "/wiki/api/v2/folders/folder-1",
+				Message:    "Internal Server Error",
+			},
+			"folder-2": &confluence.APIError{
+				StatusCode: 500,
+				Method:     "GET",
+				URL:        "/wiki/api/v2/folders/folder-2",
+				Message:    "Internal Server Error",
+			},
+		},
+	}
+
+	_, diagnostics, err := resolveFolderHierarchyFromPages(context.Background(), remote, pages)
+	if err != nil {
+		t.Fatalf("resolveFolderHierarchyFromPages() error: %v", err)
+	}
+
+	fallbackDiagnostics := 0
+	for _, diag := range diagnostics {
+		if diag.Code == "FOLDER_LOOKUP_UNAVAILABLE" {
+			fallbackDiagnostics++
+		}
+	}
+	if fallbackDiagnostics != 1 {
+		t.Fatalf("expected one deduplicated fallback diagnostic across folder URLs, got %+v", diagnostics)
+	}
+
+	gotLogs := logs.String()
+	if count := strings.Count(gotLogs, "folder_lookup_unavailable_falling_back_to_pages"); count != 1 {
+		t.Fatalf("expected one warning log across folder URLs, got %d:\n%s", count, gotLogs)
+	}
+	if count := strings.Count(gotLogs, "folder_lookup_unavailable_repeats_suppressed"); count != 1 {
+		t.Fatalf("expected one suppression log across folder URLs, got %d:\n%s", count, gotLogs)
 	}
 }
 
@@ -574,5 +952,76 @@ func TestPull_TrashedRecoveryDeletesLocalPage(t *testing.T) {
 	}
 	if !foundDeleted {
 		t.Fatalf("expected trashed.md in deleted markdown list, got %v", result.DeletedMarkdown)
+	}
+}
+
+func TestPull_RemovesLocalAttachmentWhenRemoteNoLongerReferencesIt(t *testing.T) {
+	tmpDir := t.TempDir()
+	spaceDir := filepath.Join(tmpDir, "ENG")
+	if err := os.MkdirAll(spaceDir, 0o750); err != nil {
+		t.Fatalf("mkdir space: %v", err)
+	}
+
+	staleAssetPath := filepath.Join(spaceDir, "assets", "1", "att-legacy-binary.bin")
+	if err := os.MkdirAll(filepath.Dir(staleAssetPath), 0o750); err != nil {
+		t.Fatalf("mkdir assets dir: %v", err)
+	}
+	if err := os.WriteFile(staleAssetPath, []byte("legacy"), 0o600); err != nil {
+		t.Fatalf("write stale attachment: %v", err)
+	}
+
+	state := fs.SpaceState{
+		SpaceKey: "ENG",
+		PagePathIndex: map[string]string{
+			"root.md": "1",
+		},
+		AttachmentIndex: map[string]string{
+			filepath.ToSlash("assets/1/att-legacy-binary.bin"): "att-legacy",
+		},
+	}
+
+	remote := &fakePullRemote{
+		space: confluence.Space{ID: "space-1", Key: "ENG"},
+		pages: []confluence.Page{
+			{
+				ID:           "1",
+				SpaceID:      "space-1",
+				Title:        "Root",
+				Version:      2,
+				LastModified: time.Date(2026, time.February, 2, 11, 0, 0, 0, time.UTC),
+			},
+		},
+		pagesByID: map[string]confluence.Page{
+			"1": {
+				ID:           "1",
+				SpaceID:      "space-1",
+				Title:        "Root",
+				Version:      2,
+				LastModified: time.Date(2026, time.February, 2, 11, 0, 0, 0, time.UTC),
+				BodyADF:      []byte(`{"version":1,"type":"doc","content":[]}`),
+			},
+		},
+		attachments: map[string][]byte{},
+	}
+
+	result, err := Pull(context.Background(), remote, PullOptions{
+		SpaceKey: "ENG",
+		SpaceDir: spaceDir,
+		State:    state,
+	})
+	if err != nil {
+		t.Fatalf("Pull() unexpected error: %v", err)
+	}
+
+	if _, err := os.Stat(staleAssetPath); !os.IsNotExist(err) {
+		t.Fatalf("expected stale attachment to be deleted from local workspace, stat=%v", err)
+	}
+
+	if _, exists := result.State.AttachmentIndex[filepath.ToSlash("assets/1/att-legacy-binary.bin")]; exists {
+		t.Fatalf("expected stale attachment index to be removed")
+	}
+
+	if len(result.DeletedAssets) != 1 || result.DeletedAssets[0] != filepath.ToSlash("assets/1/att-legacy-binary.bin") {
+		t.Fatalf("expected deleted assets to include stale attachment, got %+v", result.DeletedAssets)
 	}
 }

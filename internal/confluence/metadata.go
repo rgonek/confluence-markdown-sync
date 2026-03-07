@@ -10,17 +10,20 @@ import (
 )
 
 // GetContentStatus fetches the visual UI content status (lozenge) for a page via v1 API.
-func (c *Client) GetContentStatus(ctx context.Context, pageID string) (string, error) {
+func (c *Client) GetContentStatus(ctx context.Context, pageID string, pageStatus string) (string, error) {
 	id := strings.TrimSpace(pageID)
 	if id == "" {
 		return "", errors.New("page ID is required")
 	}
 
+	query := url.Values{}
+	query.Set("status", normalizeContentStatePageStatus(pageStatus))
+
 	req, err := c.newRequest(
 		ctx,
 		http.MethodGet,
 		"/wiki/rest/api/content/"+url.PathEscape(id)+"/state",
-		nil,
+		query,
 		nil,
 	)
 	if err != nil {
@@ -28,7 +31,10 @@ func (c *Client) GetContentStatus(ctx context.Context, pageID string) (string, e
 	}
 
 	var result struct {
-		Name string `json:"name"`
+		Name         string `json:"name"`
+		ContentState struct {
+			Name string `json:"name"`
+		} `json:"contentState"`
 	}
 	if err := c.do(req, &result); err != nil {
 		// If 404, it might just mean no state is set
@@ -38,15 +44,25 @@ func (c *Client) GetContentStatus(ctx context.Context, pageID string) (string, e
 		return "", fmt.Errorf("execute content status request: %w", err)
 	}
 
-	return result.Name, nil
+	if name := strings.TrimSpace(result.ContentState.Name); name != "" {
+		return name, nil
+	}
+	return strings.TrimSpace(result.Name), nil
 }
 
 // SetContentStatus sets the visual UI content status (lozenge) for a page via v1 API.
-func (c *Client) SetContentStatus(ctx context.Context, pageID string, statusName string) error {
+func (c *Client) SetContentStatus(ctx context.Context, pageID string, pageStatus string, statusName string) error {
 	id := strings.TrimSpace(pageID)
 	if id == "" {
 		return errors.New("page ID is required")
 	}
+	statusName = strings.TrimSpace(statusName)
+	if statusName == "" {
+		return errors.New("status name is required")
+	}
+
+	query := url.Values{}
+	query.Set("status", normalizeContentStatePageStatus(pageStatus))
 
 	payload := struct {
 		Name string `json:"name"`
@@ -58,7 +74,7 @@ func (c *Client) SetContentStatus(ctx context.Context, pageID string, statusName
 		ctx,
 		http.MethodPut,
 		"/wiki/rest/api/content/"+url.PathEscape(id)+"/state",
-		nil,
+		query,
 		payload,
 	)
 	if err != nil {
@@ -74,17 +90,20 @@ func (c *Client) SetContentStatus(ctx context.Context, pageID string, statusName
 }
 
 // DeleteContentStatus removes the visual UI content status (lozenge) from a page via v1 API.
-func (c *Client) DeleteContentStatus(ctx context.Context, pageID string) error {
+func (c *Client) DeleteContentStatus(ctx context.Context, pageID string, pageStatus string) error {
 	id := strings.TrimSpace(pageID)
 	if id == "" {
 		return errors.New("page ID is required")
 	}
 
+	query := url.Values{}
+	query.Set("status", normalizeContentStatePageStatus(pageStatus))
+
 	req, err := c.newRequest(
 		ctx,
 		http.MethodDelete,
 		"/wiki/rest/api/content/"+url.PathEscape(id)+"/state",
-		nil,
+		query,
 		nil,
 	)
 	if err != nil {
@@ -100,6 +119,17 @@ func (c *Client) DeleteContentStatus(ctx context.Context, pageID string) error {
 	}
 
 	return nil
+}
+
+func normalizeContentStatePageStatus(pageStatus string) string {
+	switch strings.ToLower(strings.TrimSpace(pageStatus)) {
+	case "draft":
+		return "draft"
+	case "archived":
+		return "archived"
+	default:
+		return "current"
+	}
 }
 
 // GetLabels fetches all labels for a given page via v1 API.

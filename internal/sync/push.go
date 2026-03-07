@@ -36,6 +36,9 @@ func Push(ctx context.Context, remote PushRemote, opts PushOptions) (PushResult,
 
 	state := normalizePushState(opts.State)
 	policy := normalizeConflictPolicy(opts.ConflictPolicy)
+	opts.folderListTracker = newFolderListFallbackTracker()
+	capabilities := newTenantCapabilityCache()
+	diagnostics := make([]PushDiagnostic, 0)
 
 	space, err := remote.GetSpace(ctx, opts.SpaceKey)
 	if err != nil {
@@ -53,11 +56,13 @@ func Push(ctx context.Context, remote PushRemote, opts PushOptions) (PushResult,
 	}
 
 	// Try to list folders, but don't fail the whole push if it's broken (Confluence bug)
-	remoteFolders, err := listAllPushFolders(ctx, remote, confluence.FolderListOptions{
+	remoteFolders, folderListErr := listAllPushFoldersWithTracking(ctx, remote, confluence.FolderListOptions{
 		SpaceID: space.ID,
-	})
-	if err != nil {
-		slog.Warn("list_folders_failed_falling_back_to_pages", "error", err.Error())
+	}, opts.folderListTracker, "space-scan")
+	folderMode, folderModeDiags := capabilities.detectPushFolderMode(opts.Changes, folderListErr)
+	diagnostics = append(diagnostics, folderModeDiags...)
+	opts.folderMode = folderMode
+	if folderListErr != nil {
 		remoteFolders = nil
 	}
 
@@ -89,9 +94,16 @@ func Push(ctx context.Context, remote PushRemote, opts PushOptions) (PushResult,
 
 	attachmentIDByPath := cloneStringMap(state.AttachmentIndex)
 	folderIDByPath := cloneStringMap(state.FolderPathIndex)
+	if opts.folderMode == tenantFolderModePageFallback {
+		folderIDByPath = map[string]string{}
+	}
 	changes := normalizePushChanges(opts.Changes)
 	commits := make([]PushCommitPlan, 0, len(changes))
-	diagnostics := make([]PushDiagnostic, 0)
+	opts.contentStatusMode, err = capabilities.detectPushContentStatusMode(ctx, remote, opts.SpaceDir, pages, changes)
+	if err != nil {
+		return PushResult{State: state, Diagnostics: diagnostics}, err
+	}
+	diagnostics = append(diagnostics, capabilities.pushContentStatusDiagnostics()...)
 	if err := seedPendingPageIDsForPushChanges(opts.SpaceDir, changes, pageIDByPath); err != nil {
 		return PushResult{}, fmt.Errorf("seed pending page ids: %w", err)
 	}
@@ -148,6 +160,7 @@ func Push(ctx context.Context, remote PushRemote, opts PushOptions) (PushResult,
 				remote,
 				space,
 				opts,
+				capabilities,
 				state,
 				policy,
 				pageIDByPath,
@@ -210,7 +223,8 @@ func pushDeletePage(
 
 	page := remotePageByID[pageID]
 	if opts.HardDelete {
-		if err := remote.DeletePage(ctx, pageID, true); err != nil && !errors.Is(err, confluence.ErrNotFound) {
+		deleteOpts := deleteOptionsForPageLifecycle(page.Status, true)
+		if err := remote.DeletePage(ctx, pageID, deleteOpts); err != nil && !errors.Is(err, confluence.ErrNotFound) {
 			return PushCommitPlan{}, fmt.Errorf("hard-delete page %s: %w", pageID, err)
 		}
 	} else {
@@ -303,6 +317,7 @@ func pushUpsertPage(
 	remote PushRemote,
 	space confluence.Space,
 	opts PushOptions,
+	capabilities *tenantCapabilityCache,
 	state fs.SpaceState,
 	policy PushConflictPolicy,
 	pageIDByPath PageIndex,
@@ -321,9 +336,11 @@ func pushUpsertPage(
 	}
 
 	pageID := strings.TrimSpace(doc.Frontmatter.ID)
+	isExistingPage := pageID != ""
 	normalizedRelPath := normalizeRelPath(relPath)
 	precreatedPage, hasPrecreated := precreatedPages[normalizedRelPath]
 	targetState := normalizePageLifecycleState(doc.Frontmatter.State)
+	trackContentStatus := shouldSyncContentStatus(isExistingPage, doc)
 	dirPath := normalizeRelPath(filepath.ToSlash(filepath.Dir(filepath.FromSlash(relPath))))
 	title := resolveLocalTitle(doc, relPath)
 	pageTitleByPath[normalizedRelPath] = title
@@ -359,9 +376,9 @@ func pushUpsertPage(
 	localVersion := doc.Frontmatter.Version
 	fallbackParentID := strings.TrimSpace(doc.Frontmatter.ConfluenceParentPageID)
 	var remotePage confluence.Page
-	isExistingPage := pageID != ""
 
-	rollback := newPushRollbackTracker(relPath, diagnostics)
+	contentStatusMode := capabilities.currentPushContentStatusMode()
+	rollback := newPushRollbackTracker(relPath, contentStatusMode, diagnostics)
 	failWithRollback := func(opErr error) (PushCommitPlan, error) {
 		slog.Warn("push_mutation_failed",
 			"path", relPath,
@@ -515,7 +532,7 @@ func pushUpsertPage(
 				return failWithRollback(fmt.Errorf("pre-created placeholder page for %s returned empty page ID", relPath))
 			}
 
-			rollback.trackCreatedPage(pageID)
+			rollback.trackCreatedPage(pageID, targetState)
 			localVersion = precreatedPage.Version
 			remotePage = precreatedPage
 			remotePageByID[pageID] = precreatedPage
@@ -548,7 +565,7 @@ func pushUpsertPage(
 				return failWithRollback(fmt.Errorf("create placeholder page for %s returned empty page ID", relPath))
 			}
 
-			rollback.trackCreatedPage(pageID)
+			rollback.trackCreatedPage(pageID, targetState)
 			localVersion = created.Version
 			remotePage = created
 			remotePageByID[pageID] = created
@@ -591,6 +608,12 @@ func pushUpsertPage(
 		attachmentIDByPath[assetRelPath] = uploadedID
 		state.AttachmentIndex[assetRelPath] = uploadedID
 		rollback.trackUploadedAttachment(pageID, uploadedID, assetRelPath)
+		appendPushDiagnostic(
+			diagnostics,
+			assetRelPath,
+			"ATTACHMENT_CREATED",
+			fmt.Sprintf("uploaded attachment %s from %s", uploadedID, assetRelPath),
+		)
 		referencedIDs[uploadedID] = struct{}{}
 		touchedAssets = append(touchedAssets, assetRelPath)
 	}
@@ -746,14 +769,14 @@ func pushUpsertPage(
 	rollback.markContentRestoreRequired()
 
 	if isExistingPage {
-		snapshot, snapshotErr := capturePageMetadataSnapshot(ctx, remote, pageID)
+		snapshot, snapshotErr := capturePageMetadataSnapshot(ctx, remote, pageID, remotePage.Status, contentStatusMode, trackContentStatus)
 		if snapshotErr != nil {
 			return failWithRollback(fmt.Errorf("capture metadata snapshot for %s: %w", relPath, snapshotErr))
 		}
 		rollback.trackMetadataSnapshot(pageID, snapshot)
 	}
 
-	if err := syncPageMetadata(ctx, remote, pageID, doc); err != nil {
+	if err := syncPageMetadata(ctx, remote, pageID, doc, isExistingPage, capabilities, diagnostics); err != nil {
 		return failWithRollback(fmt.Errorf("sync metadata for %s: %w", relPath, err))
 	}
 	rollback.clearMetadataSnapshot()

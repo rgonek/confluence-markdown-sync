@@ -27,11 +27,11 @@ func TestDryRunRemote(t *testing.T) {
 		t.Error("GetPage failed")
 	}
 
-	if err := remote.SetContentStatus(ctx, "123", "current"); err != nil {
+	if err := remote.SetContentStatus(ctx, "123", "current", "Ready"); err != nil {
 		t.Error("SetContentStatus failed")
 	}
 
-	if err := remote.DeleteContentStatus(ctx, "123"); err != nil {
+	if err := remote.DeleteContentStatus(ctx, "123", "current"); err != nil {
 		t.Error("DeleteContentStatus failed")
 	}
 
@@ -51,7 +51,7 @@ func TestDryRunRemote(t *testing.T) {
 		t.Error("WaitForArchiveTask failed")
 	}
 
-	if err := remote.DeletePage(ctx, "123", true); err != nil {
+	if err := remote.DeletePage(ctx, "123", confluence.PageDeleteOptions{Purge: true}); err != nil {
 		t.Error("DeletePage failed")
 	}
 

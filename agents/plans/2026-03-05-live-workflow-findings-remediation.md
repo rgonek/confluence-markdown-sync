@@ -177,21 +177,20 @@ The following items are not blockers for limited beta usage, but should be resol
 
 ### Plan
 
-- Decide explicitly whether Mermaid is:
-  - supported as a first-class rendered Confluence extension, or
-  - preserved only as fenced code
-- If Mermaid support is intended:
-  - implement forward and reverse extension handlers similar to `plantumlcloud`
-  - ensure push emits the correct Confluence extension/macro payload
-  - ensure pull round-trips back to authored Markdown form
-- If Mermaid support is not intended:
-  - document it clearly in `README.md`, `AGENTS.md`, and usage docs
-  - add validation or diagnostics so users understand the downgrade before push
+- Adopt the portable support contract:
+  - PlantUML remains first-class via the existing `plantumlcloud` extension handler.
+  - Mermaid is preserved only as fenced code and is not treated as a rendered Confluence diagram macro.
+- Document Mermaid behavior clearly in `README.md`, `AGENTS.md`, and usage docs so authored expectations match live Confluence behavior.
+- Add validation warnings that fire before push when Mermaid fenced code blocks are present, making the downgrade explicit while preserving successful syncs.
+- Keep reverse conversion behavior unchanged for Mermaid content:
+  - push emits Confluence ADF `codeBlock` nodes with language `mermaid`
+  - pull round-trips those nodes back to authored Mermaid fenced code
 
 ### Validation
 
-- Add round-trip tests for Mermaid matching the chosen support model.
-- Add one live integration test that checks actual rendered ADF node type for Mermaid content.
+- Add round-trip tests proving Mermaid fenced code stays Mermaid fenced code after reverse + forward conversion.
+- Add command tests proving `validate` warns, but does not fail, when Mermaid code fences are present.
+- Add one sandbox E2E test that checks pushed Mermaid content is stored remotely as a `codeBlock` node with language `mermaid`.
 
 ## Workstream F: Cleanup and Recovery Artifact Lifecycle
 

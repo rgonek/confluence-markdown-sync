@@ -106,8 +106,8 @@ func CollectReferencedAssetPaths(spaceDir, sourcePath, body string) ([]string, e
 	return sortedStringKeys(paths), nil
 }
 
-// PrepareMarkdownForAttachmentConversion rewrites local file links ([]()) into
-// inline media spans so strict reverse conversion can preserve attachment
+// PrepareMarkdownForAttachmentConversion rewrites local file links and image references
+// into inline media spans so strict reverse conversion can preserve attachment
 // references without dropping inline context.
 func PrepareMarkdownForAttachmentConversion(spaceDir, sourcePath, body string, attachmentIndex map[string]string) (string, error) {
 	references, err := collectLocalAssetReferences(spaceDir, sourcePath, body)
@@ -117,7 +117,7 @@ func PrepareMarkdownForAttachmentConversion(spaceDir, sourcePath, body string, a
 
 	rewrites := make([]markdownDestinationRewrite, 0)
 	for _, reference := range references {
-		if reference.Occurrence.kind != markdownReferenceKindLink {
+		if reference.Occurrence.kind != markdownReferenceKindLink && reference.Occurrence.kind != markdownReferenceKindImage {
 			continue
 		}
 
@@ -128,10 +128,11 @@ func PrepareMarkdownForAttachmentConversion(spaceDir, sourcePath, body string, a
 
 		displayName := attachmentDisplayNameForPath(reference.RelPath, attachmentID)
 		mediaType := mediaTypeForDestination(reference.RelPath)
-		rewrites = append(rewrites, markdownDestinationRewrite{
+		rewrite := markdownDestinationRewrite{
 			Occurrence:       reference.Occurrence,
 			ReplacementToken: formatPandocInlineMediaToken(displayName, attachmentID, mediaType),
-		})
+		}
+		rewrites = append(rewrites, rewrite)
 	}
 
 	if len(rewrites) == 0 {
@@ -373,7 +374,15 @@ func applyMarkdownDestinationRewrites(body string, rewrites []markdownDestinatio
 			continue
 		}
 
-		builder.Write(content[last:tokenStart])
+		replacementStart := tokenStart
+		if strings.TrimSpace(rewrite.ReplacementToken) != "" &&
+			rewrite.Occurrence.kind == markdownReferenceKindImage &&
+			tokenStart > 0 &&
+			content[tokenStart-1] == '!' {
+			replacementStart = tokenStart - 1
+		}
+
+		builder.Write(content[last:replacementStart])
 		if strings.TrimSpace(rewrite.ReplacementToken) != "" {
 			builder.WriteString(rewrite.ReplacementToken)
 			last = tokenEnd

@@ -10,6 +10,17 @@ Capture the non-blocking but high-value workflow, diagnostics, and operator-expe
 - The remediation plan covers production blockers.
 - This plan covers workflow smoothness, clarity, and maintainability improvements that should follow once the blocking correctness issues are under control.
 
+## Implementation Progress
+
+- [x] Batch 1 completed: items 1, 2, 5, and 7 are closed with regression coverage on this branch.
+- [x] Batch 2 completed: items 3, 6, 12, and 13 are closed with regression coverage on this branch.
+- [x] Batch 3 completed: items 10, 11, and 18 are closed, and follow-up hardening landed for items 6, 12, and 13.
+- [x] Batch 4 completed: items 4 and 9 are closed with warning-taxonomy regression coverage and explicit extension-support documentation updates.
+- [x] Item 8 was re-verified as already complete on this branch.
+- [x] Batch 5 completed: item 14 is closed with structured report regression coverage for success and failure paths.
+- [x] Batch 6 completed: item 15 is closed with explicit path-move visibility in pull/diff/status plus rename-policy documentation and regression coverage.
+- [ ] Remaining items: 16 and 17.
+
 ## Improvements
 
 ### 1. Non-Interactive `init` Should Respect Existing Environment Auth

@@ -140,13 +140,13 @@ func TestRunPush_PullMergeRestoresStashedWorkspaceBeforePull(t *testing.T) {
 
 	restoredBeforePull := false
 	oldRunPullForPush := runPullForPush
-	runPullForPush = func(_ *cobra.Command, _ config.Target) error {
+	runPullForPush = func(_ *cobra.Command, _ config.Target) (commandRunReport, error) {
 		doc, err := fs.ReadMarkdownDocument(rootPath)
 		if err != nil {
-			return err
+			return commandRunReport{}, err
 		}
 		restoredBeforePull = strings.Contains(doc.Body, "local uncommitted content")
-		return errors.New("stop pull")
+		return commandRunReport{}, errors.New("stop pull")
 	}
 	t.Cleanup(func() {
 		runPullForPush = oldRunPullForPush

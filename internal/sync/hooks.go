@@ -14,11 +14,30 @@ import (
 	mdconv "github.com/rgonek/jira-adf-converter/mdconverter"
 )
 
+type ForwardLinkNotice struct {
+	Code    string
+	Message string
+}
+
 // NewForwardLinkHook creates a link hook for ADF -> Markdown conversion.
 // It resolves Confluence page IDs to relative Markdown paths.
 // sourcePath is the absolute path of the file being generated.
 // pagePathByID maps page IDs to absolute or relative-to-root paths of target files.
 func NewForwardLinkHook(sourcePath string, pagePathByID map[string]string, currentSpaceKey string) adfconv.LinkRenderHook {
+	return NewForwardLinkHookWithGlobalIndex(sourcePath, "", pagePathByID, nil, currentSpaceKey, nil)
+}
+
+// NewForwardLinkHookWithGlobalIndex resolves same-space links to relative markdown
+// and intentionally preserves known absolute cross-space links without emitting
+// unresolved-reference warnings.
+func NewForwardLinkHookWithGlobalIndex(
+	sourcePath string,
+	currentSpaceDir string,
+	pagePathByID map[string]string,
+	globalIndex GlobalPageIndex,
+	currentSpaceKey string,
+	onNotice func(ForwardLinkNotice),
+) adfconv.LinkRenderHook {
 	return func(ctx context.Context, in adfconv.LinkRenderInput) (adfconv.LinkRenderOutput, error) {
 		pageID := in.Meta.PageID
 		if pageID == "" {
@@ -52,6 +71,23 @@ func NewForwardLinkHook(sourcePath string, pagePathByID map[string]string, curre
 				}
 			}
 
+			if shouldPreserveAbsoluteCrossSpaceLink(pageID, in, currentSpaceDir, currentSpaceKey, globalIndex) {
+				href := preservedCrossSpaceHref(in)
+				if href != "" {
+					if onNotice != nil {
+						onNotice(ForwardLinkNotice{
+							Code:    "CROSS_SPACE_LINK_PRESERVED",
+							Message: fmt.Sprintf("preserved absolute cross-space link to page %s: %s", pageID, href),
+						})
+					}
+					return adfconv.LinkRenderOutput{
+						Href:    href,
+						Title:   in.Title,
+						Handled: true,
+					}, nil
+				}
+			}
+
 			if in.Meta.SpaceKey == "" || strings.EqualFold(in.Meta.SpaceKey, currentSpaceKey) {
 				return adfconv.LinkRenderOutput{}, adfconv.ErrUnresolved
 			}
@@ -59,6 +95,59 @@ func NewForwardLinkHook(sourcePath string, pagePathByID map[string]string, curre
 		// If not resolved, return unhandled (library default behavior)
 		return adfconv.LinkRenderOutput{Handled: false}, nil
 	}
+}
+
+func shouldPreserveAbsoluteCrossSpaceLink(
+	pageID string,
+	in adfconv.LinkRenderInput,
+	currentSpaceDir string,
+	currentSpaceKey string,
+	globalIndex GlobalPageIndex,
+) bool {
+	if strings.TrimSpace(pageID) == "" {
+		return false
+	}
+
+	if targetSpaceKey := strings.TrimSpace(in.Meta.SpaceKey); targetSpaceKey != "" && !strings.EqualFold(targetSpaceKey, currentSpaceKey) {
+		return true
+	}
+
+	candidatePath := strings.TrimSpace(globalIndex[pageID])
+	if candidatePath == "" {
+		return false
+	}
+	if _, err := os.Stat(candidatePath); err != nil {
+		return false
+	}
+	if strings.TrimSpace(currentSpaceDir) == "" {
+		return true
+	}
+	return !isSubpathOrSame(currentSpaceDir, candidatePath)
+}
+
+func preservedCrossSpaceHref(in adfconv.LinkRenderInput) string {
+	href := strings.TrimSpace(in.Href)
+	if href == "" {
+		return ""
+	}
+
+	anchor := strings.TrimSpace(in.Meta.Anchor)
+	if anchor == "" {
+		return href
+	}
+
+	parsed, err := url.Parse(href)
+	if err == nil {
+		if strings.TrimSpace(parsed.Fragment) == "" {
+			parsed.Fragment = anchor
+		}
+		return parsed.String()
+	}
+
+	if !strings.Contains(href, "#") {
+		href += "#" + anchor
+	}
+	return href
 }
 
 // ExtractPageID parses a Confluence URL to extract the page ID.
@@ -371,12 +460,9 @@ func NewReverseLinkHookWithGlobalIndex(spaceDir string, index PageIndex, globalI
 		// Look up in local space index first.
 		pageID, ok := index[targetPath]
 		if !ok {
-			pageID, ok = globalPathIndex[normalizeAbsolutePathKey(destPath)]
+			pageID, ok = resolveGlobalPageID(destPath, globalPathIndex, globalIndex)
 			if !ok {
-				pageID, ok = resolveGlobalPageIDBySameFile(destPath, globalIndex)
-				if !ok {
-					return mdconv.LinkParseOutput{}, mdconv.ErrUnresolved
-				}
+				return mdconv.LinkParseOutput{}, mdconv.ErrUnresolved
 			}
 		}
 
@@ -400,6 +486,21 @@ func decodeMarkdownPath(path string) string {
 		return path
 	}
 	return decoded
+}
+
+func resolveGlobalPageID(destPath string, globalPathIndex map[string]string, globalIndex GlobalPageIndex) (string, bool) {
+	destPath = strings.TrimSpace(destPath)
+	if destPath == "" {
+		return "", false
+	}
+
+	if _, err := os.Stat(destPath); err == nil {
+		if pageID, ok := globalPathIndex[normalizeAbsolutePathKey(destPath)]; ok {
+			return pageID, true
+		}
+	}
+
+	return resolveGlobalPageIDBySameFile(destPath, globalIndex)
 }
 
 func resolveGlobalPageIDBySameFile(destPath string, globalIndex GlobalPageIndex) (string, bool) {

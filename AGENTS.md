@@ -43,6 +43,15 @@ The agent manages the full sync cycle.
 - `validate`/`push` run with strict resolution (`ErrUnresolved` => conversion failure).
 - `validate` must use the same strict reverse-conversion profile and hook adapters as `push`.
 - Hooks return mapping decisions only; sync orchestration owns downloads/uploads and file writes/deletes.
+- Diagram contract:
+  - PlantUML is supported as a first-class `plantumlcloud` Confluence extension.
+  - Mermaid is preserved as fenced code / ADF `codeBlock` content, not a rendered Confluence diagram macro.
+  - `validate` should warn before push when Mermaid fences are present so the downgrade is explicit.
+- Extension/macro support contract:
+  - PlantUML: rendered round-trip support via the custom `plantumlcloud` handler.
+  - Mermaid: preserved-but-not-rendered only; keep it as fenced code and expect an ADF `codeBlock` on push.
+  - Raw `adf:extension` payloads: best-effort, low-level preservation fallback for extension nodes without a repo-specific handler; not a verified end-to-end round-trip guarantee.
+  - Unknown Confluence macros/extensions: not a first-class supported authoring target; they may only survive through best-effort raw ADF preservation, and Confluence can still reject them on push. Validate any such workflow in a sandbox before relying on it.
 
 ## Git Workflow Requirements
 - `push` uses an ephemeral sync branch: `sync/<SpaceKey>/<UTC timestamp>`.
@@ -72,7 +81,8 @@ The agent manages the full sync cycle.
 Validation failures must stop `push` immediately.
 
 ## Command Model
-- Commands: `init`, `pull`, `push`, `validate`, `diff`, `search`.
+- Commands: `init`, `pull`, `push`, `status`, `clean`, `prune`, `validate`, `diff`, `relink`, `version`, `doctor`, `search`.
+- `status` reports Markdown page drift only; attachment-only changes should be checked with `git status` or `conf diff`.
 - `[TARGET]` parsing rule:
   - Ends with `.md` => file mode.
   - Otherwise => space mode (`SPACE_KEY`).
@@ -87,6 +97,10 @@ Validation failures must stop `push` immediately.
   - `--label LABEL` — filter by label (repeatable).
   - `--heading TEXT` — restrict to sections under matching headings.
   - `--reindex` — force full rebuild.
+  - `--result-detail full|standard|minimal` — control payload size/detail.
+  - `--created-by USER` / `--updated-by USER` — filter by creator or last updater.
+  - `--created-after DATE` / `--created-before DATE` — bound created timestamps.
+  - `--updated-after DATE` / `--updated-before DATE` — bound updated timestamps.
   - `--list-labels` / `--list-spaces` — facet discovery.
   - `--format text|json|auto` — output format (auto: TTY→text, pipe→json).
   - `--limit N` (default 20) — max results.

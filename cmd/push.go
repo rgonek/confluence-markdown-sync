@@ -27,7 +27,9 @@ var newPushRemote = func(cfg *config.Config) (syncflow.PushRemote, error) {
 	return newConfluenceClientFromConfig(cfg)
 }
 
-var runPullForPush = runPull
+var runPullForPush = func(cmd *cobra.Command, target config.Target) (commandRunReport, error) {
+	return runPullWithReport(cmd, target, false)
+}
 
 var flagPushPreflight bool
 var flagPushKeepOrphanAssets bool
@@ -68,6 +70,7 @@ It uses an isolated worktree and a temporary branch to ensure safety.`,
 	cmd.Flags().BoolVarP(&flagYes, "yes", "y", false, "Auto-approve safety confirmations")
 	cmd.Flags().BoolVar(&flagNonInteractive, "non-interactive", false, "Disable prompts; fail fast when a decision is required")
 	cmd.Flags().StringVar(&onConflict, "on-conflict", "", "Non-interactive conflict policy: pull-merge|force|cancel")
+	addReportJSONFlag(cmd)
 	return cmd
 }
 
@@ -85,15 +88,24 @@ func validateOnConflict(v string) error {
 
 func runPush(cmd *cobra.Command, target config.Target, onConflict string, dryRun bool) (runErr error) {
 	ctx := getCommandContext(cmd)
-	out := ensureSynchronizedCmdOutput(cmd)
-	_, restoreLogger := beginCommandRun("push")
+	actualOut := ensureSynchronizedCmdOutput(cmd)
+	out := reportWriter(cmd, actualOut)
+	runID, restoreLogger := beginCommandRun("push")
 	defer restoreLogger()
+	preflight := flagPushPreflight
+	startedAt := time.Now()
+	report := newCommandRunReport(runID, "push", target, startedAt)
+	defer func() {
+		if !commandRequestsJSONReport(cmd) {
+			return
+		}
+		report.finalize(runErr, time.Now())
+		_ = writeCommandRunReport(actualOut, report)
+	}()
 	if err := ensureWorkspaceSyncReady("push"); err != nil {
 		return err
 	}
 
-	preflight := flagPushPreflight
-	startedAt := time.Now()
 	telemetrySpaceKey := "unknown"
 	telemetryConflictPolicy := ""
 	slog.Info("push_started", "target_mode", target.Mode, "target", target.Value, "dry_run", dryRun, "preflight", preflight)
@@ -138,6 +150,7 @@ func runPush(cmd *cobra.Command, target config.Target, onConflict string, dryRun
 	spaceDir := initialCtx.spaceDir
 	spaceKey := initialCtx.spaceKey
 	telemetrySpaceKey = strings.TrimSpace(spaceKey)
+	report.Target.SpaceKey = strings.TrimSpace(spaceKey)
 
 	envPath := findEnvPath(spaceDir)
 	cfg, err := config.Load(envPath)
@@ -155,8 +168,16 @@ func runPush(cmd *cobra.Command, target config.Target, onConflict string, dryRun
 			}
 		}
 	}
+	report.Target.SpaceDir = spaceDir
+	if target.IsFile() {
+		report.Target.File = target.Value
+	}
 
 	gitClient, err := git.NewClient()
+	if err != nil {
+		return err
+	}
+	currentBranch, err := gitClient.CurrentBranch()
 	if err != nil {
 		return err
 	}
@@ -236,12 +257,18 @@ func runPush(cmd *cobra.Command, target config.Target, onConflict string, dryRun
 	if err := gitClient.UpdateRef(snapshotName, snapshotCommit, "create snapshot"); err != nil {
 		return fmt.Errorf("create snapshot ref: %w", err)
 	}
+	report.setRecoveryArtifactStatus("snapshot_ref", snapshotName, "created")
 
 	// Keep snapshot ref only on failure, delete on success
 	defer func() {
 		if runErr == nil {
-			_ = gitClient.DeleteRef(snapshotName)
+			if err := gitClient.DeleteRef(snapshotName); err == nil {
+				report.setRecoveryArtifactStatus("snapshot_ref", snapshotName, "cleaned_up")
+			} else {
+				report.setRecoveryArtifactStatus("snapshot_ref", snapshotName, "retained")
+			}
 		} else {
+			report.setRecoveryArtifactStatus("snapshot_ref", snapshotName, "retained")
 			_, _ = fmt.Fprintf(out, "\nSnapshot retained for recovery: %s\n", snapshotName)
 		}
 	}()
@@ -251,12 +278,18 @@ func runPush(cmd *cobra.Command, target config.Target, onConflict string, dryRun
 	if err := gitClient.CreateBranch(syncBranchName, headCommit); err != nil {
 		return fmt.Errorf("create sync branch: %w", err)
 	}
+	report.setRecoveryArtifactStatus("sync_branch", syncBranchName, "created")
 
 	// Keep sync branch only on failure, delete on success
 	defer func() {
 		if runErr == nil {
-			_ = gitClient.DeleteBranch(syncBranchName)
+			if err := gitClient.DeleteBranch(syncBranchName); err == nil {
+				report.setRecoveryArtifactStatus("sync_branch", syncBranchName, "cleaned_up")
+			} else {
+				report.setRecoveryArtifactStatus("sync_branch", syncBranchName, "retained")
+			}
 		} else {
+			report.setRecoveryArtifactStatus("sync_branch", syncBranchName, "retained")
 			_, _ = fmt.Fprintf(out, "Sync branch retained for recovery: %s\n", syncBranchName)
 		}
 	}()
@@ -270,8 +303,48 @@ func runPush(cmd *cobra.Command, target config.Target, onConflict string, dryRun
 		_ = gitClient.RemoveWorktree(worktreeDir)
 	}()
 
-	return runPushInWorktree(ctx, cmd, out, target, spaceKey, spaceDir, onConflict, tsStr,
+	defer func() {
+		if runErr == nil {
+			if err := deleteRecoveryMetadata(gitClient.RootDir, refKey, tsStr); err != nil {
+				_, _ = fmt.Fprintf(out, "warning: failed to clean up recovery metadata: %v\n", err)
+			}
+			return
+		}
+		if err := writeRecoveryMetadata(gitClient.RootDir, recoveryMetadata{
+			SpaceKey:       refKey,
+			Timestamp:      tsStr,
+			SyncBranch:     syncBranchName,
+			SnapshotRef:    snapshotName,
+			OriginalBranch: strings.TrimSpace(currentBranch),
+			FailureReason:  runErr.Error(),
+		}); err != nil {
+			_, _ = fmt.Fprintf(out, "warning: failed to persist recovery metadata: %v\n", err)
+		}
+	}()
+
+	outcome, err := runPushInWorktree(ctx, cmd, out, target, spaceKey, spaceDir, onConflict, tsStr,
 		gitClient, spaceScopePath, changeScopePath, worktreeDir, syncBranchName, snapshotName, &stashRef)
+	report.Diagnostics = append(report.Diagnostics, reportDiagnosticsFromPush(outcome.Result.Diagnostics, spaceDir)...)
+	for _, commit := range outcome.Result.Commits {
+		report.MutatedFiles = append(report.MutatedFiles, reportRelativePath(spaceDir, commit.Path))
+		report.MutatedPages = append(report.MutatedPages, commandRunReportPage{
+			Path:    reportRelativePath(spaceDir, commit.Path),
+			PageID:  strings.TrimSpace(commit.PageID),
+			Title:   strings.TrimSpace(commit.PageTitle),
+			Version: commit.Version,
+			Deleted: commit.Deleted,
+		})
+	}
+	report.AttachmentOperations = append(report.AttachmentOperations, reportAttachmentOpsFromPush(outcome.Result, spaceDir)...)
+	report.FallbackModes = append(report.FallbackModes, fallbackModesFromPushDiagnostics(outcome.Result.Diagnostics)...)
+	if outcome.ConflictResolution != nil {
+		report.ConflictResolution = outcome.ConflictResolution
+		report.MutatedFiles = append(report.MutatedFiles, outcome.ConflictResolution.MutatedFiles...)
+		report.Diagnostics = append(report.Diagnostics, outcome.ConflictResolution.Diagnostics...)
+		report.AttachmentOperations = append(report.AttachmentOperations, outcome.ConflictResolution.AttachmentOperations...)
+		report.FallbackModes = append(report.FallbackModes, outcome.ConflictResolution.FallbackModes...)
+	}
+	return err
 }
 
 // runPushInWorktree executes validate → diff → push → commit → merge → tag

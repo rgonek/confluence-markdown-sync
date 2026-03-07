@@ -25,8 +25,10 @@ func PlanPagePaths(
 	pageByID := map[string]confluence.Page{}
 	hasChildren := map[string]bool{}
 	for _, page := range pages {
-		pageByID[page.ID] = page
-		if page.ParentType == "page" || page.ParentType == "" {
+		pageID := strings.TrimSpace(page.ID)
+		pageByID[pageID] = page
+		parentType := strings.ToLower(strings.TrimSpace(page.ParentType))
+		if parentType == "" || parentType == "page" {
 			parentID := strings.TrimSpace(page.ParentPageID)
 			if parentID != "" {
 				hasChildren[parentID] = true
@@ -37,7 +39,7 @@ func PlanPagePaths(
 		folderByID = map[string]confluence.Folder{}
 	}
 	for _, folder := range folderByID {
-		if folder.ParentType == "page" {
+		if strings.EqualFold(strings.TrimSpace(folder.ParentType), "page") {
 			parentID := strings.TrimSpace(folder.ParentID)
 			if parentID != "" {
 				hasChildren[parentID] = true
@@ -222,16 +224,77 @@ func deletedPageIDs(previousPageIndex map[string]string, remotePages map[string]
 
 func movedPageIDs(previousPageIndex map[string]string, nextPathByID map[string]string) []string {
 	set := map[string]struct{}{}
-	for previousPath, pageID := range previousPageIndex {
-		nextPath, exists := nextPathByID[pageID]
-		if !exists {
-			continue
-		}
-		if normalizeRelPath(previousPath) != normalizeRelPath(nextPath) {
-			set[pageID] = struct{}{}
-		}
+	for _, move := range PlannedPagePathMoves(previousPageIndex, nextPathByID) {
+		set[move.PageID] = struct{}{}
 	}
 	return sortedStringKeys(set)
+}
+
+// PlannedPagePathMove describes a tracked page whose planned markdown path changed.
+type PlannedPagePathMove struct {
+	PageID       string
+	PreviousPath string
+	PlannedPath  string
+}
+
+// PlannedPagePathMoves returns tracked pages whose planned relative markdown path changed.
+func PlannedPagePathMoves(previousPageIndex map[string]string, nextPathByID map[string]string) []PlannedPagePathMove {
+	previousPathByID := map[string]string{}
+	for _, previousPath := range sortedStringKeys(previousPageIndex) {
+		pageID := strings.TrimSpace(previousPageIndex[previousPath])
+		if pageID == "" {
+			continue
+		}
+		if _, exists := nextPathByID[pageID]; !exists {
+			continue
+		}
+		normalizedPath := normalizeRelPath(previousPath)
+		if normalizedPath == "" {
+			continue
+		}
+		if _, exists := previousPathByID[pageID]; !exists {
+			previousPathByID[pageID] = normalizedPath
+		}
+	}
+
+	moves := make([]PlannedPagePathMove, 0, len(previousPathByID))
+	for pageID, previousPath := range previousPathByID {
+		nextPath := normalizeRelPath(nextPathByID[pageID])
+		if previousPath == nextPath {
+			continue
+		}
+		moves = append(moves, PlannedPagePathMove{
+			PageID:       pageID,
+			PreviousPath: previousPath,
+			PlannedPath:  nextPath,
+		})
+	}
+
+	sort.Slice(moves, func(i, j int) bool {
+		if moves[i].PreviousPath == moves[j].PreviousPath {
+			if moves[i].PlannedPath == moves[j].PlannedPath {
+				return moves[i].PageID < moves[j].PageID
+			}
+			return moves[i].PlannedPath < moves[j].PlannedPath
+		}
+		return moves[i].PreviousPath < moves[j].PreviousPath
+	})
+
+	return moves
+}
+
+func pagePathMoveDiagnostic(move PlannedPagePathMove) PullDiagnostic {
+	return PullDiagnostic{
+		Path:     move.PreviousPath,
+		Code:     "PAGE_PATH_MOVED",
+		Message:  fmt.Sprintf("planned markdown path changed from %s to %s", move.PreviousPath, move.PlannedPath),
+		Category: DiagnosticCategoryPathChange,
+	}
+}
+
+// PagePathMoveDiagnostic reports a tracked page whose planned markdown path changed.
+func PagePathMoveDiagnostic(move PlannedPagePathMove) PullDiagnostic {
+	return pagePathMoveDiagnostic(move)
 }
 
 func invertPathByID(pathByID map[string]string) map[string]string {
@@ -260,6 +323,13 @@ func cloneStringMap(in map[string]string) map[string]string {
 		out[normalizeRelPath(key)] = value
 	}
 	return out
+}
+
+func normalizePullState(state fs.SpaceState) fs.SpaceState {
+	state.PagePathIndex = cloneStringMap(state.PagePathIndex)
+	state.AttachmentIndex = cloneStringMap(state.AttachmentIndex)
+	state.FolderPathIndex = cloneStringMap(state.FolderPathIndex)
+	return state
 }
 
 type recoveryRemote interface {
@@ -327,7 +397,7 @@ func buildFolderPathIndex(folderByID map[string]confluence.Folder, pageByID map[
 	for folderID := range folderByID {
 		localPath := buildFolderLocalPath(folderID, folderByID, pageByID)
 		if localPath != "" {
-			folderPathIndex[localPath] = folderID
+			folderPathIndex[normalizeRelPath(localPath)] = folderID
 		}
 	}
 
@@ -392,5 +462,5 @@ func buildFolderLocalPath(folderID string, folderByID map[string]confluence.Fold
 		segments[i], segments[j] = segments[j], segments[i]
 	}
 
-	return filepath.Join(segments...)
+	return normalizeRelPath(filepath.Join(segments...))
 }

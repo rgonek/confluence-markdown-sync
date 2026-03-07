@@ -49,7 +49,8 @@ func (ix *Indexer) Reindex() (int, error) {
 // Any existing documents for those files are replaced.
 // It returns the number of documents indexed.
 func (ix *Indexer) IndexSpace(spaceDir, spaceKey string) (int, error) {
-	return ix.walkAndIndex(spaceDir, spaceKey, time.Time{})
+	indexed, _, err := ix.syncSpace(spaceDir, spaceKey, time.Time{})
+	return indexed, err
 }
 
 // IncrementalUpdate indexes only files whose mtime is newer than the last
@@ -69,15 +70,17 @@ func (ix *Indexer) IncrementalUpdate() (int, error) {
 	}
 
 	total := 0
+	changed := false
 	for spaceDir, state := range states {
-		count, err := ix.walkAndIndex(spaceDir, state.SpaceKey, lastAt)
+		count, spaceChanged, err := ix.syncSpace(spaceDir, state.SpaceKey, lastAt)
 		if err != nil {
 			return total, fmt.Errorf("search indexer: incremental index space %s: %w", spaceDir, err)
 		}
 		total += count
+		changed = changed || spaceChanged
 	}
 
-	if total > 0 {
+	if changed {
 		if err := ix.store.UpdateMeta(); err != nil {
 			return total, fmt.Errorf("search indexer: update meta: %w", err)
 		}
@@ -92,11 +95,12 @@ func (ix *Indexer) Close() error {
 
 // — private helpers —
 
-// walkAndIndex walks spaceDir and indexes all .md files.
+// syncSpace walks spaceDir, indexes changed .md files, and reconciles removed paths.
 // If cutoff is non-zero, only files with mtime > cutoff are re-indexed.
-func (ix *Indexer) walkAndIndex(spaceDir, spaceKey string, cutoff time.Time) (int, error) {
+func (ix *Indexer) syncSpace(spaceDir, spaceKey string, cutoff time.Time) (int, bool, error) {
 	total := 0
 	spaceName := filepath.Base(spaceDir)
+	currentPaths := map[string]struct{}{}
 
 	err := filepath.WalkDir(spaceDir, func(path string, d os.DirEntry, walkErr error) error {
 		if walkErr != nil {
@@ -113,14 +117,6 @@ func (ix *Indexer) walkAndIndex(spaceDir, spaceKey string, cutoff time.Time) (in
 			return nil
 		}
 
-		// Mtime filter for incremental updates.
-		if !cutoff.IsZero() {
-			info, err := d.Info()
-			if err != nil || !info.ModTime().After(cutoff) {
-				return nil
-			}
-		}
-
 		relPath, err := filepath.Rel(spaceDir, path)
 		if err != nil {
 			return nil // skip; unexpected path
@@ -129,6 +125,15 @@ func (ix *Indexer) walkAndIndex(spaceDir, spaceKey string, cutoff time.Time) (in
 
 		// Build a repo-root-relative path: "<spaceDirName>/<relPath>".
 		docPath := spaceName + "/" + relPath
+		currentPaths[docPath] = struct{}{}
+
+		// Mtime filter for incremental updates.
+		if !cutoff.IsZero() {
+			info, err := d.Info()
+			if err != nil || !info.ModTime().After(cutoff) {
+				return nil
+			}
+		}
 
 		count, err := ix.indexFile(path, docPath, spaceKey)
 		if err != nil {
@@ -138,7 +143,15 @@ func (ix *Indexer) walkAndIndex(spaceDir, spaceKey string, cutoff time.Time) (in
 		total += count
 		return nil
 	})
-	return total, err
+	if err != nil {
+		return total, false, err
+	}
+
+	removed, err := ix.removeDeletedPaths(spaceKey, currentPaths)
+	if err != nil {
+		return total, false, err
+	}
+	return total, removed > 0 || total > 0, nil
 }
 
 // indexFile reads the Markdown document at absPath, parses its structure, and
@@ -236,6 +249,25 @@ func (ix *Indexer) indexFile(absPath, docPath, spaceKey string) (int, error) {
 		return 0, fmt.Errorf("store index for %s: %w", docPath, err)
 	}
 	return len(docs), nil
+}
+
+func (ix *Indexer) removeDeletedPaths(spaceKey string, currentPaths map[string]struct{}) (int, error) {
+	indexedPaths, err := ix.store.ListPathsBySpace(spaceKey)
+	if err != nil {
+		return 0, fmt.Errorf("list indexed paths for %s: %w", spaceKey, err)
+	}
+
+	removed := 0
+	for _, path := range indexedPaths {
+		if _, ok := currentPaths[path]; ok {
+			continue
+		}
+		if err := ix.store.DeleteByPath(path); err != nil {
+			return removed, fmt.Errorf("delete stale docs for %s: %w", path, err)
+		}
+		removed++
+	}
+	return removed, nil
 }
 
 // normalizeDate attempts to parse s using common date/datetime layouts and returns

@@ -265,6 +265,46 @@ func TestRunValidateTarget_AllowsLocalFileLinkAttachment(t *testing.T) {
 	}
 }
 
+func TestRunValidateTarget_WarnsForMermaidFenceButSucceeds(t *testing.T) {
+	runParallelCommandTest(t)
+	repo := t.TempDir()
+	setupGitRepo(t, repo)
+	setupEnv(t)
+
+	spaceDir := filepath.Join(repo, "Engineering (ENG)")
+	if err := os.MkdirAll(spaceDir, 0o750); err != nil {
+		t.Fatalf("mkdir space dir: %v", err)
+	}
+
+	writeMarkdown(t, filepath.Join(spaceDir, "root.md"), fs.MarkdownDocument{
+		Frontmatter: fs.Frontmatter{Title: "Root"},
+		Body:        "```mermaid\ngraph TD\n  A --> B\n```\n",
+	})
+	if err := fs.SaveState(spaceDir, fs.SpaceState{SpaceKey: "ENG"}); err != nil {
+		t.Fatalf("save state: %v", err)
+	}
+
+	runGitForTest(t, repo, "add", ".")
+	runGitForTest(t, repo, "commit", "-m", "baseline")
+
+	chdirRepo(t, repo)
+	out := &bytes.Buffer{}
+	if err := runValidateTargetWithContext(context.Background(), out, config.Target{Mode: config.TargetModeSpace, Value: "Engineering (ENG)"}); err != nil {
+		t.Fatalf("expected validate success, got: %v\nOutput:\n%s", err, out.String())
+	}
+
+	got := out.String()
+	if !strings.Contains(got, "MERMAID_PRESERVED_AS_CODEBLOCK") {
+		t.Fatalf("expected Mermaid warning code, got:\n%s", got)
+	}
+	if !strings.Contains(got, "line ") {
+		t.Fatalf("expected Mermaid warning line detail, got:\n%s", got)
+	}
+	if !strings.Contains(got, "Validation successful") {
+		t.Fatalf("expected validate success footer, got:\n%s", got)
+	}
+}
+
 func TestRunValidateTarget_FailsForMissingAssetFile(t *testing.T) {
 	runParallelCommandTest(t)
 	repo := t.TempDir()

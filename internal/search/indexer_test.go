@@ -9,6 +9,7 @@ import (
 
 	"github.com/rgonek/confluence-markdown-sync/internal/fs"
 	"github.com/rgonek/confluence-markdown-sync/internal/search"
+	"github.com/rgonek/confluence-markdown-sync/internal/search/blevestore"
 	"github.com/rgonek/confluence-markdown-sync/internal/search/sqlitestore"
 )
 
@@ -26,6 +27,30 @@ func newTestIndexer(t *testing.T) (*search.Indexer, string) {
 	ix := search.NewIndexer(store, repoDir)
 	t.Cleanup(func() { _ = ix.Close() })
 	return ix, repoDir
+}
+
+func newTestIndexerForBackend(t *testing.T, backend string) (*search.Indexer, search.Store, string) {
+	t.Helper()
+
+	repoDir := t.TempDir()
+
+	var store search.Store
+	var err error
+	switch backend {
+	case "sqlite":
+		store, err = sqlitestore.Open(filepath.Join(repoDir, ".confluence-search-index", "search.db"))
+	case "bleve":
+		store, err = blevestore.Open(repoDir)
+	default:
+		t.Fatalf("unknown backend %q", backend)
+	}
+	if err != nil {
+		t.Fatalf("open %s store: %v", backend, err)
+	}
+
+	ix := search.NewIndexer(store, repoDir)
+	t.Cleanup(func() { _ = ix.Close() })
+	return ix, store, repoDir
 }
 
 // writeMarkdownFile writes a Markdown file with frontmatter + body into repoDir.
@@ -290,6 +315,80 @@ Body text here.
 		return
 	}
 	t.Error("document DEV/author-test.md not found in results")
+}
+
+func TestIndexer_IndexSpace_RemovesDeletedMarkdownPaths(t *testing.T) {
+	backends := []string{"sqlite", "bleve"}
+	for _, backend := range backends {
+		t.Run(backend, func(t *testing.T) {
+			ix, store, repoDir := newTestIndexerForBackend(t, backend)
+
+			writeStateFile(t, repoDir, "DEV", "DEV")
+			writeMarkdownFile(t, repoDir, "DEV/keep.md", `---
+title: Keep
+---
+Still searchable.
+`)
+			writeMarkdownFile(t, repoDir, "DEV/delete.md", `---
+title: Delete
+---
+Removed from disk and search.
+`)
+
+			spaceDir := filepath.Join(repoDir, "DEV")
+			if _, err := ix.IndexSpace(spaceDir, "DEV"); err != nil {
+				t.Fatalf("IndexSpace initial: %v", err)
+			}
+
+			if err := os.Remove(filepath.Join(spaceDir, "delete.md")); err != nil {
+				t.Fatalf("remove markdown: %v", err)
+			}
+
+			if _, err := ix.IndexSpace(spaceDir, "DEV"); err != nil {
+				t.Fatalf("IndexSpace second: %v", err)
+			}
+
+			results, err := store.Search(search.SearchOptions{Query: "Removed from disk"})
+			if err != nil {
+				t.Fatalf("Search: %v", err)
+			}
+			if len(results) != 0 {
+				t.Fatalf("expected deleted markdown path to be purged from %s index, got %d result(s)", backend, len(results))
+			}
+		})
+	}
+}
+
+func TestIndexer_IncrementalUpdate_RemovesDeletedMarkdownPaths(t *testing.T) {
+	backends := []string{"sqlite", "bleve"}
+	for _, backend := range backends {
+		t.Run(backend, func(t *testing.T) {
+			ix, store, repoDir := newTestIndexerForBackend(t, backend)
+
+			writeStateFile(t, repoDir, "DEV", "DEV")
+			writeMarkdownFile(t, repoDir, "DEV/overview.md", sampleMD)
+
+			if _, err := ix.Reindex(); err != nil {
+				t.Fatalf("Reindex: %v", err)
+			}
+
+			if err := os.Remove(filepath.Join(repoDir, "DEV", "overview.md")); err != nil {
+				t.Fatalf("remove markdown: %v", err)
+			}
+
+			if _, err := ix.IncrementalUpdate(); err != nil {
+				t.Fatalf("IncrementalUpdate: %v", err)
+			}
+
+			results, err := store.Search(search.SearchOptions{Query: "Refresh tokens are rotated"})
+			if err != nil {
+				t.Fatalf("Search: %v", err)
+			}
+			if len(results) != 0 {
+				t.Fatalf("expected deleted markdown file to be absent from %s search results, got %d result(s)", backend, len(results))
+			}
+		})
+	}
 }
 
 // — compile-time interface check —

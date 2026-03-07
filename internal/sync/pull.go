@@ -35,7 +35,7 @@ type PullRemote interface {
 	GetFolder(ctx context.Context, folderID string) (confluence.Folder, error)
 	ListChanges(ctx context.Context, opts confluence.ChangeListOptions) (confluence.ChangeListResult, error)
 	GetPage(ctx context.Context, pageID string) (confluence.Page, error)
-	GetContentStatus(ctx context.Context, pageID string) (string, error)
+	GetContentStatus(ctx context.Context, pageID string, pageStatus string) (string, error)
 	GetLabels(ctx context.Context, pageID string) ([]string, error)
 	ListAttachments(ctx context.Context, pageID string) ([]confluence.Attachment, error)
 	DownloadAttachment(ctx context.Context, attachmentID string, pageID string, out io.Writer) error
@@ -55,6 +55,7 @@ type PullOptions struct {
 	SpaceKey          string
 	SpaceDir          string
 	State             fs.SpaceState
+	GlobalPageIndex   GlobalPageIndex
 	PullStartedAt     time.Time
 	OverlapWindow     time.Duration
 	TargetPageID      string
@@ -67,9 +68,11 @@ type PullOptions struct {
 
 // PullDiagnostic captures non-fatal conversion diagnostics.
 type PullDiagnostic struct {
-	Path    string
-	Code    string
-	Message string
+	Path           string
+	Code           string
+	Message        string
+	Category       string
+	ActionRequired bool
 }
 
 // PullResult captures pull execution outputs.
@@ -97,13 +100,7 @@ func Pull(ctx context.Context, remote PullRemote, opts PullOptions) (PullResult,
 		return PullResult{}, fmt.Errorf("resolve space directory: %w", err)
 	}
 
-	state := opts.State
-	if state.PagePathIndex == nil {
-		state.PagePathIndex = map[string]string{}
-	}
-	if state.AttachmentIndex == nil {
-		state.AttachmentIndex = map[string]string{}
-	}
+	state := normalizePullState(opts.State)
 
 	pullStartedAt := opts.PullStartedAt
 	if pullStartedAt.IsZero() {
@@ -114,6 +111,7 @@ func Pull(ctx context.Context, remote PullRemote, opts PullOptions) (PullResult,
 		overlapWindow = DefaultPullOverlapWindow
 	}
 	diagnostics := []PullDiagnostic{}
+	capabilities := newTenantCapabilityCache()
 
 	userCache := map[string]string{}
 	getUserDisplayName := func(ctx context.Context, accountID string) string {
@@ -174,7 +172,16 @@ func Pull(ctx context.Context, remote PullRemote, opts PullOptions) (PullResult,
 		opts.Progress.SetTotal(len(pages))
 	}
 
-	folderByID, folderDiags, err := resolveFolderHierarchyFromPages(ctx, remote, pages)
+	folderMode, folderModeDiags, err := capabilities.detectPullFolderMode(ctx, remote, pages)
+	if err != nil {
+		return PullResult{}, fmt.Errorf("probe folder capability: %w", err)
+	}
+	diagnostics = append(diagnostics, folderModeDiags...)
+
+	contentStatusMode, contentStatusDiags := capabilities.detectPullContentStatusMode(ctx, remote, pages)
+	diagnostics = append(diagnostics, contentStatusDiags...)
+
+	folderByID, folderDiags, err := resolveFolderHierarchyFromPagesWithMode(ctx, remote, pages, folderMode)
 	if err != nil {
 		return PullResult{}, err
 	}
@@ -197,6 +204,10 @@ func Pull(ctx context.Context, remote PullRemote, opts PullOptions) (PullResult,
 	sort.Strings(pageIDs)
 
 	pagePathByIDAbs, pagePathByIDRel := PlanPagePaths(spaceDir, state.PagePathIndex, pages, folderByID)
+	pathMoves := PlannedPagePathMoves(state.PagePathIndex, pagePathByIDRel)
+	for _, move := range pathMoves {
+		diagnostics = append(diagnostics, pagePathMoveDiagnostic(move))
+	}
 
 	if opts.Progress != nil {
 		opts.Progress.SetDescription("Identifying changed pages")
@@ -210,8 +221,8 @@ func Pull(ctx context.Context, remote PullRemote, opts PullOptions) (PullResult,
 		for _, pageID := range changedPageIDs {
 			changedSet[pageID] = struct{}{}
 		}
-		for _, pageID := range movedPageIDs(state.PagePathIndex, pagePathByIDRel) {
-			changedSet[pageID] = struct{}{}
+		for _, move := range pathMoves {
+			changedSet[move.PageID] = struct{}{}
 		}
 		changedPageIDs = sortedStringKeys(changedSet)
 	}
@@ -262,21 +273,28 @@ func Pull(ctx context.Context, remote PullRemote, opts PullOptions) (PullResult,
 				return fmt.Errorf("fetch page %s: %w", pageID, err)
 			}
 
-			status, err := remote.GetContentStatus(gCtx, pageID)
-			if err != nil {
+			if contentStatusMode == tenantContentStatusModeDisabled {
 				existingFM, ok := readExistingFrontmatter(pageID)
 				if ok && existingFM.Status != "" {
 					page.ContentStatus = existingFM.Status
 				}
-				diagMu.Lock()
-				diagnostics = append(diagnostics, PullDiagnostic{
-					Path:    pageID,
-					Code:    "CONTENT_STATUS_FETCH_FAILED",
-					Message: fmt.Sprintf("fetch content status for page %s: %v", pageID, err),
-				})
-				diagMu.Unlock()
 			} else {
-				page.ContentStatus = status
+				status, err := remote.GetContentStatus(gCtx, pageID, page.Status)
+				if err != nil {
+					existingFM, ok := readExistingFrontmatter(pageID)
+					if ok && existingFM.Status != "" {
+						page.ContentStatus = existingFM.Status
+					}
+					diagMu.Lock()
+					diagnostics = append(diagnostics, PullDiagnostic{
+						Path:    pageID,
+						Code:    "CONTENT_STATUS_FETCH_FAILED",
+						Message: fmt.Sprintf("fetch content status for page %s: %v", pageID, err),
+					})
+					diagMu.Unlock()
+				} else {
+					page.ContentStatus = status
+				}
 			}
 
 			labels, err := remote.GetLabels(gCtx, pageID)
@@ -539,8 +557,18 @@ func Pull(ctx context.Context, remote PullRemote, opts PullOptions) (PullResult,
 			opts.Progress.SetCurrentItem(filepath.Base(outputPath))
 		}
 
+		linkNotices := make([]ForwardLinkNotice, 0)
 		forward, err := converter.Forward(ctx, page.BodyADF, converter.ForwardConfig{
-			LinkHook:  NewForwardLinkHook(outputPath, pagePathByIDAbs, opts.SpaceKey),
+			LinkHook: NewForwardLinkHookWithGlobalIndex(
+				outputPath,
+				spaceDir,
+				pagePathByIDAbs,
+				opts.GlobalPageIndex,
+				opts.SpaceKey,
+				func(notice ForwardLinkNotice) {
+					linkNotices = append(linkNotices, notice)
+				},
+			),
 			MediaHook: NewForwardMediaHook(outputPath, attachmentPathByID),
 		}, outputPath)
 		if err != nil {
@@ -582,6 +610,13 @@ func Pull(ctx context.Context, remote PullRemote, opts PullOptions) (PullResult,
 		relPath = filepath.ToSlash(relPath)
 		updatedMarkdown = append(updatedMarkdown, relPath)
 
+		for _, notice := range linkNotices {
+			diagnostics = append(diagnostics, PullDiagnostic{
+				Path:    relPath,
+				Code:    notice.Code,
+				Message: notice.Message,
+			})
+		}
 		for _, warning := range forward.Warnings {
 			diagnostics = append(diagnostics, PullDiagnostic{
 				Path:    relPath,
@@ -645,7 +680,7 @@ func Pull(ctx context.Context, remote PullRemote, opts PullOptions) (PullResult,
 	return PullResult{
 		State:            state,
 		MaxVersion:       maxVersion,
-		Diagnostics:      diagnostics,
+		Diagnostics:      NormalizePullDiagnostics(diagnostics),
 		UpdatedMarkdown:  updatedMarkdown,
 		DeletedMarkdown:  deletedMarkdown,
 		DownloadedAssets: downloadedAssets,

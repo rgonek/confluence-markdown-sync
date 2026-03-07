@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/rgonek/confluence-markdown-sync/internal/search"
+	"github.com/rgonek/confluence-markdown-sync/internal/search/blevestore"
 	"github.com/rgonek/confluence-markdown-sync/internal/search/sqlitestore"
 )
 
@@ -436,6 +437,28 @@ func TestOpenSearchStore_Bleve(t *testing.T) {
 	defer func() { _ = store.Close() }()
 }
 
+func TestOpenSearchStore_BleveUsesRepoIndexRoot(t *testing.T) {
+	repo := t.TempDir()
+
+	store, err := openSearchStore("bleve", repo)
+	if err != nil {
+		t.Fatalf("unexpected error opening bleve store: %v", err)
+	}
+	defer func() { _ = store.Close() }()
+
+	expectedIndexDir := filepath.Join(repo, searchIndexDir, "bleve")
+	if _, err := os.Stat(expectedIndexDir); err != nil {
+		t.Fatalf("expected Bleve index directory %s to exist: %v", expectedIndexDir, err)
+	}
+
+	nestedIndexDir := filepath.Join(expectedIndexDir, searchIndexDir, "bleve")
+	if _, err := os.Stat(nestedIndexDir); err == nil {
+		t.Fatalf("expected no nested Bleve index directory, but found %s", nestedIndexDir)
+	} else if !os.IsNotExist(err) {
+		t.Fatalf("stat nested Bleve index directory: %v", err)
+	}
+}
+
 // --- projectResult tests ---
 
 func TestProjectResult_Full(t *testing.T) {
@@ -637,6 +660,136 @@ func TestRunSearch_ConfigFileEngine(t *testing.T) {
 
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("command error: %v", err)
+	}
+}
+
+func TestRunSearch_ReindexJSONFormatWritesOnlyJSON(t *testing.T) {
+	runParallelCommandTest(t)
+
+	repo, _ := setupSearchTestRepo(t)
+	chdirRepo(t, repo)
+
+	cmd := newSearchCmd()
+	out := new(bytes.Buffer)
+	errOut := new(bytes.Buffer)
+	cmd.SetOut(out)
+	cmd.SetErr(errOut)
+	cmd.SetArgs([]string{"PKCE", "--reindex", "--format", "json", "--engine", "sqlite"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	var decoded []search.SearchResult
+	if err := json.Unmarshal(out.Bytes(), &decoded); err != nil {
+		t.Fatalf("expected valid JSON search output, got error %v\nstdout: %s\nstderr: %s", err, out.String(), errOut.String())
+	}
+	if len(decoded) == 0 {
+		t.Fatal("expected reindex+search to return at least one result")
+	}
+}
+
+func TestUpdateSearchIndexForSpace_UsesConfiguredBleveBackend(t *testing.T) {
+	repo := t.TempDir()
+	setupGitRepo(t, repo)
+
+	spaceDir := filepath.Join(repo, "DOCS")
+	if err := os.MkdirAll(spaceDir, 0o750); err != nil {
+		t.Fatalf("mkdir space dir: %v", err)
+	}
+
+	if err := os.WriteFile(filepath.Join(repo, ".conf.yaml"), []byte("search:\n  engine: bleve\n"), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	writeMarkdown := `---
+id: "123"
+title: Searchable Page
+space: DOCS
+---
+
+Bleve backend should index this content.
+`
+	if err := os.WriteFile(filepath.Join(spaceDir, "page.md"), []byte(writeMarkdown), 0o600); err != nil {
+		t.Fatalf("write markdown: %v", err)
+	}
+
+	stateContent := `{"space_key":"DOCS","pages":{}}`
+	if err := os.WriteFile(filepath.Join(spaceDir, ".confluence-state.json"), []byte(stateContent), 0o600); err != nil {
+		t.Fatalf("write state: %v", err)
+	}
+
+	if err := updateSearchIndexForSpace(repo, spaceDir, "DOCS", new(bytes.Buffer)); err != nil {
+		t.Fatalf("updateSearchIndexForSpace: %v", err)
+	}
+
+	bleveStore, err := blevestore.Open(repo)
+	if err != nil {
+		t.Fatalf("open blevestore: %v", err)
+	}
+	defer func() { _ = bleveStore.Close() }()
+
+	results, err := bleveStore.Search(search.SearchOptions{Query: "Bleve backend"})
+	if err != nil {
+		t.Fatalf("search bleve index: %v", err)
+	}
+	if len(results) == 0 {
+		t.Fatal("expected document to be indexed in configured Bleve backend")
+	}
+
+	sqlitePath := filepath.Join(repo, searchIndexDir, "search.db")
+	if _, err := os.Stat(sqlitePath); err == nil {
+		t.Fatalf("expected SQLite index %s to remain absent when Bleve is configured", sqlitePath)
+	} else if !os.IsNotExist(err) {
+		t.Fatalf("stat sqlite index: %v", err)
+	}
+}
+
+func TestSearchRegistrationAndDocsAlignment(t *testing.T) {
+	hasSearchCommand := false
+	for _, sub := range rootCmd.Commands() {
+		if sub.Name() == "search" {
+			hasSearchCommand = true
+			break
+		}
+	}
+	if !hasSearchCommand {
+		t.Fatal("expected root command to register search subcommand")
+	}
+
+	readme, err := os.ReadFile(filepath.Join("..", "README.md"))
+	if err != nil {
+		t.Fatalf("read README: %v", err)
+	}
+	usage, err := os.ReadFile(filepath.Join("..", "docs", "usage.md"))
+	if err != nil {
+		t.Fatalf("read usage guide: %v", err)
+	}
+	agents, err := os.ReadFile(filepath.Join("..", "AGENTS.md"))
+	if err != nil {
+		t.Fatalf("read AGENTS guide: %v", err)
+	}
+
+	if !strings.Contains(string(readme), "`search QUERY`") {
+		t.Fatal("expected README to mention search in its command guidance")
+	}
+
+	requiredFlagDocs := []string{
+		"--result-detail",
+		"--created-by",
+		"--updated-by",
+		"--created-after",
+		"--created-before",
+		"--updated-after",
+		"--updated-before",
+	}
+	for _, flag := range requiredFlagDocs {
+		if !strings.Contains(string(usage), flag) {
+			t.Fatalf("expected docs/usage.md to document %s", flag)
+		}
+		if !strings.Contains(string(agents), flag) {
+			t.Fatalf("expected AGENTS.md to document %s", flag)
+		}
 	}
 }
 

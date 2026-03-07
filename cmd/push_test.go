@@ -299,6 +299,182 @@ func TestRunPush_WorksWithoutGitRemoteConfigured(t *testing.T) {
 	}
 }
 
+func TestRunPush_MermaidWarningAppearsBeforePushAndPushesCodeBlockADF(t *testing.T) {
+	runParallelCommandTest(t)
+
+	repo := t.TempDir()
+	spaceDir := preparePushRepoWithBaseline(t, repo)
+
+	writeMarkdown(t, filepath.Join(spaceDir, "root.md"), fs.MarkdownDocument{
+		Frontmatter: fs.Frontmatter{
+			Title: "Root",
+			ID:    "1",
+
+			Version:                1,
+			ConfluenceLastModified: "2026-02-01T10:00:00Z",
+		},
+		Body: "```mermaid\ngraph TD\n  A --> B\n```\n",
+	})
+	runGitForTest(t, repo, "add", ".")
+	runGitForTest(t, repo, "commit", "-m", "local mermaid change")
+
+	fake := newCmdFakePushRemote(1)
+	oldPushFactory := newPushRemote
+	oldPullFactory := newPullRemote
+	newPushRemote = func(_ *config.Config) (syncflow.PushRemote, error) { return fake, nil }
+	newPullRemote = func(_ *config.Config) (syncflow.PullRemote, error) { return fake, nil }
+	t.Cleanup(func() {
+		newPushRemote = oldPushFactory
+		newPullRemote = oldPullFactory
+	})
+
+	setupEnv(t)
+	chdirRepo(t, spaceDir)
+
+	out := &bytes.Buffer{}
+	cmd := &cobra.Command{}
+	cmd.SetOut(out)
+	if err := runPush(cmd, config.Target{Mode: config.TargetModeSpace, Value: ""}, OnConflictCancel, false); err != nil {
+		t.Fatalf("runPush() unexpected error: %v\nOutput:\n%s", err, out.String())
+	}
+
+	if !strings.Contains(out.String(), "MERMAID_PRESERVED_AS_CODEBLOCK") {
+		t.Fatalf("expected Mermaid warning in push output, got:\n%s", out.String())
+	}
+	if len(fake.updateCalls) == 0 {
+		t.Fatal("expected push to update at least one page")
+	}
+
+	adf := string(fake.updateCalls[len(fake.updateCalls)-1].Input.BodyADF)
+	if !strings.Contains(adf, "\"type\":\"codeBlock\"") {
+		t.Fatalf("expected Mermaid push ADF to contain codeBlock node, got: %s", adf)
+	}
+	if !strings.Contains(adf, "\"language\":\"mermaid\"") {
+		t.Fatalf("expected Mermaid push ADF to preserve mermaid language, got: %s", adf)
+	}
+}
+
+func TestRunPush_CrossSpaceRelativeLinkParityWithValidate(t *testing.T) {
+	runParallelCommandTest(t)
+
+	testCases := []struct {
+		name           string
+		sourceDirName  string
+		sourceKey      string
+		targetDirName  string
+		targetKey      string
+		targetPageID   string
+		targetFileName string
+	}{
+		{
+			name:           "ENG_to_TD",
+			sourceDirName:  "Engineering (ENG)",
+			sourceKey:      "ENG",
+			targetDirName:  "Technical Docs (TD)",
+			targetKey:      "TD",
+			targetPageID:   "200",
+			targetFileName: "target.md",
+		},
+		{
+			name:           "TD_to_ENG",
+			sourceDirName:  "Technical Docs (TD)",
+			sourceKey:      "TD",
+			targetDirName:  "Engineering (ENG)",
+			targetKey:      "ENG",
+			targetPageID:   "300",
+			targetFileName: "target.md",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := t.TempDir()
+			setupGitRepo(t, repo)
+			setupEnv(t)
+
+			sourceSpaceDir := filepath.Join(repo, tc.sourceDirName)
+			targetSpaceDir := filepath.Join(repo, tc.targetDirName)
+			if err := os.MkdirAll(sourceSpaceDir, 0o750); err != nil {
+				t.Fatalf("mkdir source dir: %v", err)
+			}
+			if err := os.MkdirAll(targetSpaceDir, 0o750); err != nil {
+				t.Fatalf("mkdir target dir: %v", err)
+			}
+
+			targetPath := filepath.Join(targetSpaceDir, tc.targetFileName)
+			writeMarkdown(t, targetPath, fs.MarkdownDocument{
+				Frontmatter: fs.Frontmatter{
+					Title:   "Target",
+					ID:      tc.targetPageID,
+					Version: 1,
+				},
+				Body: "target\n",
+			})
+
+			if err := fs.SaveState(sourceSpaceDir, fs.SpaceState{SpaceKey: tc.sourceKey}); err != nil {
+				t.Fatalf("save source state: %v", err)
+			}
+			if err := fs.SaveState(targetSpaceDir, fs.SpaceState{
+				SpaceKey:      tc.targetKey,
+				PagePathIndex: map[string]string{tc.targetFileName: tc.targetPageID},
+			}); err != nil {
+				t.Fatalf("save target state: %v", err)
+			}
+
+			if err := os.WriteFile(filepath.Join(repo, ".gitignore"), []byte(".env\n.confluence-state.json\n"), 0o600); err != nil {
+				t.Fatalf("write .gitignore: %v", err)
+			}
+
+			runGitForTest(t, repo, "add", ".")
+			runGitForTest(t, repo, "commit", "-m", "baseline")
+			runGitForTest(t, repo, "tag", "-a", fmt.Sprintf("confluence-sync/pull/%s/20260305T120000Z", tc.sourceKey), "-m", "baseline pull")
+
+			linkTargetDir := strings.ReplaceAll(tc.targetDirName, " ", "%20")
+			writeMarkdown(t, filepath.Join(sourceSpaceDir, "new.md"), fs.MarkdownDocument{
+				Frontmatter: fs.Frontmatter{
+					Title: "New Page",
+				},
+				Body: fmt.Sprintf("[Cross Space](../%s/%s#section-a)\n", linkTargetDir, tc.targetFileName),
+			})
+
+			runGitForTest(t, repo, "add", ".")
+			runGitForTest(t, repo, "commit", "-m", "local change")
+
+			fake := newCmdFakePushRemote(1)
+			oldPushFactory := newPushRemote
+			oldPullFactory := newPullRemote
+			newPushRemote = func(_ *config.Config) (syncflow.PushRemote, error) { return fake, nil }
+			newPullRemote = func(_ *config.Config) (syncflow.PullRemote, error) { return fake, nil }
+			t.Cleanup(func() {
+				newPushRemote = oldPushFactory
+				newPullRemote = oldPullFactory
+			})
+
+			chdirRepo(t, sourceSpaceDir)
+
+			validateOut := &bytes.Buffer{}
+			if err := runValidateTargetWithContext(context.Background(), validateOut, config.Target{Mode: config.TargetModeSpace, Value: sourceSpaceDir}); err != nil {
+				t.Fatalf("validate failed before push: %v\nOutput:\n%s", err, validateOut.String())
+			}
+
+			cmd := &cobra.Command{}
+			cmd.SetOut(&bytes.Buffer{})
+			if err := runPush(cmd, config.Target{Mode: config.TargetModeSpace, Value: ""}, OnConflictCancel, false); err != nil {
+				t.Fatalf("runPush() unexpected error: %v", err)
+			}
+
+			if len(fake.updateCalls) == 0 {
+				t.Fatal("expected at least one update call")
+			}
+			body := string(fake.updateCalls[len(fake.updateCalls)-1].Input.BodyADF)
+			expectedFragment := "pageId=" + tc.targetPageID + "#section-a"
+			if !strings.Contains(body, expectedFragment) {
+				t.Fatalf("expected pushed ADF to contain %q, body=%s", expectedFragment, body)
+			}
+		})
+	}
+}
+
 type failingPushRemote struct {
 	*cmdFakePushRemote
 }
@@ -406,15 +582,15 @@ func (f *cmdFakePushRemote) GetPage(_ context.Context, pageID string) (confluenc
 	return page, nil
 }
 
-func (f *cmdFakePushRemote) GetContentStatus(_ context.Context, pageID string) (string, error) {
+func (f *cmdFakePushRemote) GetContentStatus(_ context.Context, pageID string, _ string) (string, error) {
 	return "", nil
 }
 
-func (f *cmdFakePushRemote) SetContentStatus(_ context.Context, pageID string, statusName string) error {
+func (f *cmdFakePushRemote) SetContentStatus(_ context.Context, pageID string, _ string, statusName string) error {
 	return nil
 }
 
-func (f *cmdFakePushRemote) DeleteContentStatus(_ context.Context, pageID string) error {
+func (f *cmdFakePushRemote) DeleteContentStatus(_ context.Context, pageID string, _ string) error {
 	return nil
 }
 
@@ -476,7 +652,7 @@ func (f *cmdFakePushRemote) WaitForArchiveTask(_ context.Context, taskID string,
 	return confluence.ArchiveTaskStatus{TaskID: taskID, State: confluence.ArchiveTaskStateSucceeded}, nil
 }
 
-func (f *cmdFakePushRemote) DeletePage(_ context.Context, pageID string, _ bool) error {
+func (f *cmdFakePushRemote) DeletePage(_ context.Context, pageID string, _ confluence.PageDeleteOptions) error {
 	f.deletePageCalls = append(f.deletePageCalls, pageID)
 	return nil
 }
