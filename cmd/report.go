@@ -58,11 +58,12 @@ type commandRunReportDiagnostic struct {
 }
 
 type commandRunReportPage struct {
-	Path    string `json:"path,omitempty"`
-	PageID  string `json:"page_id,omitempty"`
-	Title   string `json:"title,omitempty"`
-	Version int    `json:"version,omitempty"`
-	Deleted bool   `json:"deleted,omitempty"`
+	Operation string `json:"operation,omitempty"`
+	Path      string `json:"path,omitempty"`
+	PageID    string `json:"page_id,omitempty"`
+	Title     string `json:"title,omitempty"`
+	Version   int    `json:"version,omitempty"`
+	Deleted   bool   `json:"deleted,omitempty"`
 }
 
 type commandRunReportAttachmentOp struct {
@@ -322,6 +323,53 @@ func reportAttachmentOpsFromPush(result syncflow.PushResult, spaceDir string) []
 		}
 	}
 	return out
+}
+
+func appendPushResultToReport(report *commandRunReport, result syncflow.PushResult, changes []syncflow.PushFileChange, spaceDir string) {
+	if report == nil {
+		return
+	}
+	report.Diagnostics = append(report.Diagnostics, reportDiagnosticsFromPush(result.Diagnostics, spaceDir)...)
+	report.AttachmentOperations = append(report.AttachmentOperations, reportAttachmentOpsFromPush(result, spaceDir)...)
+	report.FallbackModes = append(report.FallbackModes, fallbackModesFromPushDiagnostics(result.Diagnostics)...)
+
+	operationsByPath := pushOperationByPath(changes)
+	for _, commit := range result.Commits {
+		relPath := reportRelativePath(spaceDir, commit.Path)
+		report.MutatedFiles = append(report.MutatedFiles, relPath)
+		report.MutatedPages = append(report.MutatedPages, commandRunReportPage{
+			Operation: operationsByPath[normalizeReportPushPath(commit.Path)],
+			Path:      relPath,
+			PageID:    strings.TrimSpace(commit.PageID),
+			Title:     strings.TrimSpace(commit.PageTitle),
+			Version:   commit.Version,
+			Deleted:   commit.Deleted,
+		})
+	}
+}
+
+func pushOperationByPath(changes []syncflow.PushFileChange) map[string]string {
+	operations := make(map[string]string, len(changes))
+	for _, change := range changes {
+		switch change.Type {
+		case syncflow.PushChangeAdd:
+			operations[normalizeReportPushPath(change.Path)] = "create"
+		case syncflow.PushChangeDelete:
+			operations[normalizeReportPushPath(change.Path)] = "delete"
+		case syncflow.PushChangeModify:
+			operations[normalizeReportPushPath(change.Path)] = "update"
+		}
+	}
+	return operations
+}
+
+func normalizeReportPushPath(path string) string {
+	path = filepath.ToSlash(filepath.Clean(strings.TrimSpace(path)))
+	path = strings.TrimPrefix(path, "./")
+	if path == "." {
+		return ""
+	}
+	return path
 }
 
 func sortedUniqueStrings(values []string) []string {
