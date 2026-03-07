@@ -5,8 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -25,6 +27,7 @@ func runPushPreflight(
 	spaceKey, spaceDir string,
 	gitClient *git.Client,
 	spaceScopePath, changeScopePath string,
+	onConflict string,
 ) error {
 	baselineRef, err := gitPushBaselineRef(gitClient, spaceKey)
 	if err != nil {
@@ -54,15 +57,188 @@ func runPushPreflight(
 		}
 	}
 
+	// Load config and create remote to probe capabilities and list remote pages.
+	envPath := findEnvPath(spaceDir)
+	cfg, err := config.Load(envPath)
+	if err != nil {
+		return fmt.Errorf("failed to load config: %w", err)
+	}
+
+	remote, err := newPushRemote(cfg)
+	if err != nil {
+		return fmt.Errorf("create confluence client: %w", err)
+	}
+	defer closeRemoteIfPossible(remote)
+
+	// Probe GetContentStatus to detect degraded modes.
+	_, probeErr := remote.GetContentStatus(ctx, "", "")
+	if isPreflightCapabilityProbeError(probeErr) {
+		_, _ = fmt.Fprintln(out, "Remote capability concerns:")
+		_, _ = fmt.Fprintln(out, "  content-status metadata sync disabled for this push")
+	}
+
+	// List remote pages for mutation planning.
+	remotePageByID := map[string]confluence.Page{}
+	space, spaceErr := remote.GetSpace(ctx, spaceKey)
+	if spaceErr == nil {
+		listResult, listErr := remote.ListPages(ctx, confluence.PageListOptions{
+			SpaceID:  space.ID,
+			SpaceKey: spaceKey,
+			Status:   "current",
+			Limit:    100,
+		})
+		if listErr == nil {
+			for _, page := range listResult.Pages {
+				remotePageByID[strings.TrimSpace(page.ID)] = page
+			}
+		}
+	}
+
+	// Load local state for attachment comparison.
+	state, _ := fs.LoadState(spaceDir)
+
+	// Build planned page mutations.
+	_, _ = fmt.Fprintln(out, "Planned page mutations:")
+	for _, change := range syncChanges {
+		absPath := filepath.Join(spaceDir, filepath.FromSlash(change.Path))
+		switch change.Type {
+		case syncflow.PushChangeAdd:
+			_, _ = fmt.Fprintf(out, "  add %s\n", change.Path)
+		case syncflow.PushChangeDelete:
+			fm, fmErr := fs.ReadFrontmatter(absPath)
+			pageID := ""
+			if fmErr == nil {
+				pageID = strings.TrimSpace(fm.ID)
+			}
+			if pageID != "" {
+				_, _ = fmt.Fprintf(out, "  delete %s (page %s)\n", change.Path, pageID)
+			} else {
+				_, _ = fmt.Fprintf(out, "  delete %s\n", change.Path)
+			}
+		case syncflow.PushChangeModify:
+			fm, fmErr := fs.ReadFrontmatter(absPath)
+			if fmErr != nil {
+				_, _ = fmt.Fprintf(out, "  update %s\n", change.Path)
+				continue
+			}
+			pageID := strings.TrimSpace(fm.ID)
+			if pageID == "" {
+				_, _ = fmt.Fprintf(out, "  update %s\n", change.Path)
+				continue
+			}
+			remotePage, hasRemote := remotePageByID[pageID]
+			if !hasRemote {
+				_, _ = fmt.Fprintf(out, "  update %s (page %s)\n", change.Path, pageID)
+				continue
+			}
+			// Compute planned version based on conflict policy.
+			var plannedVersion int
+			if onConflict == OnConflictForce {
+				plannedVersion = remotePage.Version + 1
+			} else {
+				plannedVersion = fm.Version + 1
+			}
+			_, _ = fmt.Fprintf(out, "  update %s (page %s, %q, version %d)\n",
+				change.Path, pageID, remotePage.Title, plannedVersion)
+		}
+	}
+
+	// Build planned attachment mutations.
+	uploads, deletes := preflightAttachmentMutations(ctx, spaceDir, syncChanges, state)
+	if len(uploads) > 0 || len(deletes) > 0 {
+		_, _ = fmt.Fprintln(out, "Planned attachment mutations:")
+		for _, u := range uploads {
+			_, _ = fmt.Fprintf(out, "  upload %s\n", u)
+		}
+		for _, d := range deletes {
+			_, _ = fmt.Fprintf(out, "  delete %s\n", d)
+		}
+	}
+
 	addCount, modifyCount, deleteCount := summarizePushChanges(syncChanges)
 	_, _ = fmt.Fprintf(out, "changes: %d (A:%d M:%d D:%d)\n", len(syncChanges), addCount, modifyCount, deleteCount)
-	for _, change := range syncChanges {
-		_, _ = fmt.Fprintf(out, "  %s %s\n", change.Type, change.Path)
-	}
 	if len(syncChanges) > 10 || deleteCount > 0 {
 		_, _ = fmt.Fprintln(out, "safety confirmation would be required")
 	}
 	return nil
+}
+
+// isPreflightCapabilityProbeError reports whether err indicates the remote
+// does not support the probed API endpoint (404, 405, or 501).
+func isPreflightCapabilityProbeError(err error) bool {
+	if err == nil {
+		return false
+	}
+	var apiErr *confluence.APIError
+	if !errors.As(err, &apiErr) {
+		return false
+	}
+	switch apiErr.StatusCode {
+	case http.StatusNotFound, http.StatusMethodNotAllowed, http.StatusNotImplemented:
+		return true
+	default:
+		return false
+	}
+}
+
+// preflightAttachmentMutations returns planned upload and delete paths for
+// attachments based on changed markdown files and the current state.
+func preflightAttachmentMutations(
+	_ context.Context,
+	spaceDir string,
+	syncChanges []syncflow.PushFileChange,
+	state fs.SpaceState,
+) (uploads, deletes []string) {
+	plannedUploadKeys := map[string]struct{}{}
+
+	for _, change := range syncChanges {
+		if change.Type == syncflow.PushChangeDelete {
+			continue
+		}
+
+		absPath := filepath.Join(spaceDir, filepath.FromSlash(change.Path))
+		doc, err := fs.ReadMarkdownDocument(absPath)
+		if err != nil {
+			continue
+		}
+
+		pageID := strings.TrimSpace(doc.Frontmatter.ID)
+		if pageID == "" {
+			continue
+		}
+
+		referencedPaths, err := syncflow.CollectReferencedAssetPaths(spaceDir, absPath, doc.Body)
+		if err != nil {
+			continue
+		}
+
+		for _, assetPath := range referencedPaths {
+			// Compute the planned state key: assets/<pageID>/<basename>
+			plannedKey := filepath.ToSlash(filepath.Join("assets", pageID, filepath.Base(assetPath)))
+			plannedUploadKeys[plannedKey] = struct{}{}
+
+			// If this key is not in the state, it's a new upload.
+			if strings.TrimSpace(state.AttachmentIndex[plannedKey]) == "" {
+				uploads = append(uploads, plannedKey)
+			}
+		}
+
+		// Check existing state entries for this page — anything not covered
+		// by a planned upload is stale and will be deleted.
+		prefix := "assets/" + pageID + "/"
+		for stateKey := range state.AttachmentIndex {
+			if !strings.HasPrefix(stateKey, prefix) {
+				continue
+			}
+			if _, covered := plannedUploadKeys[stateKey]; !covered {
+				deletes = append(deletes, stateKey)
+			}
+		}
+	}
+
+	sort.Strings(uploads)
+	sort.Strings(deletes)
+	return uploads, deletes
 }
 
 func runPushDryRun(

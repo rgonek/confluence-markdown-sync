@@ -198,7 +198,7 @@ func runPush(cmd *cobra.Command, target config.Target, onConflict string, dryRun
 	}
 
 	if preflight {
-		return runPushPreflight(ctx, out, target, spaceKey, spaceDir, gitClient, spaceScopePath, changeScopePath)
+		return runPushPreflight(ctx, out, target, spaceKey, spaceDir, gitClient, spaceScopePath, changeScopePath, onConflict)
 	}
 
 	ts := nowUTC()

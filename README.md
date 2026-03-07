@@ -2,6 +2,8 @@
 
 Write docs like code. Publish to Confluence with confidence. ✍️
 
+> **Beta** — `conf` is under active development. Core sync workflows (pull, push, validate, diff, status) are tested against live Confluence tenants, but edge cases remain. Pin a specific version for production use and test changes in a sandbox space before relying on new releases.
+
 `conf` is a Go CLI that keeps Confluence pages and local Markdown in sync, so teams can use editor + Git + CI workflows without giving up Confluence as the publishing platform.
 
 ## Why teams use `conf` ✨
