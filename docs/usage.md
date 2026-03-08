@@ -2,6 +2,8 @@
 
 This guide covers day-to-day usage of `conf`.
 
+> **Beta** — `conf` is under active development. Core workflows are tested against live tenants, but edge cases remain. Pin a specific version for production use.
+
 ## What `conf` does
 
 `conf` synchronizes Confluence pages with local Markdown files.
@@ -263,6 +265,10 @@ Local state file:
 - `.confluence-state.json` (per space, gitignored)
 
 ## Extension and Macro Support
+
+For a full breakdown of which features depend on optional tenant APIs and what
+fallback behavior applies when those APIs are unavailable, see
+[docs/compatibility.md](compatibility.md).
 
 | Item | Support level | Markdown / ADF behavior | Notes |
 |------|---------------|-------------------------|-------|

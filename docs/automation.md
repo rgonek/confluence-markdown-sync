@@ -2,6 +2,8 @@
 
 This document explains how to run `conf` safely in scripts and CI pipelines.
 
+> **Beta** — `conf` is under active development. Test automation workflows in a sandbox space before targeting production.
+
 ## Automation Flags
 
 Supported on `pull` and `push`:

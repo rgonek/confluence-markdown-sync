@@ -73,7 +73,9 @@ conf push ENG --on-conflict=cancel
 
 ## Docs 📚
 - Usage and command reference: `docs/usage.md`
+- Feature and tenant compatibility matrix: `docs/compatibility.md`
 - Automation, CI behavior, and live sandbox smoke-test runbook: `docs/automation.md`
+- Changelog: `CHANGELOG.md`
 - Security policy: `SECURITY.md`
 - Support policy: `SUPPORT.md`
 - License: `LICENSE`
