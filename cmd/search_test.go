@@ -347,9 +347,9 @@ func TestRunSearch_ListSpaces(t *testing.T) {
 
 	docs := []search.Document{
 		{
-			ID:       "page:DOCS/page.md",
+			ID:       "page:DOCS/overview.md",
 			Type:     search.DocTypePage,
-			Path:     "DOCS/page.md",
+			Path:     "DOCS/overview.md",
 			SpaceKey: "DOCS",
 			Content:  "some content",
 		},

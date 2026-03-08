@@ -1,0 +1,150 @@
+# Push Specification
+
+## Purpose
+
+Define the write-path sync contract for publishing local Markdown changes back to Confluence safely.
+
+## Requirements
+
+### Requirement: Push is always gated by validation
+
+The system MUST complete validation successfully before any remote write during a real push.
+
+#### Scenario: Validation failure aborts push
+
+- GIVEN one or more changed files fail strict validation
+- WHEN the user runs `conf push`
+- THEN the system SHALL stop before any remote write occurs
+
+### Requirement: Baseline-based change detection
+
+The system SHALL compare local changes against the latest successful sync baseline for the space.
+
+#### Scenario: Latest sync tag defines the baseline
+
+- GIVEN the repository contains pull or push sync tags for a space
+- WHEN push computes in-scope changes
+- THEN the system SHALL use the latest timestamped sync tag for that space as the baseline
+
+#### Scenario: No sync tags fall back to root commit
+
+- GIVEN the repository has no prior sync tag for the space
+- WHEN push computes its baseline
+- THEN the system SHALL fall back to the repository root commit
+
+### Requirement: Isolated push execution
+
+The system SHALL isolate real push execution from the active user workspace.
+
+#### Scenario: Real push creates snapshot ref, sync branch, and worktree
+
+- GIVEN `conf push` detects in-scope changes
+- WHEN a real push begins
+- THEN the system SHALL create a snapshot ref at `refs/confluence-sync/snapshots/<space>/<timestamp>`
+- AND the system SHALL create a sync branch `sync/<space>/<timestamp>`
+- AND the system SHALL create a temporary worktree for the sync run
+
+#### Scenario: No-op push creates no recovery artifacts
+
+- GIVEN push detects no in-scope Markdown changes
+- WHEN the command exits
+- THEN the system SHALL not create a snapshot ref, sync branch, merge commit, or sync tag
+
+### Requirement: Conflict policy control
+
+The system SHALL make remote-ahead conflict handling explicit.
+
+#### Scenario: Space push defaults to pull-merge
+
+- GIVEN the user runs a space-scoped push without `--on-conflict`
+- WHEN push resolves the conflict policy
+- THEN the system SHALL default to `pull-merge`
+
+#### Scenario: File push requires an explicit policy or prompt
+
+- GIVEN the user runs a single-file push
+- WHEN `--on-conflict` is not supplied
+- THEN the system SHALL require an interactive choice or fail in non-interactive mode
+
+#### Scenario: Pull-merge conflict policy stops for review after pull
+
+- GIVEN push detects a remote-ahead conflict
+- AND the policy is `pull-merge`
+- WHEN push handles the conflict
+- THEN the system SHALL run pull for the target scope
+- AND the system SHALL stop so the user can review and rerun push
+
+### Requirement: Strict remote publishing
+
+The system SHALL publish Markdown to Confluence using strict conversion and explicit attachment/link resolution.
+
+#### Scenario: Push creates or updates remote content
+
+- GIVEN a changed Markdown file validates successfully
+- WHEN push processes the file
+- THEN the system SHALL resolve page identity, links, and attachments
+- AND the system SHALL create, update, archive, or delete remote content as required
+
+#### Scenario: Orphan attachment deletion can be suppressed
+
+- GIVEN a push would otherwise delete unreferenced remote attachments
+- WHEN the user passes `--keep-orphan-assets`
+- THEN the system SHALL keep those orphaned attachments
+
+### Requirement: Preflight and dry-run inspection
+
+The system SHALL provide safe non-write inspection modes for push.
+
+#### Scenario: Preflight returns a push plan without writes
+
+- GIVEN the user runs `conf push --preflight`
+- WHEN the command evaluates the target scope
+- THEN the system SHALL show the planned changes and validation outcome
+- AND the system SHALL not modify remote content or local Git state
+
+#### Scenario: Dry-run simulates remote work without mutation
+
+- GIVEN the user runs `conf push --dry-run`
+- WHEN the command simulates the push
+- THEN the system SHALL evaluate conversion and planned remote actions
+- AND the system SHALL not modify remote content or local Git state
+
+#### Scenario: Preflight and dry-run cannot be combined
+
+- GIVEN the user passes both `--preflight` and `--dry-run`
+- WHEN the command validates flags
+- THEN the system SHALL fail
+
+### Requirement: Per-page Git audit trail
+
+The system SHALL preserve per-page audit detail within each successful push run.
+
+#### Scenario: Successful push creates per-page commits with trailers
+
+- GIVEN push successfully syncs one or more pages
+- WHEN the worktree finalizes commits
+- THEN the system SHALL create one commit per pushed page
+- AND each commit SHALL include `Confluence-Page-ID`, `Confluence-Version`, `Confluence-Space-Key`, and `Confluence-URL` trailers
+
+#### Scenario: Successful non-no-op push creates sync tag
+
+- GIVEN push successfully merges the sync branch
+- WHEN the run finalizes
+- THEN the system SHALL create an annotated tag named `confluence-sync/push/<space>/<timestamp>`
+
+### Requirement: Failure retention and recovery metadata
+
+The system SHALL retain enough information to inspect and clean up failed push runs later.
+
+#### Scenario: Failed push retains recovery artifacts
+
+- GIVEN a real push fails after snapshot creation
+- WHEN the command exits
+- THEN the system SHALL retain the snapshot ref and sync branch
+- AND the system SHALL record recovery metadata under `.git/confluence-recovery/`
+
+#### Scenario: Successful push cleans recovery artifacts
+
+- GIVEN a real push completes successfully
+- WHEN the command exits
+- THEN the system SHALL delete temporary recovery metadata and cleanup the worktree
