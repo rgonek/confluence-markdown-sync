@@ -16,8 +16,6 @@ The canonical behavior contract lives in `openspec/specs/*/spec.md`.
 
 Narrative docs such as `README.md`, `docs/usage.md`, `docs/automation.md`, `docs/compatibility.md`, and `docs/specs/*` are secondary summaries and operator guides. They must stay aligned with the OpenSpec files.
 
-Implementation plans under `agents/plans/*.md` are historical delivery plans and backlog notes, not the live product contract.
-
 ## Domain Terms
 
 - Workspace root: the local Git repository root used by `conf`

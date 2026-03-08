@@ -11,7 +11,6 @@ This repository builds `conf` (`confluence-sync`), a Go CLI that syncs Confluenc
   - `docs/specs/prd.md`
   - `docs/specs/technical-spec.md`
   - `docs/specs/README.md`
-- Treat `agents/plans/*.md` as implementation history, delivery plans, and backlog notes rather than the live behavior contract.
 - If behavior changes, update the canonical specs first, then implement.
 
 ## Intended Usages

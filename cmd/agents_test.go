@@ -137,15 +137,20 @@ func TestAgentsMDTemplateAlignment(t *testing.T) {
 	if !strings.Contains(content, "`version`") {
 		t.Error("workspace AGENTS.md missing version frontmatter reference")
 	}
+	if !strings.Contains(content, "remove `id` and `version` from the copy before pushing") {
+		t.Error("workspace AGENTS.md missing copy-page safety guidance for id/version")
+	}
 
 	// Must contain Content Support Contract section.
 	if !strings.Contains(content, "Content Support Contract") {
 		t.Error("workspace AGENTS.md missing Content Support Contract section")
 	}
 
-	// Must contain Documentation Strategy section.
-	if !strings.Contains(content, "Documentation Strategy") {
-		t.Error("workspace AGENTS.md missing Documentation Strategy section")
+	// Root workspace AGENTS.md should stay operational and self-contained.
+	for _, banned := range []string{"Documentation Strategy", "Specs and PRDs", "Spec/PRD document"} {
+		if strings.Contains(content, banned) {
+			t.Errorf("workspace AGENTS.md should not reference repo docs/specs via %q", banned)
+		}
 	}
 
 	// Must mention Mermaid preservation behavior.

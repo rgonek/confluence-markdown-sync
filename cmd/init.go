@@ -56,6 +56,7 @@ Use ` + "`conf search`" + ` to find content without reading entire files.
 - **Frontmatter**:
   - ` + "`id`" + `: Immutable — do not edit.
   - ` + "`version`" + `: Managed by ` + "`conf`" + ` — do not edit.
+  - When copying an existing page to create a new one, remove ` + "`id`" + ` and ` + "`version`" + ` from the copy before pushing.
   - ` + "`state`" + `: Lifecycle state (` + "`draft`" + ` or ` + "`current`" + `). Omitted means ` + "`current`" + `. Cannot revert to ` + "`draft`" + ` once published.
   - ` + "`status`" + `: Confluence visual lozenge (e.g., "Ready to review").
   - ` + "`labels`" + `: Confluence page labels (array of strings).
@@ -87,9 +88,6 @@ Space/
 - **PlantUML**: Rendered round-trip support via the ` + "`plantumlcloud`" + ` Confluence macro.
 - **Mermaid**: Preserved as fenced code blocks; pushed as ADF ` + "`codeBlock`" + ` (not rendered as a Confluence diagram). ` + "`validate`" + ` warns with ` + "`MERMAID_PRESERVED_AS_CODEBLOCK`" + `.
 - **Hierarchy**: Pages with children use the ` + "`ParentPage/ParentPage.md`" + ` convention; moves are surfaced as ` + "`PAGE_PATH_MOVED`" + ` diagnostics.
-
-## Documentation Strategy
-Specs and PRDs generated in this workspace should be maintained as the working source of truth for feature behavior and product intent. When behavior or requirements are unclear, refer to the primary plan (if one exists) or to the relevant Spec/PRD document.
 
 ## Space-Specific Rules
 Each space directory (e.g., ` + "`Technical documentation (TD)/`" + `) may contain its own ` + "`AGENTS.md`" + ` with space-specific content rules (e.g., required templates, PII guidelines). Check those if they exist.
