@@ -365,7 +365,11 @@ func runPullWithReport(cmd *cobra.Command, target config.Target, emitJSONReport 
 	}
 
 	if !hasChanges {
-		_, _ = fmt.Fprintln(out, "pull completed with no scoped changes (no-op)")
+		if result.RemotePagesChecked == 0 {
+			_, _ = fmt.Fprintln(out, "pull completed with no remote changes since last sync (no-op)")
+		} else {
+			_, _ = fmt.Fprintln(out, "pull completed with no scoped changes: all remote updates were outside the target scope (no-op)")
+		}
 		return report, nil
 	}
 

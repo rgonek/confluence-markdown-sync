@@ -219,7 +219,7 @@ func runPush(cmd *cobra.Command, target config.Target, onConflict string, dryRun
 	}
 
 	if len(preSnapshotChanges) == 0 {
-		_, _ = fmt.Fprintln(out, "push completed with no in-scope markdown changes (no-op)")
+		_, _ = fmt.Fprintln(out, "push completed: no local markdown changes detected since last sync (no-op)")
 		return nil
 	}
 

@@ -40,7 +40,7 @@ func runPushPreflight(
 
 	_, _ = fmt.Fprintf(out, "preflight for space %s\n", spaceKey)
 	if len(syncChanges) == 0 {
-		_, _ = fmt.Fprintln(out, "no in-scope markdown changes")
+		_, _ = fmt.Fprintf(out, "preflight for space %s: no local markdown changes detected since last sync (no-op)\n", spaceKey)
 		return nil
 	}
 
@@ -105,15 +105,25 @@ func runPushPreflight(
 		case syncflow.PushChangeAdd:
 			_, _ = fmt.Fprintf(out, "  add %s\n", change.Path)
 		case syncflow.PushChangeDelete:
-			fm, fmErr := fs.ReadFrontmatter(absPath)
+			// Look up page ID: try frontmatter first (file may still exist in worktree),
+			// then fall back to the state index.
 			pageID := ""
+			fm, fmErr := fs.ReadFrontmatter(absPath)
 			if fmErr == nil {
 				pageID = strings.TrimSpace(fm.ID)
 			}
+			if pageID == "" {
+				pageID = strings.TrimSpace(state.PagePathIndex[change.Path])
+			}
 			if pageID != "" {
-				_, _ = fmt.Fprintf(out, "  delete %s (page %s)\n", change.Path, pageID)
+				remotePage, hasRemote := remotePageByID[pageID]
+				if hasRemote && strings.TrimSpace(remotePage.Title) != "" {
+					_, _ = fmt.Fprintf(out, "  ⚠ Destructive: delete %s (page %s, %q)\n", change.Path, pageID, remotePage.Title)
+				} else {
+					_, _ = fmt.Fprintf(out, "  ⚠ Destructive: delete %s (page %s)\n", change.Path, pageID)
+				}
 			} else {
-				_, _ = fmt.Fprintf(out, "  delete %s\n", change.Path)
+				_, _ = fmt.Fprintf(out, "  ⚠ Destructive: delete %s\n", change.Path)
 			}
 		case syncflow.PushChangeModify:
 			fm, fmErr := fs.ReadFrontmatter(absPath)
@@ -157,6 +167,33 @@ func runPushPreflight(
 
 	addCount, modifyCount, deleteCount := summarizePushChanges(syncChanges)
 	_, _ = fmt.Fprintf(out, "changes: %d (A:%d M:%d D:%d)\n", len(syncChanges), addCount, modifyCount, deleteCount)
+	if deleteCount > 0 {
+		_, _ = fmt.Fprintln(out, "Destructive operations in this push:")
+		for _, change := range syncChanges {
+			if change.Type != syncflow.PushChangeDelete {
+				continue
+			}
+			absPath := filepath.Join(spaceDir, filepath.FromSlash(change.Path))
+			pageID := ""
+			fm, fmErr := fs.ReadFrontmatter(absPath)
+			if fmErr == nil {
+				pageID = strings.TrimSpace(fm.ID)
+			}
+			if pageID == "" {
+				pageID = strings.TrimSpace(state.PagePathIndex[change.Path])
+			}
+			if pageID != "" {
+				remotePage, hasRemote := remotePageByID[pageID]
+				if hasRemote && strings.TrimSpace(remotePage.Title) != "" {
+					_, _ = fmt.Fprintf(out, "  archive %s %q (%s)\n", pageID, remotePage.Title, change.Path)
+				} else {
+					_, _ = fmt.Fprintf(out, "  archive %s (%s)\n", pageID, change.Path)
+				}
+			} else {
+				_, _ = fmt.Fprintf(out, "  delete %s\n", change.Path)
+			}
+		}
+	}
 	if len(syncChanges) > 10 || deleteCount > 0 {
 		_, _ = fmt.Fprintln(out, "safety confirmation would be required")
 	}
@@ -263,7 +300,7 @@ func runPushDryRun(
 	}
 
 	if len(syncChanges) == 0 {
-		_, _ = fmt.Fprintln(out, "push completed with no in-scope markdown changes (no-op)")
+		_, _ = fmt.Fprintln(out, "push completed: no local markdown changes detected since last sync (no-op)")
 		return nil
 	}
 
@@ -292,17 +329,18 @@ func runPushDryRun(
 	}
 	defer closeRemoteIfPossible(realRemote)
 
-	remote := &dryRunPushRemote{inner: realRemote, out: out, domain: cfg.Domain}
+	remote := &dryRunPushRemote{inner: realRemote, out: out, domain: cfg.Domain, emitOperations: true}
 
-	dryRunSpaceDir, cleanupDryRun, err := prepareDryRunSpaceDir(spaceDir)
-	if err != nil {
-		return err
-	}
-	defer cleanupDryRun()
-
-	state, err := fs.LoadState(dryRunSpaceDir)
+	state, err := fs.LoadState(spaceDir)
 	if err != nil {
 		return fmt.Errorf("load state: %w", err)
+	}
+
+	// Build global page index from the original space dir so cross-space
+	// links resolve correctly.
+	globalPageIndex, err := buildWorkspaceGlobalPageIndex(spaceDir)
+	if err != nil {
+		return fmt.Errorf("build global page index: %w", err)
 	}
 
 	var progress syncflow.Progress
@@ -310,11 +348,16 @@ func runPushDryRun(
 		progress = newConsoleProgress(out, "[DRY-RUN] Syncing to Confluence")
 	}
 
+	// Use the original space dir directly — the DryRun flag prevents local
+	// file writes, and the dryRunPushRemote prevents remote writes. This
+	// keeps sibling space directories accessible for cross-space link
+	// resolution.
 	result, err := syncflow.Push(ctx, remote, syncflow.PushOptions{
 		SpaceKey:            spaceKey,
-		SpaceDir:            dryRunSpaceDir,
+		SpaceDir:            spaceDir,
 		Domain:              cfg.Domain,
 		State:               state,
+		GlobalPageIndex:     globalPageIndex,
 		Changes:             syncChanges,
 		ConflictPolicy:      toSyncConflictPolicy(onConflict),
 		KeepOrphanAssets:    flagPushKeepOrphanAssets,
@@ -556,6 +599,43 @@ func pushHasDeleteChange(changes []syncflow.PushFileChange) bool {
 		}
 	}
 	return false
+}
+
+// printDestructivePushPreview prints a human-readable list of pages that will
+// be archived/deleted by the push. It is called before the safety confirmation
+// prompt so the operator can see exactly what will be removed.
+func printDestructivePushPreview(out io.Writer, changes []syncflow.PushFileChange, spaceDir string, state fs.SpaceState) {
+	hasDelete := false
+	for _, change := range changes {
+		if change.Type == syncflow.PushChangeDelete {
+			hasDelete = true
+			break
+		}
+	}
+	if !hasDelete {
+		return
+	}
+
+	_, _ = fmt.Fprintln(out, "Destructive operations in this push:")
+	for _, change := range changes {
+		if change.Type != syncflow.PushChangeDelete {
+			continue
+		}
+		pageID := ""
+		absPath := filepath.Join(spaceDir, filepath.FromSlash(change.Path))
+		fm, fmErr := fs.ReadFrontmatter(absPath)
+		if fmErr == nil {
+			pageID = strings.TrimSpace(fm.ID)
+		}
+		if pageID == "" {
+			pageID = strings.TrimSpace(state.PagePathIndex[change.Path])
+		}
+		if pageID != "" {
+			_, _ = fmt.Fprintf(out, "  archive page %s (%s)\n", pageID, change.Path)
+		} else {
+			_, _ = fmt.Fprintf(out, "  delete %s\n", change.Path)
+		}
+	}
 }
 
 func printPushDiagnostics(out io.Writer, diagnostics []syncflow.PushDiagnostic) {

@@ -89,9 +89,16 @@ func runPushInWorktree(
 	}
 
 	if len(syncChanges) == 0 {
-		_, _ = fmt.Fprintln(out, "push completed with no in-scope markdown changes (no-op)")
+		_, _ = fmt.Fprintln(out, "push completed: no in-scope markdown changes found in worktree (no-op)")
 		outcome.NoChanges = true
 		return outcome, nil
+	}
+
+	if pushHasDeleteChange(syncChanges) {
+		wtState, stateErr := fs.LoadState(wtSpaceDir)
+		if stateErr == nil {
+			printDestructivePushPreview(out, syncChanges, wtSpaceDir, wtState)
+		}
 	}
 
 	if err := requireSafetyConfirmation(cmd.InOrStdin(), out, "push", len(syncChanges), pushHasDeleteChange(syncChanges)); err != nil {
@@ -193,7 +200,7 @@ func runPushInWorktree(
 
 	if len(result.Commits) == 0 {
 		slog.Info("push_sync_result", "space_key", spaceKey, "commit_count", 0, "diagnostics", len(result.Diagnostics))
-		_, _ = fmt.Fprintln(out, "push completed with no pushable markdown changes (no-op)")
+		_, _ = fmt.Fprintln(out, "push completed: changed files produced no pushable content after validation (no-op)")
 		outcome.NoChanges = true
 		return outcome, nil
 	}

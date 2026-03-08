@@ -84,6 +84,10 @@ type PullResult struct {
 	DeletedMarkdown  []string
 	DownloadedAssets []string
 	DeletedAssets    []string
+	// RemotePagesChecked is the number of remote pages that were identified as
+	// changed (or potentially changed) and fetched during this pull. Zero means
+	// the remote reported no new changes since the last sync watermark.
+	RemotePagesChecked int
 }
 
 // Pull executes end-to-end pull orchestration in local filesystem scope.
@@ -678,13 +682,14 @@ func Pull(ctx context.Context, remote PullRemote, opts PullOptions) (PullResult,
 	state.LastPullHighWatermark = highWatermark.Format(time.RFC3339)
 
 	return PullResult{
-		State:            state,
-		MaxVersion:       maxVersion,
-		Diagnostics:      NormalizePullDiagnostics(diagnostics),
-		UpdatedMarkdown:  updatedMarkdown,
-		DeletedMarkdown:  deletedMarkdown,
-		DownloadedAssets: downloadedAssets,
-		DeletedAssets:    deletedAssets,
+		State:              state,
+		MaxVersion:         maxVersion,
+		Diagnostics:        NormalizePullDiagnostics(diagnostics),
+		UpdatedMarkdown:    updatedMarkdown,
+		DeletedMarkdown:    deletedMarkdown,
+		DownloadedAssets:   downloadedAssets,
+		DeletedAssets:      deletedAssets,
+		RemotePagesChecked: len(changedPageIDs),
 	}, nil
 }
 

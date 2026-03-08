@@ -714,3 +714,80 @@ func firstOrDefault(value, fallback string) string {
 	}
 	return value
 }
+
+func TestPushNoOp_ExplainsReason(t *testing.T) {
+	runParallelCommandTest(t)
+
+	repo := t.TempDir()
+	spaceDir := preparePushRepoWithBaseline(t, repo)
+
+	// No local changes after baseline — push should be a no-op.
+	factoryCalls := 0
+	oldPushFactory := newPushRemote
+	oldPullFactory := newPullRemote
+	newPushRemote = func(_ *config.Config) (syncflow.PushRemote, error) {
+		factoryCalls++
+		return newCmdFakePushRemote(1), nil
+	}
+	newPullRemote = func(_ *config.Config) (syncflow.PullRemote, error) {
+		return newCmdFakePushRemote(1), nil
+	}
+	t.Cleanup(func() {
+		newPushRemote = oldPushFactory
+		newPullRemote = oldPullFactory
+	})
+
+	setupEnv(t)
+	chdirRepo(t, spaceDir)
+
+	out := &bytes.Buffer{}
+	cmd := &cobra.Command{}
+	cmd.SetOut(out)
+	if err := runPush(cmd, config.Target{Mode: config.TargetModeSpace, Value: ""}, OnConflictCancel, false); err != nil {
+		t.Fatalf("runPush() unexpected error: %v", err)
+	}
+
+	got := out.String()
+	if !strings.Contains(got, "no local markdown changes detected since last sync") {
+		t.Fatalf("expected no-op message to explain reason, got:\n%s", got)
+	}
+	if factoryCalls != 0 {
+		t.Fatalf("expected no remote calls for early no-op push, got %d", factoryCalls)
+	}
+}
+
+func TestPushNoOp_DryRunExplainsReason(t *testing.T) {
+	runParallelCommandTest(t)
+
+	repo := t.TempDir()
+	spaceDir := preparePushRepoWithBaseline(t, repo)
+
+	// No local changes after baseline — dry-run push should be a no-op.
+	oldPushFactory := newPushRemote
+	oldPullFactory := newPullRemote
+	newPushRemote = func(_ *config.Config) (syncflow.PushRemote, error) {
+		return newCmdFakePushRemote(1), nil
+	}
+	newPullRemote = func(_ *config.Config) (syncflow.PullRemote, error) {
+		return newCmdFakePushRemote(1), nil
+	}
+	t.Cleanup(func() {
+		newPushRemote = oldPushFactory
+		newPullRemote = oldPullFactory
+	})
+
+	setupEnv(t)
+	chdirRepo(t, spaceDir)
+
+	out := &bytes.Buffer{}
+	cmd := &cobra.Command{}
+	cmd.SetOut(out)
+	if err := runPush(cmd, config.Target{Mode: config.TargetModeSpace, Value: ""}, OnConflictCancel, true); err != nil {
+		t.Fatalf("runPush() dry-run unexpected error: %v", err)
+	}
+
+	got := out.String()
+	if !strings.Contains(got, "no local markdown changes detected since last sync") {
+		t.Fatalf("expected dry-run no-op message to explain reason, got:\n%s", got)
+	}
+}
