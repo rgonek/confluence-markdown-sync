@@ -111,6 +111,68 @@ func TestRunRecover_SkipsCorruptRecoveryMetadataFiles(t *testing.T) {
 	}
 }
 
+func TestRunRecover_NoArtifactsReportsClean(t *testing.T) {
+	runParallelCommandTest(t)
+
+	repo := t.TempDir()
+	spaceDir := preparePushRepoWithBaseline(t, repo)
+	chdirRepo(t, spaceDir)
+
+	out, err := runRecoverForTest(t)
+	if err != nil {
+		t.Fatalf("recover on clean repo failed: %v\nOutput:\n%s", err, out)
+	}
+
+	if !strings.Contains(out, "no retained failed push artifacts found") {
+		t.Fatalf("expected clean-state message, got:\n%s", out)
+	}
+}
+
+func TestRunRecover_SectionedOutputFormat(t *testing.T) {
+	runParallelCommandTest(t)
+
+	_, spaceDir, syncBranch, snapshotRef := createFailedPushRecoveryRun(t)
+	chdirRepo(t, spaceDir)
+
+	out, err := runRecoverForTest(t)
+	if err != nil {
+		t.Fatalf("recover inspection failed: %v\nOutput:\n%s", err, out)
+	}
+
+	// Output must use the sectioned format.
+	if !strings.Contains(out, "Recovery artifacts:") {
+		t.Fatalf("expected 'Recovery artifacts:' section header, got:\n%s", out)
+	}
+	if !strings.Contains(out, "Snapshot refs:") {
+		t.Fatalf("expected 'Snapshot refs:' section, got:\n%s", out)
+	}
+	if !strings.Contains(out, "Sync branches:") {
+		t.Fatalf("expected 'Sync branches:' section, got:\n%s", out)
+	}
+	if !strings.Contains(out, "Failed runs:") {
+		t.Fatalf("expected 'Failed runs:' section, got:\n%s", out)
+	}
+
+	// Each section must include the actual artifact identifiers.
+	if !strings.Contains(out, snapshotRef) {
+		t.Fatalf("expected snapshot ref %q in output, got:\n%s", snapshotRef, out)
+	}
+	if !strings.Contains(out, syncBranch) {
+		t.Fatalf("expected sync branch %q in output, got:\n%s", syncBranch, out)
+	}
+
+	// The Failed runs section must include structured detail lines.
+	if !strings.Contains(out, "Branch: "+syncBranch) {
+		t.Fatalf("expected 'Branch:' detail line in Failed runs section, got:\n%s", out)
+	}
+	if !strings.Contains(out, "Snapshot: "+snapshotRef) {
+		t.Fatalf("expected 'Snapshot:' detail line in Failed runs section, got:\n%s", out)
+	}
+	if !strings.Contains(out, "simulated update failure") {
+		t.Fatalf("expected failure reason in Failed runs section, got:\n%s", out)
+	}
+}
+
 func createFailedPushRecoveryRun(t *testing.T) (repo string, spaceDir string, syncBranch string, snapshotRef string) {
 	t.Helper()
 

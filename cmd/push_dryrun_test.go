@@ -376,3 +376,62 @@ func TestRunPush_PreflightRejectsDryRunCombination(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
+
+func TestRunPush_PreflightShowsDestructiveDeleteProminent(t *testing.T) {
+	runParallelCommandTest(t)
+
+	repo := t.TempDir()
+	spaceDir := preparePushRepoWithBaseline(t, repo)
+
+	// Delete the tracked file to produce a PushChangeDelete entry.
+	if err := os.Remove(filepath.Join(spaceDir, "root.md")); err != nil {
+		t.Fatalf("remove root.md: %v", err)
+	}
+	runGitForTest(t, repo, "rm", filepath.Join("Engineering (ENG)", "root.md"))
+	runGitForTest(t, repo, "commit", "-m", "delete root page")
+
+	previousPreflight := flagPushPreflight
+	flagPushPreflight = true
+	t.Cleanup(func() { flagPushPreflight = previousPreflight })
+
+	fake := newCmdFakePushRemote(1)
+	oldPushFactory := newPushRemote
+	oldPullFactory := newPullRemote
+	newPushRemote = func(_ *config.Config) (syncflow.PushRemote, error) { return fake, nil }
+	newPullRemote = func(_ *config.Config) (syncflow.PullRemote, error) { return fake, nil }
+	t.Cleanup(func() {
+		newPushRemote = oldPushFactory
+		newPullRemote = oldPullFactory
+	})
+
+	setupEnv(t)
+	chdirRepo(t, spaceDir)
+
+	cmd := &cobra.Command{}
+	out := &bytes.Buffer{}
+	cmd.SetOut(out)
+
+	if err := runPush(cmd, config.Target{Mode: config.TargetModeSpace, Value: ""}, OnConflictCancel, false); err != nil {
+		t.Fatalf("runPush() preflight unexpected error: %v", err)
+	}
+
+	text := out.String()
+
+	// Delete entries in the planned mutations section must be prominent.
+	if !strings.Contains(text, "Destructive: delete") {
+		t.Fatalf("preflight output missing prominent destructive delete marker:\n%s", text)
+	}
+	if !strings.Contains(text, "root.md") {
+		t.Fatalf("preflight output missing deleted file name:\n%s", text)
+	}
+
+	// A dedicated destructive operations summary section must be present.
+	if !strings.Contains(text, "Destructive operations in this push:") {
+		t.Fatalf("preflight output missing Destructive operations section:\n%s", text)
+	}
+
+	// safety confirmation notice must appear.
+	if !strings.Contains(text, "safety confirmation would be required") {
+		t.Fatalf("preflight output missing safety confirmation notice:\n%s", text)
+	}
+}

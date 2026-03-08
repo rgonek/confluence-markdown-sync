@@ -258,26 +258,55 @@ func selectRecoveryRuns(runs []recoveryRun, selector string) []recoveryRun {
 }
 
 func renderRecoveryRuns(out io.Writer, runs []recoveryRun) {
-	_, _ = fmt.Fprintf(out, "Retained recovery runs: %d\n", len(runs))
+	_, _ = fmt.Fprintln(out, "Recovery artifacts:")
+
+	_, _ = fmt.Fprintln(out, "\nSnapshot refs:")
+	snapshotCount := 0
 	for _, run := range runs {
-		_, _ = fmt.Fprintf(out, "- %s\n", run.SyncBranch)
 		if run.SnapshotRef != "" {
-			_, _ = fmt.Fprintf(out, "  snapshot: %s\n", run.SnapshotRef)
+			_, _ = fmt.Fprintf(out, "  %s\n", run.SnapshotRef)
+			snapshotCount++
+		}
+	}
+	if snapshotCount == 0 {
+		_, _ = fmt.Fprintln(out, "  (none)")
+	}
+
+	_, _ = fmt.Fprintln(out, "\nSync branches:")
+	branchCount := 0
+	for _, run := range runs {
+		if run.SyncBranch != "" {
+			_, _ = fmt.Fprintf(out, "  %s\n", run.SyncBranch)
+			branchCount++
+		}
+	}
+	if branchCount == 0 {
+		_, _ = fmt.Fprintln(out, "  (none)")
+	}
+
+	_, _ = fmt.Fprintln(out, "\nFailed runs:")
+	for _, run := range runs {
+		_, _ = fmt.Fprintf(out, "  %s %s\n", run.SpaceKey, run.Timestamp)
+		if run.SyncBranch != "" {
+			_, _ = fmt.Fprintf(out, "    Branch: %s\n", run.SyncBranch)
+		}
+		if run.SnapshotRef != "" {
+			_, _ = fmt.Fprintf(out, "    Snapshot: %s\n", run.SnapshotRef)
 		}
 		if run.OriginalBranch != "" {
-			_, _ = fmt.Fprintf(out, "  original branch: %s\n", run.OriginalBranch)
+			_, _ = fmt.Fprintf(out, "    Original branch: %s\n", run.OriginalBranch)
 		}
 		if strings.TrimSpace(run.FailureReason) == "" {
-			_, _ = fmt.Fprintln(out, "  failure: unavailable")
+			_, _ = fmt.Fprintln(out, "    Failure: unavailable")
 		} else {
-			_, _ = fmt.Fprintf(out, "  failure: %s\n", run.FailureReason)
+			_, _ = fmt.Fprintf(out, "    Failure: %s\n", run.FailureReason)
 		}
 		if run.CurrentBranch {
-			_, _ = fmt.Fprintln(out, "  status: current HEAD is on this recovery branch")
+			_, _ = fmt.Fprintln(out, "    Status: current HEAD is on this recovery branch")
 		} else if run.WorktreeBlockReason != "" {
-			_, _ = fmt.Fprintf(out, "  status: %s\n", run.WorktreeBlockReason)
+			_, _ = fmt.Fprintf(out, "    Status: %s\n", run.WorktreeBlockReason)
 		} else {
-			_, _ = fmt.Fprintln(out, "  status: safe to discard")
+			_, _ = fmt.Fprintln(out, "    Status: safe to discard")
 		}
 	}
 }
