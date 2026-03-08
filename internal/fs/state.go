@@ -143,6 +143,7 @@ func normalizeStatePath(path string) string {
 		return ""
 	}
 
+	path = strings.ReplaceAll(path, `\`, "/")
 	path = filepath.ToSlash(filepath.Clean(path))
 	path = strings.TrimPrefix(path, "./")
 	if path == "." {

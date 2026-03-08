@@ -306,6 +306,7 @@ func invertPathByID(pathByID map[string]string) map[string]string {
 }
 
 func normalizeRelPath(path string) string {
+	path = strings.ReplaceAll(path, `\`, "/")
 	path = filepath.ToSlash(filepath.Clean(path))
 	path = strings.TrimPrefix(path, "./")
 	if path == "." {

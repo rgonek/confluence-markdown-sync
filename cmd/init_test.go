@@ -177,6 +177,7 @@ func TestRunInit_PartialEnvironmentStillPromptsForCredentials(t *testing.T) {
 func TestRunInit_ExistingDotEnvRemainsUnchanged(t *testing.T) {
 	runParallelCommandTest(t)
 	repo := t.TempDir()
+	setupGitRepo(t, repo)
 	chdirRepo(t, repo)
 
 	originalDotEnv := "# existing credentials\nATLASSIAN_DOMAIN=https://existing.atlassian.net\nATLASSIAN_EMAIL=existing-user@example.com\nATLASSIAN_API_TOKEN=existing-token\n"

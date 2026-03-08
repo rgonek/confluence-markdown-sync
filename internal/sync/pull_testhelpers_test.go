@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	gosync "sync"
 	"testing"
 	"time"
 
@@ -11,6 +12,7 @@ import (
 )
 
 type fakePullRemote struct {
+	mu                gosync.Mutex
 	space             confluence.Space
 	pages             []confluence.Page
 	folderByID        map[string]confluence.Folder
@@ -50,7 +52,9 @@ func (f *fakePullRemote) ListPages(_ context.Context, _ confluence.PageListOptio
 }
 
 func (f *fakePullRemote) GetFolder(_ context.Context, folderID string) (confluence.Folder, error) {
+	f.mu.Lock()
 	f.getFolderCalls = append(f.getFolderCalls, folderID)
+	f.mu.Unlock()
 	if f.folderErr != nil {
 		return confluence.Folder{}, f.folderErr
 	}
@@ -81,7 +85,9 @@ func (f *fakePullRemote) GetPage(_ context.Context, pageID string) (confluence.P
 }
 
 func (f *fakePullRemote) GetContentStatus(_ context.Context, pageID string, _ string) (string, error) {
+	f.mu.Lock()
 	f.getStatusCalls = append(f.getStatusCalls, pageID)
+	f.mu.Unlock()
 	if f.contentStatusErr != nil {
 		return "", f.contentStatusErr
 	}
