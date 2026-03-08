@@ -271,7 +271,7 @@ func resolveSearchFormat(format string, out io.Writer) string {
 		return format
 	}
 	// If out is not os.Stdout fall back to json (pipe-like context).
-	if out == os.Stdout && term.IsTerminal(int(os.Stdout.Fd())) {
+	if out == os.Stdout && term.IsTerminal(int(os.Stdout.Fd())) { //nolint:gosec // Fd is small and fits in int
 		return "text"
 	}
 	return "json"

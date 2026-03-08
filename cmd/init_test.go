@@ -99,7 +99,7 @@ func TestRunInit_ScaffoldsDotEnvFromExistingEnvironmentWithoutPrompt(t *testing.
 		t.Fatalf("runInit() error: %v", err)
 	}
 
-	dotEnvRaw, err := os.ReadFile(filepath.Join(repo, ".env"))
+	dotEnvRaw, err := os.ReadFile(filepath.Join(repo, ".env")) //nolint:gosec // path is test temp dir + fixed filename
 	if err != nil {
 		t.Fatalf("read .env: %v", err)
 	}
@@ -149,7 +149,7 @@ func TestRunInit_PartialEnvironmentStillPromptsForCredentials(t *testing.T) {
 		t.Fatalf("runInit() error: %v", err)
 	}
 
-	dotEnvRaw, err := os.ReadFile(filepath.Join(repo, ".env"))
+	dotEnvRaw, err := os.ReadFile(filepath.Join(repo, ".env")) //nolint:gosec // path is test temp dir + fixed filename
 	if err != nil {
 		t.Fatalf("read .env: %v", err)
 	}
@@ -201,7 +201,7 @@ func TestRunInit_ExistingDotEnvRemainsUnchanged(t *testing.T) {
 		t.Fatalf("runInit() error: %v", err)
 	}
 
-	dotEnvRaw, err := os.ReadFile(filepath.Join(repo, ".env"))
+	dotEnvRaw, err := os.ReadFile(filepath.Join(repo, ".env")) //nolint:gosec // path is test temp dir + fixed filename
 	if err != nil {
 		t.Fatalf("read .env: %v", err)
 	}

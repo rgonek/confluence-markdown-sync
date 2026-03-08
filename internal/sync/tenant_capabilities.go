@@ -229,15 +229,6 @@ func pushChangesNeedFolderHierarchy(changes []PushFileChange) bool {
 	return false
 }
 
-func pushChangesNeedMetadataSync(changes []PushFileChange) bool {
-	for _, change := range changes {
-		if change.Type == PushChangeAdd || change.Type == PushChangeModify {
-			return true
-		}
-	}
-	return false
-}
-
 func filepathDirFromRel(relPath string) string {
 	return filepath.ToSlash(filepath.Dir(filepath.FromSlash(strings.TrimSpace(relPath))))
 }

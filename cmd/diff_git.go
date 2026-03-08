@@ -12,11 +12,6 @@ import (
 	"strings"
 )
 
-func printNoIndexDiff(out io.Writer, leftPath, rightPath string) error {
-	_, err := renderNoIndexDiff(out, leftPath, rightPath)
-	return err
-}
-
 func renderNoIndexDiff(out io.Writer, leftPath, rightPath string) (bool, error) {
 	workingDir, leftArg, rightArg := diffCommandPaths(leftPath, rightPath)
 

@@ -222,14 +222,6 @@ func deletedPageIDs(previousPageIndex map[string]string, remotePages map[string]
 	return sortedStringKeys(set)
 }
 
-func movedPageIDs(previousPageIndex map[string]string, nextPathByID map[string]string) []string {
-	set := map[string]struct{}{}
-	for _, move := range PlannedPagePathMoves(previousPageIndex, nextPathByID) {
-		set[move.PageID] = struct{}{}
-	}
-	return sortedStringKeys(set)
-}
-
 // PlannedPagePathMove describes a tracked page whose planned markdown path changed.
 type PlannedPagePathMove struct {
 	PageID       string

@@ -389,7 +389,7 @@ func listRecoveryMetadata(repoRoot string) (map[string]recoveryMetadata, []strin
 				continue
 			}
 			metadataPath := filepath.Join(spaceDir, file.Name())
-			raw, err := os.ReadFile(metadataPath)
+			raw, err := os.ReadFile(metadataPath) //nolint:gosec // path is space dir + recovery metadata filename
 			if err != nil {
 				warnings = append(warnings, fmt.Sprintf("skipping unreadable recovery metadata %s: %v", file.Name(), err))
 				continue

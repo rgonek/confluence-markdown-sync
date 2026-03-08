@@ -325,53 +325,6 @@ func reportAttachmentOpsFromPush(result syncflow.PushResult, spaceDir string) []
 	return out
 }
 
-func appendPushResultToReport(report *commandRunReport, result syncflow.PushResult, changes []syncflow.PushFileChange, spaceDir string) {
-	if report == nil {
-		return
-	}
-	report.Diagnostics = append(report.Diagnostics, reportDiagnosticsFromPush(result.Diagnostics, spaceDir)...)
-	report.AttachmentOperations = append(report.AttachmentOperations, reportAttachmentOpsFromPush(result, spaceDir)...)
-	report.FallbackModes = append(report.FallbackModes, fallbackModesFromPushDiagnostics(result.Diagnostics)...)
-
-	operationsByPath := pushOperationByPath(changes)
-	for _, commit := range result.Commits {
-		relPath := reportRelativePath(spaceDir, commit.Path)
-		report.MutatedFiles = append(report.MutatedFiles, relPath)
-		report.MutatedPages = append(report.MutatedPages, commandRunReportPage{
-			Operation: operationsByPath[normalizeReportPushPath(commit.Path)],
-			Path:      relPath,
-			PageID:    strings.TrimSpace(commit.PageID),
-			Title:     strings.TrimSpace(commit.PageTitle),
-			Version:   commit.Version,
-			Deleted:   commit.Deleted,
-		})
-	}
-}
-
-func pushOperationByPath(changes []syncflow.PushFileChange) map[string]string {
-	operations := make(map[string]string, len(changes))
-	for _, change := range changes {
-		switch change.Type {
-		case syncflow.PushChangeAdd:
-			operations[normalizeReportPushPath(change.Path)] = "create"
-		case syncflow.PushChangeDelete:
-			operations[normalizeReportPushPath(change.Path)] = "delete"
-		case syncflow.PushChangeModify:
-			operations[normalizeReportPushPath(change.Path)] = "update"
-		}
-	}
-	return operations
-}
-
-func normalizeReportPushPath(path string) string {
-	path = filepath.ToSlash(filepath.Clean(strings.TrimSpace(path)))
-	path = strings.TrimPrefix(path, "./")
-	if path == "." {
-		return ""
-	}
-	return path
-}
-
 func sortedUniqueStrings(values []string) []string {
 	if len(values) == 0 {
 		return []string{}
@@ -390,15 +343,6 @@ func sortedUniqueStrings(values []string) []string {
 	}
 	sort.Strings(out)
 	return out
-}
-
-func (r *commandRunReport) absorb(other commandRunReport) {
-	r.Diagnostics = append(r.Diagnostics, other.Diagnostics...)
-	r.MutatedFiles = append(r.MutatedFiles, other.MutatedFiles...)
-	r.MutatedPages = append(r.MutatedPages, other.MutatedPages...)
-	r.AttachmentOperations = append(r.AttachmentOperations, other.AttachmentOperations...)
-	r.FallbackModes = append(r.FallbackModes, other.FallbackModes...)
-	r.RecoveryArtifacts = append(r.RecoveryArtifacts, other.RecoveryArtifacts...)
 }
 
 func (r *commandRunReport) setRecoveryArtifactStatus(artifactType, name, status string) {

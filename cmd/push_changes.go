@@ -472,52 +472,6 @@ func collectGitChangesWithUntracked(client *git.Client, baselineRef, scopePath s
 	return changes, nil
 }
 
-func prepareDryRunSpaceDir(spaceDir string) (string, func(), error) {
-	tmpRoot, err := os.MkdirTemp("", "conf-dry-run-*")
-	if err != nil {
-		return "", nil, fmt.Errorf("create dry-run temp dir: %w", err)
-	}
-
-	cleanup := func() {
-		_ = os.RemoveAll(tmpRoot)
-	}
-
-	dryRunSpaceDir := filepath.Join(tmpRoot, filepath.Base(spaceDir))
-	if err := copyDirTree(spaceDir, dryRunSpaceDir); err != nil {
-		cleanup()
-		return "", nil, fmt.Errorf("prepare dry-run space copy: %w", err)
-	}
-
-	return dryRunSpaceDir, cleanup, nil
-}
-
-func copyDirTree(src, dst string) error {
-	return filepath.WalkDir(src, func(path string, d os.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			return walkErr
-		}
-
-		relPath, err := filepath.Rel(src, path)
-		if err != nil {
-			return err
-		}
-
-		targetPath := filepath.Join(dst, relPath)
-		if d.IsDir() {
-			return os.MkdirAll(targetPath, 0o750)
-		}
-
-		raw, err := os.ReadFile(path) //nolint:gosec // path comes from filepath.WalkDir under trusted source dir
-		if err != nil {
-			return err
-		}
-		if err := os.MkdirAll(filepath.Dir(targetPath), 0o750); err != nil {
-			return err
-		}
-		return os.WriteFile(targetPath, raw, 0o600)
-	})
-}
-
 func toSyncPushChanges(changes []git.FileStatus, spaceScopePath string) ([]syncflow.PushFileChange, error) {
 	normalizedScope := filepath.ToSlash(filepath.Clean(spaceScopePath))
 	if normalizedScope == "." {
