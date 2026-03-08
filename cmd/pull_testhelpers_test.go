@@ -55,6 +55,8 @@ type cmdFakePullRemote struct {
 	pagesByID         map[string]confluence.Page
 	attachments       map[string][]byte
 	attachmentsByPage map[string][]confluence.Attachment
+	contentStatusByID map[string]string
+	labelsByPage      map[string][]string
 }
 
 func (f *cmdFakePullRemote) GetUser(_ context.Context, accountID string) (confluence.User, error) {
@@ -98,12 +100,18 @@ func (f *cmdFakePullRemote) GetPage(_ context.Context, pageID string) (confluenc
 	return page, nil
 }
 
-func (f *cmdFakePullRemote) GetContentStatus(_ context.Context, pageID string) (string, error) {
-	return "", nil
+func (f *cmdFakePullRemote) GetContentStatus(_ context.Context, pageID string, _ string) (string, error) {
+	if f.contentStatusByID == nil {
+		return "", nil
+	}
+	return f.contentStatusByID[pageID], nil
 }
 
 func (f *cmdFakePullRemote) GetLabels(_ context.Context, pageID string) ([]string, error) {
-	return nil, nil
+	if f.labelsByPage == nil {
+		return nil, nil
+	}
+	return append([]string(nil), f.labelsByPage[pageID]...), nil
 }
 
 func (f *cmdFakePullRemote) ListAttachments(_ context.Context, pageID string) ([]confluence.Attachment, error) {

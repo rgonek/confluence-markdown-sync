@@ -4,6 +4,7 @@ package cmd
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -277,6 +278,90 @@ func TestWorkflow_AgenticFullCycle(t *testing.T) {
 	fmt.Printf("Agentic full cycle succeeded\n")
 }
 
+func TestWorkflow_MermaidPushPreservesCodeBlock(t *testing.T) {
+	spaceKey := requireE2ESandboxSpaceKey(t)
+
+	ctx := context.Background()
+	cfg, err := config.Load("")
+	if err != nil {
+		t.Fatalf("Load config: %v", err)
+	}
+
+	client, err := confluence.NewClient(confluence.ClientConfig{
+		BaseURL:  cfg.Domain,
+		Email:    cfg.Email,
+		APIToken: cfg.APIToken,
+	})
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+
+	rootDir := projectRootFromWD(t)
+	confBin := confBinaryForOS(rootDir)
+
+	tmpDir, err := os.MkdirTemp("", "conf-e2e-mermaid-*")
+	if err != nil {
+		t.Fatalf("MkdirTemp: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	runCMS := func(args ...string) string {
+		cmd := exec.Command(confBin, args...)
+		cmd.Dir = tmpDir
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("Command conf %v failed: %v\n%s", args, err, string(out))
+		}
+		return string(out)
+	}
+
+	runCMS("init")
+	runCMS("pull", spaceKey, "--yes", "--non-interactive")
+
+	spaceDir := findPulledSpaceDir(t, tmpDir)
+	stamp := time.Now().UTC().Format("20060102T150405")
+	title := "Mermaid E2E " + stamp
+	filePath := filepath.Join(spaceDir, "Mermaid-E2E-"+stamp+".md")
+	if err := fs.WriteMarkdownDocument(filePath, fs.MarkdownDocument{
+		Frontmatter: fs.Frontmatter{Title: title},
+		Body:        "```mermaid\ngraph TD\n  A --> B\n```\n",
+	}); err != nil {
+		t.Fatalf("WriteMarkdown: %v", err)
+	}
+
+	runCMS("validate", filePath)
+	runCMS("push", filePath, "--on-conflict=cancel", "--yes", "--non-interactive")
+
+	doc, err := fs.ReadMarkdownDocument(filePath)
+	if err != nil {
+		t.Fatalf("ReadMarkdown: %v", err)
+	}
+	pageID := strings.TrimSpace(doc.Frontmatter.ID)
+	if pageID == "" {
+		t.Fatal("expected pushed Mermaid page to receive a page id")
+	}
+	t.Cleanup(func() {
+		if err := client.DeletePage(context.Background(), pageID, confluence.PageDeleteOptions{}); err != nil && err != confluence.ErrNotFound {
+			t.Logf("cleanup delete page %s: %v", pageID, err)
+		}
+	})
+
+	deadline := time.Now().Add(30 * time.Second)
+	for {
+		page, err := client.GetPage(ctx, pageID)
+		if err == nil && adfContainsCodeBlockLanguage(page.BodyADF, "mermaid") {
+			return
+		}
+		if time.Now().After(deadline) {
+			if err != nil {
+				t.Fatalf("GetPage(%s) did not expose Mermaid codeBlock before timeout: %v", pageID, err)
+			}
+			t.Fatalf("remote ADF for page %s did not contain Mermaid codeBlock before timeout: %s", pageID, string(page.BodyADF))
+		}
+		time.Sleep(2 * time.Second)
+	}
+}
+
 func TestWorkflow_PushDryRunNonMutating(t *testing.T) {
 	spaceKey := requireE2ESandboxSpaceKey(t)
 
@@ -535,4 +620,37 @@ func findFirstMarkdownFile(t *testing.T, spaceDir string) string {
 		t.Fatalf("no markdown files found in %s", spaceDir)
 	}
 	return matched
+}
+
+func adfContainsCodeBlockLanguage(adf []byte, language string) bool {
+	var root any
+	if err := json.Unmarshal(adf, &root); err != nil {
+		return false
+	}
+	return walkADFForCodeBlockLanguage(root, language)
+}
+
+func walkADFForCodeBlockLanguage(node any, language string) bool {
+	switch typed := node.(type) {
+	case map[string]any:
+		if nodeType, ok := typed["type"].(string); ok && nodeType == "codeBlock" {
+			if attrs, ok := typed["attrs"].(map[string]any); ok {
+				if lang, ok := attrs["language"].(string); ok && strings.EqualFold(strings.TrimSpace(lang), language) {
+					return true
+				}
+			}
+		}
+		for _, value := range typed {
+			if walkADFForCodeBlockLanguage(value, language) {
+				return true
+			}
+		}
+	case []any:
+		for _, value := range typed {
+			if walkADFForCodeBlockLanguage(value, language) {
+				return true
+			}
+		}
+	}
+	return false
 }

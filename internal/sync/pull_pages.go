@@ -109,8 +109,16 @@ func listAllPages(ctx context.Context, remote PullRemote, opts confluence.PageLi
 }
 
 func resolveFolderHierarchyFromPages(ctx context.Context, remote PullRemote, pages []confluence.Page) (map[string]confluence.Folder, []PullDiagnostic, error) {
+	return resolveFolderHierarchyFromPagesWithMode(ctx, remote, pages, tenantFolderModeNative)
+}
+
+func resolveFolderHierarchyFromPagesWithMode(ctx context.Context, remote PullRemote, pages []confluence.Page, mode tenantFolderMode) (map[string]confluence.Folder, []PullDiagnostic, error) {
 	folderByID := map[string]confluence.Folder{}
 	diagnostics := []PullDiagnostic{}
+	if mode == tenantFolderModePageFallback {
+		return folderByID, diagnostics, nil
+	}
+	fallbackTracker := NewFolderLookupFallbackTracker()
 
 	queue := []string{}
 	enqueued := map[string]struct{}{}
@@ -144,11 +152,9 @@ func resolveFolderHierarchyFromPages(ctx context.Context, remote PullRemote, pag
 			if !shouldIgnoreFolderHierarchyError(err) {
 				return nil, nil, fmt.Errorf("get folder %s: %w", folderID, err)
 			}
-			diagnostics = append(diagnostics, PullDiagnostic{
-				Path:    folderID,
-				Code:    "FOLDER_LOOKUP_UNAVAILABLE",
-				Message: fmt.Sprintf("folder %s unavailable, falling back to page-only hierarchy: %v", folderID, err),
-			})
+			if diag, ok := fallbackTracker.Report("pull-folder-hierarchy", folderID, err); ok {
+				diagnostics = append(diagnostics, diag)
+			}
 			continue
 		}
 

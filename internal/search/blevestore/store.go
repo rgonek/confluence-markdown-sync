@@ -147,6 +147,46 @@ func (s *Store) ListSpaces() ([]string, error) {
 	return s.listFacetTerms("space_key")
 }
 
+// ListPathsBySpace returns all distinct indexed source paths for spaceKey, sorted.
+func (s *Store) ListPathsBySpace(spaceKey string) ([]string, error) {
+	const pageSize = 1000
+
+	var q query.Query = query.NewMatchAllQuery()
+	if spaceKey != "" {
+		spaceQuery := query.NewTermQuery(spaceKey)
+		spaceQuery.SetField("space_key")
+		q = query.NewConjunctionQuery([]query.Query{q, spaceQuery})
+	}
+
+	seen := map[string]struct{}{}
+	for from := 0; ; from += pageSize {
+		req := bleve.NewSearchRequestOptions(q, pageSize, from, false)
+		req.Fields = []string{"path"}
+
+		res, err := s.index.Search(req)
+		if err != nil {
+			return nil, fmt.Errorf("blevestore.ListPathsBySpace(%q): %w", spaceKey, err)
+		}
+
+		for _, hit := range res.Hits {
+			if path := toString(hit.Fields["path"]); path != "" {
+				seen[path] = struct{}{}
+			}
+		}
+
+		if len(res.Hits) < pageSize {
+			break
+		}
+	}
+
+	paths := make([]string, 0, len(seen))
+	for path := range seen {
+		paths = append(paths, path)
+	}
+	sort.Strings(paths)
+	return paths, nil
+}
+
 // metaKey is the internal key used to persist the last-indexed-at timestamp
 // via Bleve's internal key-value store (independent of the document mapping).
 var metaKey = []byte("confluence-sync:last-indexed-at")

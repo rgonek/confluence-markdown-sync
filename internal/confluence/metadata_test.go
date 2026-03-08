@@ -2,6 +2,7 @@ package confluence
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -11,15 +12,29 @@ import (
 func TestClient_ContentStatus(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/wiki/rest/api/content/123/state", func(w http.ResponseWriter, r *http.Request) {
+		if got := r.URL.Query().Get("status"); got != "current" {
+			t.Fatalf("status query = %q, want current", got)
+		}
 		switch r.Method {
 		case http.MethodGet:
 			w.Header().Set("Content-Type", "application/json")
-			if _, err := io.WriteString(w, `{"name": "Ready to review", "color": "yellow", "id": 80}`); err != nil {
+			if _, err := io.WriteString(w, `{"name":"Ready to review","color":"yellow","id":80}`); err != nil {
 				t.Fatalf("write response: %v", err)
 			}
 		case http.MethodPut:
+			var body map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatalf("decode request body: %v", err)
+			}
+			contentState, hasContentState := body["contentState"]
+			if hasContentState {
+				t.Fatalf("contentState payload = %#v; expected top-level name payload", contentState)
+			}
+			if got := body["name"]; got != "Ready to review" {
+				t.Fatalf("name payload = %v, want Ready to review", got)
+			}
 			w.Header().Set("Content-Type", "application/json")
-			if _, err := io.WriteString(w, `{"name": "Ready to review"}`); err != nil {
+			if _, err := io.WriteString(w, `{"name":"Ready to review","color":"yellow","id":80}`); err != nil {
 				t.Fatalf("write response: %v", err)
 			}
 		case http.MethodDelete:
@@ -44,7 +59,7 @@ func TestClient_ContentStatus(t *testing.T) {
 	ctx := context.Background()
 
 	// Test Get
-	status, err := client.GetContentStatus(ctx, "123")
+	status, err := client.GetContentStatus(ctx, "123", "current")
 	if err != nil {
 		t.Fatalf("GetContentStatus() failed: %v", err)
 	}
@@ -53,13 +68,13 @@ func TestClient_ContentStatus(t *testing.T) {
 	}
 
 	// Test Set
-	err = client.SetContentStatus(ctx, "123", "Ready to review")
+	err = client.SetContentStatus(ctx, "123", "current", "Ready to review")
 	if err != nil {
 		t.Fatalf("SetContentStatus() failed: %v", err)
 	}
 
 	// Test Delete
-	err = client.DeleteContentStatus(ctx, "123")
+	err = client.DeleteContentStatus(ctx, "123", "current")
 	if err != nil {
 		t.Fatalf("DeleteContentStatus() failed: %v", err)
 	}

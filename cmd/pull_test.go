@@ -459,3 +459,90 @@ func TestRunPull_DraftSpaceListing(t *testing.T) {
 		t.Errorf("draft.md status = %q, want draft", doc.Frontmatter.State)
 	}
 }
+
+func TestPullNoOp_ExplainsReason_NoRemoteChanges(t *testing.T) {
+	runParallelCommandTest(t)
+
+	repo := t.TempDir()
+	setupGitRepo(t, repo)
+
+	spaceDir := filepath.Join(repo, "Engineering (ENG)")
+	if err := os.MkdirAll(spaceDir, 0o750); err != nil {
+		t.Fatalf("mkdir space: %v", err)
+	}
+
+	writeMarkdown(t, filepath.Join(spaceDir, "Root.md"), fs.MarkdownDocument{
+		Frontmatter: fs.Frontmatter{
+			Title:                  "Root",
+			ID:                     "1",
+			Version:                2,
+			ConfluenceLastModified: "2026-02-01T11:00:00Z",
+		},
+		Body: "body\n",
+	})
+	// Save state with a watermark set after the remote page's last-modified time
+	// so the incremental change detection finds nothing new.
+	if err := fs.SaveState(spaceDir, fs.SpaceState{
+		SpaceKey:              "ENG",
+		LastPullHighWatermark: "2026-02-01T12:00:00Z",
+		PagePathIndex:         map[string]string{"Root.md": "1"},
+	}); err != nil {
+		t.Fatalf("save state: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, ".gitignore"), []byte(".env\n.confluence-state.json\n"), 0o600); err != nil {
+		t.Fatalf("write .gitignore: %v", err)
+	}
+	runGitForTest(t, repo, "add", ".")
+	runGitForTest(t, repo, "commit", "-m", "initial")
+
+	// ListChanges returns no changes since the watermark — remote is up-to-date.
+	fake := &cmdFakePullRemote{
+		space: confluence.Space{ID: "space-1", Key: "ENG", Name: "Engineering"},
+		pages: []confluence.Page{
+			{
+				ID:           "1",
+				SpaceID:      "space-1",
+				Title:        "Root",
+				Version:      2,
+				LastModified: time.Date(2026, time.February, 1, 11, 0, 0, 0, time.UTC),
+			},
+		},
+		pagesByID: map[string]confluence.Page{
+			"1": {
+				ID:           "1",
+				SpaceID:      "space-1",
+				Title:        "Root",
+				Version:      2,
+				LastModified: time.Date(2026, time.February, 1, 11, 0, 0, 0, time.UTC),
+				BodyADF:      rawJSON(t, simpleADF("body")),
+			},
+		},
+		// Empty changes list means ListChanges returns nothing → no changed page IDs.
+		changes:     []confluence.Change{},
+		attachments: map[string][]byte{},
+	}
+
+	oldFactory := newPullRemote
+	newPullRemote = func(_ *config.Config) (syncflow.PullRemote, error) { return fake, nil }
+	t.Cleanup(func() { newPullRemote = oldFactory })
+
+	oldNow := nowUTC
+	nowUTC = func() time.Time { return time.Date(2026, time.February, 1, 13, 0, 0, 0, time.UTC) }
+	t.Cleanup(func() { nowUTC = oldNow })
+
+	setupEnv(t)
+	chdirRepo(t, repo)
+
+	cmd := &cobra.Command{}
+	out := &bytes.Buffer{}
+	cmd.SetOut(out)
+
+	if err := runPull(cmd, config.Target{Mode: config.TargetModeSpace, Value: "Engineering (ENG)"}); err != nil {
+		t.Fatalf("runPull() error: %v", err)
+	}
+
+	got := out.String()
+	if !strings.Contains(got, "no remote changes since last sync") {
+		t.Fatalf("expected no-op message to explain reason (no remote changes), got:\n%s", got)
+	}
+}

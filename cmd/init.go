@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -9,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/huh"
+	"github.com/rgonek/confluence-markdown-sync/internal/config"
 	"github.com/spf13/cobra"
 )
 
@@ -35,29 +37,13 @@ const agentsMDTemplate = `# AGENTS
 
 This repository uses ` + "`conf`" + ` (confluence-sync) to manage Confluence documentation as Markdown.
 
-## Intended Usages
+## Recommended Workflow
 
-### 1. Human-in-the-Loop (Agent as Writer)
-In this mode, the agent edits Markdown files, and a human performs the sync commands.
-- **Workflow**:
-  - Edit ` + "`.md`" + ` files in the space directories.
-  - Run ` + "`conf validate [TARGET]`" + ` to ensure your changes are compatible with Confluence.
-  - Inform the human when changes are ready for ` + "`conf push`" + `.
-- **Rules**:
-  - NEVER manually edit ` + "`id`" + ` or ` + "`space`" + ` in frontmatter.
-  - Add images to the correct ` + "`assets/`" + ` subfolder.
+` + "`conf pull [TARGET]`" + ` → edit Markdown → ` + "`conf validate [TARGET]`" + ` → ` + "`conf diff [TARGET]`" + ` → ` + "`conf push [TARGET]`" + `
 
-### 2. Full Agentic Use (Autonomous Sync)
-In this mode, the agent is responsible for the entire lifecycle.
-- **Workflow**:
-  - ` + "`conf pull [SPACE]`" + ` — Always pull first to avoid conflicts.
-  - Edit/Create Markdown files.
-  - ` + "`conf validate [SPACE]`" + ` — Verify all links and assets.
-  - ` + "`conf diff [SPACE]`" + ` — Preview changes.
-  - ` + "`conf push [SPACE] --on-conflict=pull-merge`" + ` — Publish changes.
-- **Automation**: Use ` + "`--yes`" + ` and ` + "`--non-interactive`" + ` in CI/CD or automated scripts.
+Humans may review or approve specific steps, but the workflow is the same regardless of who runs each command.
 
-### 3. Search (Read-Only, Zero API Calls)
+## Search (Read-Only, Zero API Calls)
 Use ` + "`conf search`" + ` to find content without reading entire files.
 - **Workflow**: ` + "`conf search \"term\" --format json | <process>`" + ` for structured reads.
 - **Filters**: ` + "`--space KEY`" + `, ` + "`--label LABEL`" + `, ` + "`--heading TEXT`" + `, ` + "`--created-by USER`" + `, ` + "`--updated-by USER`" + `, ` + "`--created-after DATE`" + `, ` + "`--created-before DATE`" + `, ` + "`--updated-after DATE`" + `, ` + "`--updated-before DATE`" + `.
@@ -68,9 +54,10 @@ Use ` + "`conf search`" + ` to find content without reading entire files.
 - **Source of Truth**: Confluence is the primary source of truth for IDs and versions. Local Markdown is the source of truth for content between syncs.
 - **Validation**: ` + "`push`" + ` will fail if ` + "`validate`" + ` fails.
 - **Frontmatter**:
-  - ` + "`id`" + `, ` + "`space`" + `: Immutable.
-  - ` + "`version`" + `: Managed by ` + "`conf`" + `.
-  - ` + "`state`" + `: Lifecycle state (` + "`draft`" + ` or ` + "`current`" + `). Omitted means ` + "`current`" + `.
+  - ` + "`id`" + `: Immutable — do not edit.
+  - ` + "`version`" + `: Managed by ` + "`conf`" + ` — do not edit.
+  - When copying an existing page to create a new one, remove ` + "`id`" + ` and ` + "`version`" + ` from the copy before pushing.
+  - ` + "`state`" + `: Lifecycle state (` + "`draft`" + ` or ` + "`current`" + `). Omitted means ` + "`current`" + `. Cannot revert to ` + "`draft`" + ` once published.
   - ` + "`status`" + `: Confluence visual lozenge (e.g., "Ready to review").
   - ` + "`labels`" + `: Confluence page labels (array of strings).
 - **State**: ` + "`.confluence-state.json`" + ` tracks sync state. Do not delete.
@@ -93,6 +80,14 @@ Space/
 - The parent page file **must** be ` + "`DirectoryName/DirectoryName.md`" + ` (filename matches directory name).
 - Sibling ` + "`.md`" + ` files inside the directory become subpages of that parent.
 - This mirrors the Confluence page tree hierarchy in the local filesystem.
+
+## Content Support Contract
+- **Same-space links**: Relative Markdown links between pages in the same space are fully supported.
+- **Cross-space links**: Relative links to pages in sibling space directories are resolved at push time.
+- **Attachments**: Images and files stored in ` + "`assets/`" + ` are uploaded as Confluence page attachments.
+- **PlantUML**: Rendered round-trip support via the ` + "`plantumlcloud`" + ` Confluence macro.
+- **Mermaid**: Preserved as fenced code blocks; pushed as ADF ` + "`codeBlock`" + ` (not rendered as a Confluence diagram). ` + "`validate`" + ` warns with ` + "`MERMAID_PRESERVED_AS_CODEBLOCK`" + `.
+- **Hierarchy**: Pages with children use the ` + "`ParentPage/ParentPage.md`" + ` convention; moves are surfaced as ` + "`PAGE_PATH_MOVED`" + ` diagnostics.
 
 ## Space-Specific Rules
 Each space directory (e.g., ` + "`Technical documentation (TD)/`" + `) may contain its own ` + "`AGENTS.md`" + ` with space-specific content rules (e.g., required templates, PII guidelines). Check those if they exist.
@@ -131,7 +126,7 @@ ATLASSIAN_API_TOKEN=<your-api-token>
 
 ## Notes
 - Frontmatter fields:
-  - ` + "`id`" + `, ` + "`space`" + `: Immutable — do not edit.
+  - ` + "`id`" + `: Immutable — do not edit.
   - ` + "`version`" + `: Managed by ` + "`conf`" + `.
   - ` + "`state`" + `: Lifecycle state (` + "`draft`" + ` or ` + "`current`" + `).
   - ` + "`status`" + `: Confluence visual lozenge (e.g., "Ready to review").
@@ -293,6 +288,13 @@ func ensureDotEnv(cmd *cobra.Command) (bool, error) {
 	}
 
 	out := cmd.OutOrStdout()
+	if cfg, ok, err := loadInitEnvScaffoldConfig(); err != nil {
+		return false, err
+	} else if ok {
+		_, _ = fmt.Fprintln(out, "\nNo .env file found. Scaffolding it from existing Atlassian environment variables.")
+		return true, writeDotEnvFile(*cfg)
+	}
+
 	_, _ = fmt.Fprintln(out, "\nNo .env file found. Please enter your Atlassian credentials.")
 
 	var domain, email, token string
@@ -325,14 +327,33 @@ func ensureDotEnv(cmd *cobra.Command) (bool, error) {
 		token = promptField(scanner, out, "ATLASSIAN_API_TOKEN")
 	}
 
+	return true, writeDotEnvFile(config.Config{
+		Domain:   domain,
+		Email:    email,
+		APIToken: token,
+	})
+}
+
+func loadInitEnvScaffoldConfig() (*config.Config, bool, error) {
+	cfg, err := config.Load("")
+	if err == nil {
+		return cfg, true, nil
+	}
+	if errors.Is(err, config.ErrMissingConfig) {
+		return nil, false, nil
+	}
+	return nil, false, fmt.Errorf("resolve environment-backed auth for .env scaffolding: %w", err)
+}
+
+func writeDotEnvFile(cfg config.Config) error {
 	lines := []string{
 		"# Atlassian / Confluence credentials",
-		fmt.Sprintf("ATLASSIAN_DOMAIN=%s", strings.TrimRight(domain, "/")),
-		fmt.Sprintf("ATLASSIAN_EMAIL=%s", email),
-		fmt.Sprintf("ATLASSIAN_API_TOKEN=%s", token),
+		fmt.Sprintf("ATLASSIAN_DOMAIN=%s", strings.TrimRight(cfg.Domain, "/")),
+		fmt.Sprintf("ATLASSIAN_EMAIL=%s", strings.TrimSpace(cfg.Email)),
+		fmt.Sprintf("ATLASSIAN_API_TOKEN=%s", strings.TrimSpace(cfg.APIToken)),
 	}
 
-	return true, os.WriteFile(".env", []byte(strings.Join(lines, "\n")+"\n"), 0o600) //nolint:gosec // Writing static filename
+	return os.WriteFile(".env", []byte(strings.Join(lines, "\n")+"\n"), 0o600) //nolint:gosec // Writing static filename
 }
 
 func promptField(scanner *bufio.Scanner, out interface{ Write([]byte) (int, error) }, label string) string {

@@ -40,7 +40,9 @@ func loadPullStateWithHealing(
 	}
 
 	for _, diag := range diagnostics {
-		_, _ = fmt.Fprintf(out, "warning: %s [%s] %s\n", diag.Path, diag.Code, diag.Message)
+		if err := writeSyncDiagnostic(out, diag); err != nil {
+			return fs.SpaceState{}, fmt.Errorf("write diagnostic output: %w", err)
+		}
 	}
 
 	_, _ = fmt.Fprintln(out, "State file healed successfully.")

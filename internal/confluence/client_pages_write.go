@@ -96,15 +96,18 @@ func (c *Client) UpdatePage(ctx context.Context, pageID string, input PageUpsert
 	return payload.toModel(c.baseURL), nil
 }
 
-func (c *Client) DeletePage(ctx context.Context, pageID string, hardDelete bool) error {
+func (c *Client) DeletePage(ctx context.Context, pageID string, opts PageDeleteOptions) error {
 	id := strings.TrimSpace(pageID)
 	if id == "" {
 		return errors.New("page ID is required")
 	}
 
 	query := url.Values{}
-	if hardDelete {
+	if opts.Purge {
 		query.Set("purge", "true")
+	}
+	if opts.Draft {
+		query.Set("draft", "true")
 	}
 
 	req, err := c.newRequest(

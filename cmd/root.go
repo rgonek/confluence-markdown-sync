@@ -99,6 +99,7 @@ func init() {
 		newInitCmd(),
 		newPullCmd(),
 		newPushCmd(),
+		newRecoverCmd(),
 		newStatusCmd(),
 		newCleanCmd(),
 		newPruneCmd(),

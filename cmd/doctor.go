@@ -6,19 +6,23 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/rgonek/confluence-markdown-sync/internal/config"
 	"github.com/rgonek/confluence-markdown-sync/internal/fs"
+	"github.com/rgonek/confluence-markdown-sync/internal/git"
 	"github.com/spf13/cobra"
 )
 
 // DoctorIssue describes a single consistency problem found by the doctor command.
 type DoctorIssue struct {
 	// Kind identifies the category of issue.
-	Kind    string
-	Path    string
-	Message string
+	Kind       string
+	Path       string
+	Message    string
+	Severity   string
+	Repairable bool
 }
 
 // DoctorReport is the full set of issues found for a space.
@@ -84,6 +88,7 @@ func runDoctor(cmd *cobra.Command, target config.Target, repair bool) error {
 	if err != nil {
 		return err
 	}
+	appendDoctorGitIssues(&report)
 
 	if len(report.Issues) == 0 {
 		_, _ = fmt.Fprintln(out, "No issues found.")
@@ -92,7 +97,11 @@ func runDoctor(cmd *cobra.Command, target config.Target, repair bool) error {
 
 	_, _ = fmt.Fprintf(out, "\nFound %d issue(s):\n", len(report.Issues))
 	for _, issue := range report.Issues {
-		_, _ = fmt.Fprintf(out, "  [%s] %s: %s\n", issue.Kind, issue.Path, issue.Message)
+		repairability := "manual"
+		if issue.Repairable {
+			repairability = "repairable"
+		}
+		_, _ = fmt.Fprintf(out, "  [%s][%s] %s: %s: %s\n", issue.Severity, repairability, issue.Kind, issue.Path, issue.Message)
 	}
 
 	if !repair {
@@ -119,57 +128,88 @@ func runDoctor(cmd *cobra.Command, target config.Target, repair bool) error {
 }
 
 // buildDoctorReport scans the space directory and state for consistency issues.
-func buildDoctorReport(_ context.Context, spaceDir, _ string, state fs.SpaceState) (DoctorReport, error) {
-	report := DoctorReport{SpaceDir: spaceDir}
+func buildDoctorReport(_ context.Context, spaceDir, spaceKey string, state fs.SpaceState) (DoctorReport, error) {
+	report := DoctorReport{
+		SpaceDir: spaceDir,
+		SpaceKey: strings.TrimSpace(spaceKey),
+	}
 
 	// 1. Check every state entry: file must exist and its id frontmatter must match.
 	for relPath, pageID := range state.PagePathIndex {
 		relPath = normalizeRepoRelPath(relPath)
 		pageID = strings.TrimSpace(pageID)
 		if relPath == "" || pageID == "" {
-			report.Issues = append(report.Issues, DoctorIssue{
-				Kind:    "empty-index-entry",
-				Path:    relPath,
-				Message: "state index contains an empty path or ID; entry can be removed",
-			})
+			report.Issues = append(report.Issues, newDoctorIssue(
+				"empty-index-entry",
+				relPath,
+				"state index contains an empty path or ID; entry can be removed",
+				"error",
+				true,
+			))
 			continue
 		}
 
 		absPath := filepath.Join(spaceDir, filepath.FromSlash(relPath))
 		doc, readErr := fs.ReadMarkdownDocument(absPath)
 		if os.IsNotExist(readErr) || (readErr != nil && strings.Contains(readErr.Error(), "no such file")) {
-			report.Issues = append(report.Issues, DoctorIssue{
-				Kind:    "missing-file",
-				Path:    relPath,
-				Message: fmt.Sprintf("state tracks page %s but file does not exist on disk", pageID),
-			})
+			report.Issues = append(report.Issues, newDoctorIssue(
+				"missing-file",
+				relPath,
+				fmt.Sprintf("state tracks page %s but file does not exist on disk", pageID),
+				"error",
+				true,
+			))
 			continue
 		}
 		if readErr != nil {
-			report.Issues = append(report.Issues, DoctorIssue{
-				Kind:    "unreadable-file",
-				Path:    relPath,
-				Message: fmt.Sprintf("cannot read file: %v", readErr),
-			})
+			report.Issues = append(report.Issues, newDoctorIssue(
+				"unreadable-file",
+				relPath,
+				fmt.Sprintf("cannot read file: %v", readErr),
+				"error",
+				false,
+			))
 			continue
 		}
 
 		frontmatterID := strings.TrimSpace(doc.Frontmatter.ID)
 		if frontmatterID != pageID {
-			report.Issues = append(report.Issues, DoctorIssue{
-				Kind:    "id-mismatch",
-				Path:    relPath,
-				Message: fmt.Sprintf("state has id=%s but file frontmatter has id=%s", pageID, frontmatterID),
-			})
+			report.Issues = append(report.Issues, newDoctorIssue(
+				"id-mismatch",
+				relPath,
+				fmt.Sprintf("state has id=%s but file frontmatter has id=%s", pageID, frontmatterID),
+				"error",
+				false,
+			))
 		}
 
 		// Check for git conflict markers in the file.
 		if containsConflictMarkers(doc.Body) {
-			report.Issues = append(report.Issues, DoctorIssue{
-				Kind:    "conflict-markers",
-				Path:    relPath,
-				Message: "file contains unresolved git conflict markers",
-			})
+			report.Issues = append(report.Issues, newDoctorIssue(
+				"conflict-markers",
+				relPath,
+				"file contains unresolved git conflict markers",
+				"error",
+				false,
+			))
+		}
+
+		if containsUnknownMediaPlaceholder(doc.Body) {
+			report.Issues = append(report.Issues, newDoctorIssue(
+				"unknown-media-placeholder",
+				relPath,
+				"file contains unresolved UNKNOWN_MEDIA_ID placeholder content from best-effort sync fallback",
+				"warning",
+				false,
+			))
+		} else if containsEmbeddedContentPlaceholder(doc.Body) {
+			report.Issues = append(report.Issues, newDoctorIssue(
+				"embedded-content-placeholder",
+				relPath,
+				"file contains unresolved embedded-content placeholder text from degraded round-trip output",
+				"warning",
+				false,
+			))
 		}
 	}
 
@@ -189,14 +229,18 @@ func buildDoctorReport(_ context.Context, spaceDir, _ string, state fs.SpaceStat
 
 	for pageID, relPath := range localIDs {
 		if _, tracked := stateIDSet[pageID]; !tracked {
-			report.Issues = append(report.Issues, DoctorIssue{
-				Kind:    "untracked-id",
-				Path:    relPath,
-				Message: fmt.Sprintf("file has id=%s in frontmatter but is not tracked in state index", pageID),
-			})
+			report.Issues = append(report.Issues, newDoctorIssue(
+				"untracked-id",
+				relPath,
+				fmt.Sprintf("file has id=%s in frontmatter but is not tracked in state index", pageID),
+				"warning",
+				true,
+			))
 		}
 	}
 
+	report.Issues = append(report.Issues, detectHierarchyLayoutIssues(spaceDir)...)
+	sortDoctorIssues(report.Issues)
 	return report, nil
 }
 
@@ -246,6 +290,19 @@ func repairDoctorIssues(out io.Writer, spaceDir string, state fs.SpaceState, iss
 			_, _ = fmt.Fprintf(out, "  repaired [untracked-id]: added %s -> %s to state index\n", issue.Path, pageID)
 			repaired++
 
+		case "stale-sync-branch":
+			client, err := git.NewClient()
+			if err != nil {
+				errs = append(errs, fmt.Sprintf("[stale-sync-branch] %s: initialize git client: %v", issue.Path, err))
+				continue
+			}
+			if err := client.DeleteBranch(issue.Path); err != nil {
+				errs = append(errs, fmt.Sprintf("[stale-sync-branch] %s: delete branch: %v", issue.Path, err))
+				continue
+			}
+			_, _ = fmt.Fprintf(out, "  repaired [stale-sync-branch]: deleted stale recovery branch %s\n", issue.Path)
+			repaired++
+
 		default:
 			errs = append(errs, fmt.Sprintf("[%s] %s: %s — manual resolution required", issue.Kind, issue.Path, issue.Message))
 		}
@@ -265,4 +322,170 @@ func containsConflictMarkers(text string) bool {
 		}
 	}
 	return false
+}
+
+func newDoctorIssue(kind, path, message, severity string, repairable bool) DoctorIssue {
+	return DoctorIssue{
+		Kind:       kind,
+		Path:       normalizeRepoRelPath(path),
+		Message:    message,
+		Severity:   strings.TrimSpace(strings.ToLower(severity)),
+		Repairable: repairable,
+	}
+}
+
+func sortDoctorIssues(issues []DoctorIssue) {
+	sort.SliceStable(issues, func(i, j int) bool {
+		if issues[i].Severity != issues[j].Severity {
+			return issues[i].Severity < issues[j].Severity
+		}
+		if issues[i].Path != issues[j].Path {
+			return issues[i].Path < issues[j].Path
+		}
+		return issues[i].Kind < issues[j].Kind
+	})
+}
+
+func containsUnknownMediaPlaceholder(text string) bool {
+	return strings.Contains(text, "UNKNOWN_MEDIA_ID")
+}
+
+func containsEmbeddedContentPlaceholder(text string) bool {
+	return strings.Contains(text, "[Embedded content]")
+}
+
+func detectHierarchyLayoutIssues(spaceDir string) []DoctorIssue {
+	paths, err := listDoctorMarkdownPaths(spaceDir)
+	if err != nil {
+		return []DoctorIssue{newDoctorIssue(
+			"hierarchy-layout-scan",
+			spaceDir,
+			fmt.Sprintf("cannot scan markdown hierarchy: %v", err),
+			"error",
+			false,
+		)}
+	}
+
+	pathSet := make(map[string]struct{}, len(paths))
+	for _, relPath := range paths {
+		pathSet[normalizeRepoRelPath(relPath)] = struct{}{}
+	}
+
+	issues := make([]DoctorIssue, 0)
+	for _, relPath := range paths {
+		normalized := normalizeRepoRelPath(relPath)
+		if normalized == "" {
+			continue
+		}
+		stem := strings.TrimSuffix(filepath.Base(normalized), filepath.Ext(normalized))
+		if stem == "" {
+			continue
+		}
+		dir := normalizeRepoRelPath(filepath.Dir(normalized))
+		expectedIndex := normalizeRepoRelPath(filepath.Join(dir, stem, stem+".md"))
+		if expectedIndex == normalized {
+			continue
+		}
+		hasChildMarkdown := false
+		childPrefix := normalizeRepoRelPath(filepath.Join(dir, stem)) + "/"
+		for candidate := range pathSet {
+			if strings.HasPrefix(candidate, childPrefix) && candidate != expectedIndex {
+				hasChildMarkdown = true
+				break
+			}
+		}
+		if !hasChildMarkdown {
+			continue
+		}
+		issues = append(issues, newDoctorIssue(
+			"hierarchy-layout",
+			normalized,
+			fmt.Sprintf("page has nested child markdown under %s but parent pages with children must live at %s", childPrefix[:len(childPrefix)-1], expectedIndex),
+			"warning",
+			false,
+		))
+	}
+	return issues
+}
+
+func listDoctorMarkdownPaths(spaceDir string) ([]string, error) {
+	paths := make([]string, 0)
+	err := filepath.WalkDir(spaceDir, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			if d.Name() != "." && strings.HasPrefix(d.Name(), ".") {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !strings.EqualFold(filepath.Ext(d.Name()), ".md") {
+			return nil
+		}
+		rel, relErr := filepath.Rel(spaceDir, path)
+		if relErr != nil {
+			return relErr
+		}
+		paths = append(paths, normalizeRepoRelPath(rel))
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	sort.Strings(paths)
+	return paths, nil
+}
+
+func appendDoctorGitIssues(report *DoctorReport) {
+	targetSpaceKey := fs.SanitizePathSegment(report.SpaceKey)
+	if targetSpaceKey == "" {
+		return
+	}
+
+	client, err := git.NewClient()
+	if err != nil {
+		return
+	}
+
+	currentBranch, err := client.CurrentBranch()
+	if err != nil {
+		return
+	}
+	syncBranches, err := listCleanSyncBranches(client)
+	if err != nil {
+		return
+	}
+	worktreeBranches, err := listCleanWorktreeBranches(client)
+	if err != nil {
+		return
+	}
+
+	for _, branch := range syncBranches {
+		if branch == currentBranch {
+			continue
+		}
+		if !doctorSyncBranchMatchesSpace(branch, targetSpaceKey) {
+			continue
+		}
+		if _, ok := managedSnapshotRefForSyncBranch(branch); !ok {
+			continue
+		}
+		if len(worktreeBranches[branch]) > 0 {
+			continue
+		}
+		report.Issues = append(report.Issues, newDoctorIssue(
+			"stale-sync-branch",
+			branch,
+			"managed recovery branch has no linked worktree and appears to be abandoned",
+			"warning",
+			true,
+		))
+	}
+	sortDoctorIssues(report.Issues)
+}
+
+func doctorSyncBranchMatchesSpace(branch, targetSpaceKey string) bool {
+	parts := strings.Split(strings.TrimSpace(branch), "/")
+	return len(parts) == 3 && parts[0] == "sync" && parts[1] == targetSpaceKey
 }

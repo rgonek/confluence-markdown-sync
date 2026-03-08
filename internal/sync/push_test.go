@@ -246,3 +246,130 @@ func TestPush_RetriesUpdateWhenHierarchyParentIsStale(t *testing.T) {
 		t.Fatalf("expected UPDATE_RETRIED_AFTER_NOT_FOUND diagnostic, got %+v", result.Diagnostics)
 	}
 }
+
+func TestPush_NewPageWithContentStatusSyncsLozenge(t *testing.T) {
+	spaceDir := t.TempDir()
+	mdPath := filepath.Join(spaceDir, "new.md")
+
+	if err := fs.WriteMarkdownDocument(mdPath, fs.MarkdownDocument{
+		Frontmatter: fs.Frontmatter{
+			Title:  "New",
+			Status: "Ready to review",
+		},
+		Body: "content\n",
+	}); err != nil {
+		t.Fatalf("write markdown: %v", err)
+	}
+
+	remote := newRollbackPushRemote()
+	result, err := Push(context.Background(), remote, PushOptions{
+		SpaceKey:       "ENG",
+		SpaceDir:       spaceDir,
+		Domain:         "https://example.atlassian.net",
+		State:          fs.SpaceState{SpaceKey: "ENG"},
+		ConflictPolicy: PushConflictPolicyCancel,
+		Changes: []PushFileChange{{
+			Type: PushChangeAdd,
+			Path: "new.md",
+		}},
+	})
+	if err != nil {
+		t.Fatalf("Push() unexpected error: %v", err)
+	}
+
+	pageID := strings.TrimSpace(result.State.PagePathIndex["new.md"])
+	if pageID == "" {
+		t.Fatalf("expected new page id in state, got %+v", result.State.PagePathIndex)
+	}
+	if got := strings.TrimSpace(remote.contentStatuses[pageID]); got != "Ready to review" {
+		t.Fatalf("content status = %q, want Ready to review", got)
+	}
+	if len(remote.setContentStatusArgs) != 1 {
+		t.Fatalf("set content status args = %d, want 1", len(remote.setContentStatusArgs))
+	}
+	if got := remote.setContentStatusArgs[0]; got.PageStatus != "current" || got.StatusName != "Ready to review" {
+		t.Fatalf("unexpected content status call: %+v", got)
+	}
+}
+
+func TestPush_ExistingPageCanSetAndClearContentStatus(t *testing.T) {
+	spaceDir := t.TempDir()
+	mdPath := filepath.Join(spaceDir, "root.md")
+
+	writeDoc := func(status string) {
+		t.Helper()
+		if err := fs.WriteMarkdownDocument(mdPath, fs.MarkdownDocument{
+			Frontmatter: fs.Frontmatter{
+				Title:   "Root",
+				ID:      "1",
+				Version: 1,
+				Status:  status,
+			},
+			Body: "content\n",
+		}); err != nil {
+			t.Fatalf("write markdown: %v", err)
+		}
+	}
+
+	remote := newRollbackPushRemote()
+	remote.pagesByID["1"] = confluence.Page{
+		ID:      "1",
+		SpaceID: "space-1",
+		Title:   "Root",
+		Status:  "current",
+		Version: 1,
+		BodyADF: []byte(`{"version":1,"type":"doc","content":[]}`),
+	}
+	remote.pages = append(remote.pages, remote.pagesByID["1"])
+
+	writeDoc("In progress")
+	if _, err := Push(context.Background(), remote, PushOptions{
+		SpaceKey:       "ENG",
+		SpaceDir:       spaceDir,
+		Domain:         "https://example.atlassian.net",
+		State:          fs.SpaceState{SpaceKey: "ENG", PagePathIndex: map[string]string{"root.md": "1"}},
+		ConflictPolicy: PushConflictPolicyCancel,
+		Changes:        []PushFileChange{{Type: PushChangeModify, Path: "root.md"}},
+	}); err != nil {
+		t.Fatalf("Push() set status unexpected error: %v", err)
+	}
+
+	if len(remote.setContentStatusArgs) != 1 {
+		t.Fatalf("set content status args = %d, want 1", len(remote.setContentStatusArgs))
+	}
+	if got := remote.setContentStatusArgs[0]; got.PageStatus != "current" || got.StatusName != "In progress" {
+		t.Fatalf("unexpected set content status call: %+v", got)
+	}
+
+	writeDoc("")
+	remote.pagesByID["1"] = confluence.Page{
+		ID:      "1",
+		SpaceID: "space-1",
+		Title:   "Root",
+		Status:  "current",
+		Version: 1,
+		BodyADF: []byte(`{"version":1,"type":"doc","content":[]}`),
+	}
+	remote.contentStatuses["1"] = "In progress"
+
+	if _, err := Push(context.Background(), remote, PushOptions{
+		SpaceKey:       "ENG",
+		SpaceDir:       spaceDir,
+		Domain:         "https://example.atlassian.net",
+		State:          fs.SpaceState{SpaceKey: "ENG", PagePathIndex: map[string]string{"root.md": "1"}},
+		ConflictPolicy: PushConflictPolicyCancel,
+		Changes:        []PushFileChange{{Type: PushChangeModify, Path: "root.md"}},
+	}); err != nil {
+		t.Fatalf("Push() clear status unexpected error: %v", err)
+	}
+
+	if len(remote.deleteContentStatusArgs) != 1 {
+		t.Fatalf("delete content status args = %d, want 1", len(remote.deleteContentStatusArgs))
+	}
+	if got := remote.deleteContentStatusArgs[0]; got.PageStatus != "current" {
+		t.Fatalf("unexpected delete content status call: %+v", got)
+	}
+	if got := strings.TrimSpace(remote.contentStatuses["1"]); got != "" {
+		t.Fatalf("content status after clear = %q, want empty", got)
+	}
+}

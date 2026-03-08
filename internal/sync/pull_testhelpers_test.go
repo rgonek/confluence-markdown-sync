@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	gosync "sync"
 	"testing"
 	"time"
 
@@ -11,10 +12,12 @@ import (
 )
 
 type fakePullRemote struct {
+	mu                gosync.Mutex
 	space             confluence.Space
 	pages             []confluence.Page
 	folderByID        map[string]confluence.Folder
 	folderErr         error
+	getFolderCalls    []string
 	changes           []confluence.Change
 	listChangesFunc   func(opts confluence.ChangeListOptions) (confluence.ChangeListResult, error)
 	pagesByID         map[string]confluence.Page
@@ -23,6 +26,8 @@ type fakePullRemote struct {
 	labels            map[string][]string
 	users             map[string]confluence.User
 	contentStatuses   map[string]string
+	contentStatusErr  error
+	getStatusCalls    []string
 	lastChangeSince   time.Time
 	getPageHook       func(pageID string)
 }
@@ -47,6 +52,9 @@ func (f *fakePullRemote) ListPages(_ context.Context, _ confluence.PageListOptio
 }
 
 func (f *fakePullRemote) GetFolder(_ context.Context, folderID string) (confluence.Folder, error) {
+	f.mu.Lock()
+	f.getFolderCalls = append(f.getFolderCalls, folderID)
+	f.mu.Unlock()
 	if f.folderErr != nil {
 		return confluence.Folder{}, f.folderErr
 	}
@@ -76,7 +84,13 @@ func (f *fakePullRemote) GetPage(_ context.Context, pageID string) (confluence.P
 	return page, nil
 }
 
-func (f *fakePullRemote) GetContentStatus(_ context.Context, pageID string) (string, error) {
+func (f *fakePullRemote) GetContentStatus(_ context.Context, pageID string, _ string) (string, error) {
+	f.mu.Lock()
+	f.getStatusCalls = append(f.getStatusCalls, pageID)
+	f.mu.Unlock()
+	if f.contentStatusErr != nil {
+		return "", f.contentStatusErr
+	}
 	if f.contentStatuses == nil {
 		return "", nil
 	}

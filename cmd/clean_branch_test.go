@@ -1,92 +1,101 @@
 package cmd
 
 import (
+	"os"
+	"path/filepath"
+	"reflect"
+	"strings"
 	"testing"
-
-	"github.com/rgonek/confluence-markdown-sync/internal/git"
 )
 
-func TestResolveCleanTargetBranchHelper(t *testing.T) {
+func TestManagedSnapshotRefForSyncBranch(t *testing.T) {
+	t.Run("managed branch", func(t *testing.T) {
+		ref, ok := managedSnapshotRefForSyncBranch("sync/ENG/20260305T211238Z")
+		if !ok {
+			t.Fatal("expected managed sync branch")
+		}
+		if ref != "refs/confluence-sync/snapshots/ENG/20260305T211238Z" {
+			t.Fatalf("unexpected snapshot ref %q", ref)
+		}
+	})
+
+	t.Run("unmanaged branch", func(t *testing.T) {
+		if _, ok := managedSnapshotRefForSyncBranch("sync/test"); ok {
+			t.Fatal("expected unmanaged sync branch to be ignored")
+		}
+	})
+}
+
+func TestBuildCleanSyncPlan(t *testing.T) {
 	runParallelCommandTest(t)
-	tempDir := t.TempDir()
 
-	setupGitRepo(t, tempDir)
-	chdirRepo(t, tempDir)
-
-	client, err := git.NewClient()
-	if err != nil {
-		t.Fatalf("failed to create client: %v", err)
+	repo := t.TempDir()
+	removableWorktree := filepath.Join(repo, ".confluence-worktrees", "ENG-20260305T211238Z")
+	if err := ensureDir(removableWorktree); err != nil {
+		t.Fatalf("create removable worktree: %v", err)
 	}
 
-	// Init empty commit so branch exists
-	if _, err := client.Run("commit", "--allow-empty", "-m", "init"); err != nil {
-		t.Fatalf("failed to commit: %v", err)
+	activeWorktree := filepath.Join(repo, ".active-recovery")
+	if err := ensureDir(activeWorktree); err != nil {
+		t.Fatalf("create active worktree: %v", err)
 	}
 
-	// Force rename to main first to test that logic.
-	if _, err := client.Run("branch", "-M", "main"); err != nil {
-		t.Fatalf("failed to rename branch: %v", err)
+	snapshotRefs := []string{
+		"refs/confluence-sync/snapshots/ENG/20260305T211238Z",
+		"refs/confluence-sync/snapshots/OPS/20260305T211239Z",
+		"refs/confluence-sync/snapshots/QA/20260305T211240Z",
+	}
+	syncBranches := []string{
+		"sync/ENG/20260305T211238Z",
+		"sync/OPS/20260305T211239Z",
+		"sync/QA/20260305T211240Z",
+		"sync/manual",
+	}
+	worktreeBranches := map[string][]string{
+		"sync/ENG/20260305T211238Z": {removableWorktree},
+		"sync/OPS/20260305T211239Z": {activeWorktree},
 	}
 
-	branch, err := resolveCleanTargetBranch(client)
-	if err != nil {
-		t.Fatalf("expected no error, got %v", err)
+	plan := buildCleanSyncPlan("sync/QA/20260305T211240Z", []string{removableWorktree}, snapshotRefs, syncBranches, worktreeBranches)
+
+	gotDeleteRefs := append([]string(nil), plan.DeleteSnapshotRefs...)
+	gotRetainedRefs := append([]string(nil), plan.RetainedSnapshotRefs...)
+	gotDeleteBranches := make([]string, 0, len(plan.DeleteBranches))
+	for _, branch := range plan.DeleteBranches {
+		gotDeleteBranches = append(gotDeleteBranches, branch.Name)
 	}
-	if branch != "main" {
-		t.Fatalf("expected main, got %q", branch)
+	gotSkipped := make(map[string]string, len(plan.SkippedBranches))
+	for _, branch := range plan.SkippedBranches {
+		gotSkipped[branch.Name] = branch.Reason
 	}
 
-	// Try testing branchExists specifically on a valid and invalid branch
-	if !branchExists(client, "main") {
-		t.Fatalf("expected main to exist")
+	if !reflect.DeepEqual(gotDeleteRefs, []string{
+		"refs/confluence-sync/snapshots/ENG/20260305T211238Z",
+	}) {
+		t.Fatalf("DeleteSnapshotRefs = %#v", gotDeleteRefs)
 	}
-	if branchExists(client, "missing-branch-12345") {
-		t.Fatalf("expected missing-branch-12345 to not exist")
+	if !reflect.DeepEqual(gotRetainedRefs, []string{
+		"refs/confluence-sync/snapshots/OPS/20260305T211239Z",
+		"refs/confluence-sync/snapshots/QA/20260305T211240Z",
+	}) {
+		t.Fatalf("RetainedSnapshotRefs = %#v", gotRetainedRefs)
+	}
+	if !reflect.DeepEqual(gotDeleteBranches, []string{
+		"sync/ENG/20260305T211238Z",
+	}) {
+		t.Fatalf("DeleteBranches = %#v", gotDeleteBranches)
+	}
+	if !strings.HasPrefix(gotSkipped["sync/OPS/20260305T211239Z"], "linked worktree remains at ") {
+		t.Fatalf("unexpected OPS skip reason %q", gotSkipped["sync/OPS/20260305T211239Z"])
+	}
+	if gotSkipped["sync/QA/20260305T211240Z"] != "current HEAD is on this sync branch" {
+		t.Fatalf("unexpected QA skip reason %q", gotSkipped["sync/QA/20260305T211240Z"])
+	}
+	if gotSkipped["sync/manual"] != "branch does not match managed sync/<SpaceKey>/<UTC timestamp> format" {
+		t.Fatalf("unexpected manual skip reason %q", gotSkipped["sync/manual"])
 	}
 }
 
-func TestResolveCleanTargetBranch_Fallback(t *testing.T) {
-	runParallelCommandTest(t)
-	tempDir := t.TempDir()
-
-	setupGitRepo(t, tempDir)
-	chdirRepo(t, tempDir)
-
-	client, err := git.NewClient()
-	if err != nil {
-		t.Fatalf("failed to create client: %v", err)
-	}
-
-	if _, err := client.Run("commit", "--allow-empty", "-m", "init"); err != nil {
-		t.Fatalf("failed to commit: %v", err)
-	}
-	if _, err := client.Run("branch", "-M", "other-branch"); err != nil { // no main or master
-		t.Fatalf("failed to rename branch: %v", err)
-	}
-
-	// Create fake symbolic-ref response
-	if _, err := client.Run("remote", "add", "origin", "https://github.com/fake/fake.git"); err != nil {
-		t.Fatalf("failed to add remote: %v", err)
-	}
-
-	// It should fallback properly if origin exists or fallback to nothing
-	branch, err := resolveCleanTargetBranch(client)
-	if err != nil {
-		t.Fatalf("expected no error, got %v", err)
-	}
-	if branch != "" && branch != "other-branch" {
-		t.Logf("resolved branch: %q", branch)
-	}
-}
-
-func TestConfirmCleanActions_UI(t *testing.T) {
-	runParallelCommandTest(t)
-	// Let's test non-interactive yes by manually replacing the global
-	flagYes = true
-	defer func() { flagYes = false }()
-
-	err := confirmCleanActions(nil, nil, "main", 1, 1)
-	if err != nil {
-		t.Fatalf("expected nil error, got %v", err)
-	}
+func ensureDir(path string) error {
+	return os.MkdirAll(path, 0o750)
 }

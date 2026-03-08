@@ -56,6 +56,57 @@ func TestForwardLinkHook(t *testing.T) {
 	}
 }
 
+func TestForwardLinkHookWithGlobalIndex_PreservesAbsoluteCrossSpaceLink(t *testing.T) {
+	tmpDir := t.TempDir()
+	engDir := filepath.Join(tmpDir, "Engineering (ENG)")
+	tdDir := filepath.Join(tmpDir, "Technical Docs (TD)")
+	if err := os.MkdirAll(engDir, 0o750); err != nil {
+		t.Fatalf("mkdir eng dir: %v", err)
+	}
+	if err := os.MkdirAll(tdDir, 0o750); err != nil {
+		t.Fatalf("mkdir td dir: %v", err)
+	}
+
+	sourcePath := filepath.Join(engDir, "index.md")
+	targetPath := filepath.Join(tdDir, "Target Page.md")
+	if err := os.WriteFile(targetPath, []byte("target"), 0o600); err != nil {
+		t.Fatalf("write target file: %v", err)
+	}
+
+	notices := make([]ForwardLinkNotice, 0, 1)
+	hook := NewForwardLinkHookWithGlobalIndex(
+		sourcePath,
+		engDir,
+		PageIndex{"index.md": "1"},
+		GlobalPageIndex{"77": targetPath},
+		"ENG",
+		func(notice ForwardLinkNotice) {
+			notices = append(notices, notice)
+		},
+	)
+
+	out, err := hook(context.Background(), adfconv.LinkRenderInput{
+		Href:  "https://example.atlassian.net/wiki/pages/viewpage.action?pageId=77",
+		Title: "Cross Space",
+		Meta: adfconv.LinkMetadata{
+			PageID: "77",
+			Anchor: "section-a",
+		},
+	})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	if !out.Handled {
+		t.Fatal("Expected Handled=true")
+	}
+	if got, want := out.Href, "https://example.atlassian.net/wiki/pages/viewpage.action?pageId=77#section-a"; got != want {
+		t.Fatalf("Href = %q, want %q", got, want)
+	}
+	if len(notices) != 1 || notices[0].Code != "CROSS_SPACE_LINK_PRESERVED" {
+		t.Fatalf("expected preserved-link notice, got %+v", notices)
+	}
+}
+
 func TestForwardMediaHook(t *testing.T) {
 	sourcePath, _ := filepath.Abs("myspace/index.md")
 	targetPath, _ := filepath.Abs("myspace/assets/image.png")
@@ -252,6 +303,9 @@ func TestReverseLinkHookWithGlobalIndex_ResolvesCrossSpaceLink(t *testing.T) {
 	}
 
 	targetPath := filepath.Join(tdDir, "Target Page.md")
+	if err := os.WriteFile(targetPath, []byte("target"), 0o600); err != nil {
+		t.Fatalf("write target file: %v", err)
+	}
 	hook := NewReverseLinkHookWithGlobalIndex(
 		engDir,
 		PageIndex{"index.md": "1"},
@@ -314,6 +368,29 @@ func TestReverseLinkHookWithGlobalIndex_ResolvesViaSameFileFallback(t *testing.T
 	}
 	if got, want := out.Destination, "https://example.atlassian.net/wiki/pages/viewpage.action?pageId=77"; got != want {
 		t.Fatalf("destination = %q, want %q", got, want)
+	}
+}
+
+func TestReverseLinkHookWithGlobalIndex_DoesNotResolveMissingGlobalPath(t *testing.T) {
+	tmpDir := t.TempDir()
+	engDir := filepath.Join(tmpDir, "Engineering (ENG)")
+	if err := os.MkdirAll(engDir, 0o750); err != nil {
+		t.Fatalf("mkdir eng dir: %v", err)
+	}
+
+	hook := NewReverseLinkHookWithGlobalIndex(
+		engDir,
+		PageIndex{"index.md": "1"},
+		GlobalPageIndex{"77": filepath.Join(tmpDir, "Technical Docs (TD)", "Target Page.md")},
+		"https://example.atlassian.net",
+	)
+
+	_, err := hook(context.Background(), mdconv.LinkParseInput{
+		SourcePath:  filepath.Join(engDir, "index.md"),
+		Destination: "../Technical%20Docs%20(TD)/Target%20Page.md",
+	})
+	if err != mdconv.ErrUnresolved {
+		t.Fatalf("Expected ErrUnresolved for missing global target path, got %v", err)
 	}
 }
 

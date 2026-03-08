@@ -4,8 +4,14 @@
 This repository builds `conf` (`confluence-sync`), a Go CLI that syncs Confluence pages with local Markdown files.
 
 ## Source Of Truth
-- Primary plan: `agents/plans/confluence_sync_cli.md`
-- If implementation details are unclear, update the plan first, then implement.
+- Canonical specs:
+  - `openspec/project.md`
+  - `openspec/specs/*/spec.md`
+- Narrative summaries:
+  - `docs/specs/prd.md`
+  - `docs/specs/technical-spec.md`
+  - `docs/specs/README.md`
+- If behavior changes, update the canonical specs first, then implement.
 
 ## Intended Usages
 
@@ -14,7 +20,7 @@ This project supports two primary sync workflows for agents:
 ### 1. Human-in-the-Loop (Agent as Writer)
 The agent focus on Markdown content; the human runs `conf` commands.
 - **Agent Task**: Edit `.md` files, run `conf validate` to check work.
-- **Safety**: Do not touch `id`, `space`, or `version` in frontmatter.
+- **Safety**: Do not touch sync-managed frontmatter keys such as `id`, `version`, `created_by`, `created_at`, `updated_by`, or `updated_at`.
 
 ### 2. Full Agentic Use (Autonomous Sync)
 The agent manages the full sync cycle.
@@ -26,13 +32,18 @@ The agent manages the full sync cycle.
 
 - Immutable frontmatter keys:
   - `id`
-  - `space`
 - Mutable-by-sync frontmatter keys:
   - `version`
+  - `created_by`
+  - `created_at`
+  - `updated_by`
+  - `updated_at`
 - User-editable frontmatter keys:
+  - `title`
   - `state` (can be `draft` or `current`. Omitted means `current`. Cannot be set back to `draft` once published remotely).
   - `status` (Confluence "Content Status" visual lozenge, e.g., "Ready to review").
   - `labels` (array of strings for Confluence page labels).
+- Space identity is stored in `.confluence-state.json` and workspace context, not in frontmatter.
 - Remote deletions are hard-deleted locally during `pull` (recovery is via Git history).
 - `.confluence-state.json` is local state and must stay gitignored.
 
@@ -43,6 +54,15 @@ The agent manages the full sync cycle.
 - `validate`/`push` run with strict resolution (`ErrUnresolved` => conversion failure).
 - `validate` must use the same strict reverse-conversion profile and hook adapters as `push`.
 - Hooks return mapping decisions only; sync orchestration owns downloads/uploads and file writes/deletes.
+- Diagram contract:
+  - PlantUML is supported as a first-class `plantumlcloud` Confluence extension.
+  - Mermaid is preserved as fenced code / ADF `codeBlock` content, not a rendered Confluence diagram macro.
+  - `validate` should warn before push when Mermaid fences are present so the downgrade is explicit.
+- Extension/macro support contract:
+  - PlantUML: rendered round-trip support via the custom `plantumlcloud` handler.
+  - Mermaid: preserved-but-not-rendered only; keep it as fenced code and expect an ADF `codeBlock` on push.
+  - Raw `adf:extension` payloads: best-effort, low-level preservation fallback for extension nodes without a repo-specific handler; not a verified end-to-end round-trip guarantee.
+  - Unknown Confluence macros/extensions: not a first-class supported authoring target; they may only survive through best-effort raw ADF preservation, and Confluence can still reject them on push. Validate any such workflow in a sandbox before relying on it.
 
 ## Git Workflow Requirements
 - `push` uses an ephemeral sync branch: `sync/<SpaceKey>/<UTC timestamp>`.
@@ -72,7 +92,8 @@ The agent manages the full sync cycle.
 Validation failures must stop `push` immediately.
 
 ## Command Model
-- Commands: `init`, `pull`, `push`, `validate`, `diff`, `search`.
+- Commands: `init`, `pull`, `push`, `recover`, `status`, `clean`, `prune`, `validate`, `diff`, `relink`, `version`, `doctor`, `search`.
+- `status` reports Markdown page drift only; attachment-only changes should be checked with `git status` or `conf diff`.
 - `[TARGET]` parsing rule:
   - Ends with `.md` => file mode.
   - Otherwise => space mode (`SPACE_KEY`).
@@ -87,6 +108,10 @@ Validation failures must stop `push` immediately.
   - `--label LABEL` — filter by label (repeatable).
   - `--heading TEXT` — restrict to sections under matching headings.
   - `--reindex` — force full rebuild.
+  - `--result-detail full|standard|minimal` — control payload size/detail.
+  - `--created-by USER` / `--updated-by USER` — filter by creator or last updater.
+  - `--created-after DATE` / `--created-before DATE` — bound created timestamps.
+  - `--updated-after DATE` / `--updated-before DATE` — bound updated timestamps.
   - `--list-labels` / `--list-spaces` — facet discovery.
   - `--format text|json|auto` — output format (auto: TTY→text, pipe→json).
   - `--limit N` (default 20) — max results.
@@ -127,5 +152,5 @@ Validation failures must stop `push` immediately.
   - Round-trip Markdown <-> ADF golden tests.
 
 ## Docs Maintenance
-- Keep `README.md` aligned with current plan and command behavior.
-- Keep this file aligned with `agents/plans/confluence_sync_cli.md`.
+- Keep `README.md`, `docs/usage.md`, `docs/automation.md`, and `docs/compatibility.md` aligned with the OpenSpec files.
+- Keep this file aligned with `openspec/project.md` and `openspec/specs/*/spec.md`.

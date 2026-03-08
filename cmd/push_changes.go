@@ -5,8 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -25,6 +27,7 @@ func runPushPreflight(
 	spaceKey, spaceDir string,
 	gitClient *git.Client,
 	spaceScopePath, changeScopePath string,
+	onConflict string,
 ) error {
 	baselineRef, err := gitPushBaselineRef(gitClient, spaceKey)
 	if err != nil {
@@ -37,7 +40,7 @@ func runPushPreflight(
 
 	_, _ = fmt.Fprintf(out, "preflight for space %s\n", spaceKey)
 	if len(syncChanges) == 0 {
-		_, _ = fmt.Fprintln(out, "no in-scope markdown changes")
+		_, _ = fmt.Fprintf(out, "preflight for space %s: no local markdown changes detected since last sync (no-op)\n", spaceKey)
 		return nil
 	}
 
@@ -54,15 +57,225 @@ func runPushPreflight(
 		}
 	}
 
+	// Load config and create remote to probe capabilities and list remote pages.
+	envPath := findEnvPath(spaceDir)
+	cfg, err := config.Load(envPath)
+	if err != nil {
+		return fmt.Errorf("failed to load config: %w", err)
+	}
+
+	remote, err := newPushRemote(cfg)
+	if err != nil {
+		return fmt.Errorf("create confluence client: %w", err)
+	}
+	defer closeRemoteIfPossible(remote)
+
+	// Probe GetContentStatus to detect degraded modes.
+	_, probeErr := remote.GetContentStatus(ctx, "", "")
+	if isPreflightCapabilityProbeError(probeErr) {
+		_, _ = fmt.Fprintln(out, "Remote capability concerns:")
+		_, _ = fmt.Fprintln(out, "  content-status metadata sync disabled for this push")
+	}
+
+	// List remote pages for mutation planning.
+	remotePageByID := map[string]confluence.Page{}
+	space, spaceErr := remote.GetSpace(ctx, spaceKey)
+	if spaceErr == nil {
+		listResult, listErr := remote.ListPages(ctx, confluence.PageListOptions{
+			SpaceID:  space.ID,
+			SpaceKey: spaceKey,
+			Status:   "current",
+			Limit:    100,
+		})
+		if listErr == nil {
+			for _, page := range listResult.Pages {
+				remotePageByID[strings.TrimSpace(page.ID)] = page
+			}
+		}
+	}
+
+	// Load local state for attachment comparison.
+	state, _ := fs.LoadState(spaceDir)
+
+	// Build planned page mutations.
+	_, _ = fmt.Fprintln(out, "Planned page mutations:")
+	for _, change := range syncChanges {
+		absPath := filepath.Join(spaceDir, filepath.FromSlash(change.Path))
+		switch change.Type {
+		case syncflow.PushChangeAdd:
+			_, _ = fmt.Fprintf(out, "  add %s\n", change.Path)
+		case syncflow.PushChangeDelete:
+			// Look up page ID: try frontmatter first (file may still exist in worktree),
+			// then fall back to the state index.
+			pageID := ""
+			fm, fmErr := fs.ReadFrontmatter(absPath)
+			if fmErr == nil {
+				pageID = strings.TrimSpace(fm.ID)
+			}
+			if pageID == "" {
+				pageID = strings.TrimSpace(state.PagePathIndex[change.Path])
+			}
+			if pageID != "" {
+				remotePage, hasRemote := remotePageByID[pageID]
+				if hasRemote && strings.TrimSpace(remotePage.Title) != "" {
+					_, _ = fmt.Fprintf(out, "  ⚠ Destructive: delete %s (page %s, %q)\n", change.Path, pageID, remotePage.Title)
+				} else {
+					_, _ = fmt.Fprintf(out, "  ⚠ Destructive: delete %s (page %s)\n", change.Path, pageID)
+				}
+			} else {
+				_, _ = fmt.Fprintf(out, "  ⚠ Destructive: delete %s\n", change.Path)
+			}
+		case syncflow.PushChangeModify:
+			fm, fmErr := fs.ReadFrontmatter(absPath)
+			if fmErr != nil {
+				_, _ = fmt.Fprintf(out, "  update %s\n", change.Path)
+				continue
+			}
+			pageID := strings.TrimSpace(fm.ID)
+			if pageID == "" {
+				_, _ = fmt.Fprintf(out, "  update %s\n", change.Path)
+				continue
+			}
+			remotePage, hasRemote := remotePageByID[pageID]
+			if !hasRemote {
+				_, _ = fmt.Fprintf(out, "  update %s (page %s)\n", change.Path, pageID)
+				continue
+			}
+			// Compute planned version based on conflict policy.
+			var plannedVersion int
+			if onConflict == OnConflictForce {
+				plannedVersion = remotePage.Version + 1
+			} else {
+				plannedVersion = fm.Version + 1
+			}
+			_, _ = fmt.Fprintf(out, "  update %s (page %s, %q, version %d)\n",
+				change.Path, pageID, remotePage.Title, plannedVersion)
+		}
+	}
+
+	// Build planned attachment mutations.
+	uploads, deletes := preflightAttachmentMutations(ctx, spaceDir, syncChanges, state)
+	if len(uploads) > 0 || len(deletes) > 0 {
+		_, _ = fmt.Fprintln(out, "Planned attachment mutations:")
+		for _, u := range uploads {
+			_, _ = fmt.Fprintf(out, "  upload %s\n", u)
+		}
+		for _, d := range deletes {
+			_, _ = fmt.Fprintf(out, "  delete %s\n", d)
+		}
+	}
+
 	addCount, modifyCount, deleteCount := summarizePushChanges(syncChanges)
 	_, _ = fmt.Fprintf(out, "changes: %d (A:%d M:%d D:%d)\n", len(syncChanges), addCount, modifyCount, deleteCount)
-	for _, change := range syncChanges {
-		_, _ = fmt.Fprintf(out, "  %s %s\n", change.Type, change.Path)
+	if deleteCount > 0 {
+		_, _ = fmt.Fprintln(out, "Destructive operations in this push:")
+		for _, change := range syncChanges {
+			if change.Type != syncflow.PushChangeDelete {
+				continue
+			}
+			absPath := filepath.Join(spaceDir, filepath.FromSlash(change.Path))
+			pageID := ""
+			fm, fmErr := fs.ReadFrontmatter(absPath)
+			if fmErr == nil {
+				pageID = strings.TrimSpace(fm.ID)
+			}
+			if pageID == "" {
+				pageID = strings.TrimSpace(state.PagePathIndex[change.Path])
+			}
+			if pageID != "" {
+				remotePage, hasRemote := remotePageByID[pageID]
+				if hasRemote && strings.TrimSpace(remotePage.Title) != "" {
+					_, _ = fmt.Fprintf(out, "  archive %s %q (%s)\n", pageID, remotePage.Title, change.Path)
+				} else {
+					_, _ = fmt.Fprintf(out, "  archive %s (%s)\n", pageID, change.Path)
+				}
+			} else {
+				_, _ = fmt.Fprintf(out, "  delete %s\n", change.Path)
+			}
+		}
 	}
 	if len(syncChanges) > 10 || deleteCount > 0 {
 		_, _ = fmt.Fprintln(out, "safety confirmation would be required")
 	}
 	return nil
+}
+
+// isPreflightCapabilityProbeError reports whether err indicates the remote
+// does not support the probed API endpoint (404, 405, or 501).
+func isPreflightCapabilityProbeError(err error) bool {
+	if err == nil {
+		return false
+	}
+	var apiErr *confluence.APIError
+	if !errors.As(err, &apiErr) {
+		return false
+	}
+	switch apiErr.StatusCode {
+	case http.StatusNotFound, http.StatusMethodNotAllowed, http.StatusNotImplemented:
+		return true
+	default:
+		return false
+	}
+}
+
+// preflightAttachmentMutations returns planned upload and delete paths for
+// attachments based on changed markdown files and the current state.
+func preflightAttachmentMutations(
+	_ context.Context,
+	spaceDir string,
+	syncChanges []syncflow.PushFileChange,
+	state fs.SpaceState,
+) (uploads, deletes []string) {
+	plannedUploadKeys := map[string]struct{}{}
+
+	for _, change := range syncChanges {
+		if change.Type == syncflow.PushChangeDelete {
+			continue
+		}
+
+		absPath := filepath.Join(spaceDir, filepath.FromSlash(change.Path))
+		doc, err := fs.ReadMarkdownDocument(absPath)
+		if err != nil {
+			continue
+		}
+
+		pageID := strings.TrimSpace(doc.Frontmatter.ID)
+		if pageID == "" {
+			continue
+		}
+
+		referencedPaths, err := syncflow.CollectReferencedAssetPaths(spaceDir, absPath, doc.Body)
+		if err != nil {
+			continue
+		}
+
+		for _, assetPath := range referencedPaths {
+			// Compute the planned state key: assets/<pageID>/<basename>
+			plannedKey := filepath.ToSlash(filepath.Join("assets", pageID, filepath.Base(assetPath)))
+			plannedUploadKeys[plannedKey] = struct{}{}
+
+			// If this key is not in the state, it's a new upload.
+			if strings.TrimSpace(state.AttachmentIndex[plannedKey]) == "" {
+				uploads = append(uploads, plannedKey)
+			}
+		}
+
+		// Check existing state entries for this page — anything not covered
+		// by a planned upload is stale and will be deleted.
+		prefix := "assets/" + pageID + "/"
+		for stateKey := range state.AttachmentIndex {
+			if !strings.HasPrefix(stateKey, prefix) {
+				continue
+			}
+			if _, covered := plannedUploadKeys[stateKey]; !covered {
+				deletes = append(deletes, stateKey)
+			}
+		}
+	}
+
+	sort.Strings(uploads)
+	sort.Strings(deletes)
+	return uploads, deletes
 }
 
 func runPushDryRun(
@@ -87,7 +300,7 @@ func runPushDryRun(
 	}
 
 	if len(syncChanges) == 0 {
-		_, _ = fmt.Fprintln(out, "push completed with no in-scope markdown changes (no-op)")
+		_, _ = fmt.Fprintln(out, "push completed: no local markdown changes detected since last sync (no-op)")
 		return nil
 	}
 
@@ -116,17 +329,18 @@ func runPushDryRun(
 	}
 	defer closeRemoteIfPossible(realRemote)
 
-	remote := &dryRunPushRemote{inner: realRemote, out: out, domain: cfg.Domain}
+	remote := &dryRunPushRemote{inner: realRemote, out: out, domain: cfg.Domain, emitOperations: true}
 
-	dryRunSpaceDir, cleanupDryRun, err := prepareDryRunSpaceDir(spaceDir)
-	if err != nil {
-		return err
-	}
-	defer cleanupDryRun()
-
-	state, err := fs.LoadState(dryRunSpaceDir)
+	state, err := fs.LoadState(spaceDir)
 	if err != nil {
 		return fmt.Errorf("load state: %w", err)
+	}
+
+	// Build global page index from the original space dir so cross-space
+	// links resolve correctly.
+	globalPageIndex, err := buildWorkspaceGlobalPageIndex(spaceDir)
+	if err != nil {
+		return fmt.Errorf("build global page index: %w", err)
 	}
 
 	var progress syncflow.Progress
@@ -134,11 +348,16 @@ func runPushDryRun(
 		progress = newConsoleProgress(out, "[DRY-RUN] Syncing to Confluence")
 	}
 
+	// Use the original space dir directly — the DryRun flag prevents local
+	// file writes, and the dryRunPushRemote prevents remote writes. This
+	// keeps sibling space directories accessible for cross-space link
+	// resolution.
 	result, err := syncflow.Push(ctx, remote, syncflow.PushOptions{
 		SpaceKey:            spaceKey,
-		SpaceDir:            dryRunSpaceDir,
+		SpaceDir:            spaceDir,
 		Domain:              cfg.Domain,
 		State:               state,
+		GlobalPageIndex:     globalPageIndex,
 		Changes:             syncChanges,
 		ConflictPolicy:      toSyncConflictPolicy(onConflict),
 		KeepOrphanAssets:    flagPushKeepOrphanAssets,
@@ -253,52 +472,6 @@ func collectGitChangesWithUntracked(client *git.Client, baselineRef, scopePath s
 	return changes, nil
 }
 
-func prepareDryRunSpaceDir(spaceDir string) (string, func(), error) {
-	tmpRoot, err := os.MkdirTemp("", "conf-dry-run-*")
-	if err != nil {
-		return "", nil, fmt.Errorf("create dry-run temp dir: %w", err)
-	}
-
-	cleanup := func() {
-		_ = os.RemoveAll(tmpRoot)
-	}
-
-	dryRunSpaceDir := filepath.Join(tmpRoot, filepath.Base(spaceDir))
-	if err := copyDirTree(spaceDir, dryRunSpaceDir); err != nil {
-		cleanup()
-		return "", nil, fmt.Errorf("prepare dry-run space copy: %w", err)
-	}
-
-	return dryRunSpaceDir, cleanup, nil
-}
-
-func copyDirTree(src, dst string) error {
-	return filepath.WalkDir(src, func(path string, d os.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			return walkErr
-		}
-
-		relPath, err := filepath.Rel(src, path)
-		if err != nil {
-			return err
-		}
-
-		targetPath := filepath.Join(dst, relPath)
-		if d.IsDir() {
-			return os.MkdirAll(targetPath, 0o750)
-		}
-
-		raw, err := os.ReadFile(path) //nolint:gosec // path comes from filepath.WalkDir under trusted source dir
-		if err != nil {
-			return err
-		}
-		if err := os.MkdirAll(filepath.Dir(targetPath), 0o750); err != nil {
-			return err
-		}
-		return os.WriteFile(targetPath, raw, 0o600)
-	})
-}
-
 func toSyncPushChanges(changes []git.FileStatus, spaceScopePath string) ([]syncflow.PushFileChange, error) {
 	normalizedScope := filepath.ToSlash(filepath.Clean(spaceScopePath))
 	if normalizedScope == "." {
@@ -382,6 +555,43 @@ func pushHasDeleteChange(changes []syncflow.PushFileChange) bool {
 	return false
 }
 
+// printDestructivePushPreview prints a human-readable list of pages that will
+// be archived/deleted by the push. It is called before the safety confirmation
+// prompt so the operator can see exactly what will be removed.
+func printDestructivePushPreview(out io.Writer, changes []syncflow.PushFileChange, spaceDir string, state fs.SpaceState) {
+	hasDelete := false
+	for _, change := range changes {
+		if change.Type == syncflow.PushChangeDelete {
+			hasDelete = true
+			break
+		}
+	}
+	if !hasDelete {
+		return
+	}
+
+	_, _ = fmt.Fprintln(out, "Destructive operations in this push:")
+	for _, change := range changes {
+		if change.Type != syncflow.PushChangeDelete {
+			continue
+		}
+		pageID := ""
+		absPath := filepath.Join(spaceDir, filepath.FromSlash(change.Path))
+		fm, fmErr := fs.ReadFrontmatter(absPath)
+		if fmErr == nil {
+			pageID = strings.TrimSpace(fm.ID)
+		}
+		if pageID == "" {
+			pageID = strings.TrimSpace(state.PagePathIndex[change.Path])
+		}
+		if pageID != "" {
+			_, _ = fmt.Fprintf(out, "  archive page %s (%s)\n", pageID, change.Path)
+		} else {
+			_, _ = fmt.Fprintf(out, "  delete %s\n", change.Path)
+		}
+	}
+}
+
 func printPushDiagnostics(out io.Writer, diagnostics []syncflow.PushDiagnostic) {
 	if len(diagnostics) == 0 {
 		return
@@ -417,20 +627,29 @@ func printPushSyncSummary(out io.Writer, commits []syncflow.PushCommitPlan, diag
 	}
 
 	attachmentDeleted := 0
+	attachmentUploaded := 0
 	attachmentPreserved := 0
+	attachmentSkipped := 0
 	for _, diag := range diagnostics {
 		switch diag.Code {
+		case "ATTACHMENT_CREATED":
+			attachmentUploaded++
 		case "ATTACHMENT_DELETED":
 			attachmentDeleted++
 		case "ATTACHMENT_PRESERVED":
 			attachmentPreserved++
+			attachmentSkipped++
+		default:
+			if strings.HasPrefix(diag.Code, "ATTACHMENT_") && strings.Contains(diag.Code, "SKIPPED") {
+				attachmentSkipped++
+			}
 		}
 	}
 
 	_, _ = fmt.Fprintln(out, "\nSync Summary:")
 	_, _ = fmt.Fprintf(out, "  pages changed: %d (deleted: %d)\n", len(commits), deletedPages)
-	if attachmentDeleted > 0 || attachmentPreserved > 0 {
-		_, _ = fmt.Fprintf(out, "  attachments: deleted %d, preserved %d\n", attachmentDeleted, attachmentPreserved)
+	if attachmentUploaded > 0 || attachmentDeleted > 0 || attachmentPreserved > 0 || attachmentSkipped > 0 {
+		_, _ = fmt.Fprintf(out, "  attachments: uploaded %d, deleted %d, preserved %d, skipped %d\n", attachmentUploaded, attachmentDeleted, attachmentPreserved, attachmentSkipped)
 	}
 	if len(diagnostics) > 0 {
 		_, _ = fmt.Fprintf(out, "  diagnostics: %d\n", len(diagnostics))

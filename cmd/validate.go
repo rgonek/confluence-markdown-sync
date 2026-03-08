@@ -15,6 +15,7 @@ import (
 	"github.com/rgonek/confluence-markdown-sync/internal/converter"
 	"github.com/rgonek/confluence-markdown-sync/internal/fs"
 	"github.com/rgonek/confluence-markdown-sync/internal/git"
+	"github.com/rgonek/confluence-markdown-sync/internal/search"
 	syncflow "github.com/rgonek/confluence-markdown-sync/internal/sync"
 	"github.com/rgonek/jira-adf-converter/mdconverter"
 	"github.com/spf13/cobra"
@@ -43,8 +44,18 @@ type baselineFrontmatterCacheEntry struct {
 	fm     fs.Frontmatter
 }
 
+type validateWarning struct {
+	Code    string
+	Message string
+}
+
+type validateFileResult struct {
+	Issues   []fs.ValidationIssue
+	Warnings []validateWarning
+}
+
 func newValidateCmd() *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:   "validate [TARGET]",
 		Short: "Validate local Markdown files against sync invariants",
 		Long: `Validate checks frontmatter schema, immutable key integrity,
@@ -62,13 +73,25 @@ If omitted, the space is inferred from the current directory name.`,
 			return runValidateCommand(cmd, target)
 		},
 	}
+	addReportJSONFlag(cmd)
+	return cmd
 }
 
 func runValidateCommand(cmd *cobra.Command, target config.Target) (runErr error) {
-	_, restoreLogger := beginCommandRun("validate")
+	actualOut := cmd.OutOrStdout()
+	out := reportWriter(cmd, actualOut)
+	runID, restoreLogger := beginCommandRun("validate")
 	defer restoreLogger()
 
 	startedAt := time.Now()
+	report := newCommandRunReport(runID, "validate", target, startedAt)
+	defer func() {
+		if !commandRequestsJSONReport(cmd) {
+			return
+		}
+		report.finalize(runErr, time.Now())
+		_ = writeCommandRunReport(actualOut, report)
+	}()
 	slog.Info("validate_started", "target_mode", target.Mode, "target", target.Value)
 	defer func() {
 		duration := time.Since(startedAt)
@@ -82,57 +105,75 @@ func runValidateCommand(cmd *cobra.Command, target config.Target) (runErr error)
 		slog.Info("validate_finished", "duration_ms", duration.Milliseconds())
 	}()
 
-	return runValidateTargetWithContext(getCommandContext(cmd), cmd.OutOrStdout(), target)
+	result, err := runValidateTargetWithContextReport(getCommandContext(cmd), out, target)
+	report.Target.SpaceKey = result.SpaceKey
+	report.Target.SpaceDir = result.SpaceDir
+	report.Target.File = result.TargetFile
+	report.Diagnostics = append(report.Diagnostics, result.Diagnostics...)
+	return err
 }
 
 func runValidateTargetWithContext(ctx context.Context, out io.Writer, target config.Target) error {
+	_, err := runValidateTargetWithContextReport(ctx, out, target)
+	return err
+}
+
+func runValidateTargetWithContextReport(ctx context.Context, out io.Writer, target config.Target) (validateCommandResult, error) {
 	if err := ensureWorkspaceSyncReady("validate"); err != nil {
-		return err
+		return validateCommandResult{}, err
 	}
 
 	targetCtx, err := resolveValidateTargetContext(target)
 	if err != nil {
-		return err
+		return validateCommandResult{}, err
+	}
+	result := validateCommandResult{
+		SpaceKey:    targetCtx.spaceKey,
+		SpaceDir:    targetCtx.spaceDir,
+		Diagnostics: []commandRunReportDiagnostic{},
+	}
+	if target.IsFile() && len(targetCtx.files) == 1 {
+		result.TargetFile = targetCtx.files[0]
 	}
 	if err := ctx.Err(); err != nil {
-		return err
+		return result, err
 	}
 
 	envPath := findEnvPath(targetCtx.spaceDir)
 	cfg, err := config.Load(envPath)
 	if err != nil {
-		return fmt.Errorf("failed to load config: %w", err)
+		return result, fmt.Errorf("failed to load config: %w", err)
 	}
 
 	_, _ = fmt.Fprintf(out, "Building index for space: %s\n", targetCtx.spaceDir)
 	index, err := syncflow.BuildPageIndexWithPending(targetCtx.spaceDir, targetCtx.files)
 	if err != nil {
-		return fmt.Errorf("failed to build page index: %w", err)
+		return result, fmt.Errorf("failed to build page index: %w", err)
 	}
 
 	if dupErrs := detectDuplicatePageIDs(index); len(dupErrs) > 0 {
 		for _, msg := range dupErrs {
 			_, _ = fmt.Fprintf(out, "Validation failed: %s\n", msg)
+			result.Diagnostics = append(result.Diagnostics, commandRunReportDiagnostic{
+				Code:    "duplicate_page_id",
+				Message: msg,
+			})
 		}
-		return fmt.Errorf("validation failed: duplicate page IDs detected - rename each file to have a unique id or remove the duplicate id")
+		return result, fmt.Errorf("validation failed: duplicate page IDs detected - rename each file to have a unique id or remove the duplicate id")
 	}
 
-	var globalIndex syncflow.GlobalPageIndex
-	globalIndexRoot := filepath.Dir(targetCtx.spaceDir)
-	if repoRoot, rootErr := gitRepoRoot(); rootErr == nil {
-		globalIndexRoot = repoRoot
-	}
-	globalIndex, err = syncflow.BuildGlobalPageIndex(globalIndexRoot)
+	globalIndex, err := buildWorkspaceGlobalPageIndex(targetCtx.spaceDir)
 	if err != nil {
-		return fmt.Errorf("failed to build global page index: %w", err)
+		return result, fmt.Errorf("failed to build global page index: %w", err)
 	}
 
 	state, err := fs.LoadState(targetCtx.spaceDir)
 	if err != nil {
-		return fmt.Errorf("failed to load state: %w", err)
+		return result, fmt.Errorf("failed to load state: %w", err)
 	}
 	if strings.TrimSpace(targetCtx.spaceKey) == "" {
 		targetCtx.spaceKey = strings.TrimSpace(state.SpaceKey)
+		result.SpaceKey = targetCtx.spaceKey
 	}
 
 	immutableResolver := newValidateImmutableFrontmatterResolver(targetCtx.spaceDir, targetCtx.spaceKey, state)
@@ -142,30 +183,45 @@ func runValidateTargetWithContext(ctx context.Context, out io.Writer, target con
 	hasErrors := false
 	for _, file := range targetCtx.files {
 		if err := ctx.Err(); err != nil {
-			return err
+			return result, err
 		}
 
 		rel, _ := filepath.Rel(targetCtx.spaceDir, file)
+		rel = filepath.ToSlash(rel)
 
-		issues := validateFile(ctx, file, targetCtx.spaceDir, linkHook, state.AttachmentIndex)
-		issues = append(issues, immutableResolver.validate(file)...)
+		fileResult := validateFile(ctx, file, targetCtx.spaceDir, linkHook, state.AttachmentIndex)
+		issues := append(fileResult.Issues, immutableResolver.validate(file)...)
+		printValidateWarnings(out, rel, fileResult.Warnings)
+		for _, warning := range fileResult.Warnings {
+			result.Diagnostics = append(result.Diagnostics, commandRunReportDiagnostic{
+				Path:    rel,
+				Code:    warning.Code,
+				Message: warning.Message,
+			})
+		}
 		if len(issues) == 0 {
 			continue
 		}
 
 		hasErrors = true
-		_, _ = fmt.Fprintf(out, "Validation failed for %s:\n", filepath.ToSlash(rel))
+		_, _ = fmt.Fprintf(out, "Validation failed for %s:\n", rel)
 		for _, issue := range issues {
 			_, _ = fmt.Fprintf(out, "  - [%s] %s: %s\n", issue.Code, issue.Field, issue.Message)
+			result.Diagnostics = append(result.Diagnostics, commandRunReportDiagnostic{
+				Path:    rel,
+				Code:    issue.Code,
+				Field:   issue.Field,
+				Message: issue.Message,
+			})
 		}
 	}
 
 	if hasErrors {
-		return fmt.Errorf("validation failed: please fix the issues listed above before retrying")
+		return result, fmt.Errorf("validation failed: please fix the issues listed above before retrying")
 	}
 
 	_, _ = fmt.Fprintln(out, "Validation successful")
-	return nil
+	return result, nil
 }
 
 func resolveValidateTargetContext(target config.Target) (validateTargetContext, error) {
@@ -331,37 +387,39 @@ func (r *validateImmutableFrontmatterResolver) readBaselineFrontmatter(absPath s
 	return doc.Frontmatter, true
 }
 
-func validateFile(ctx context.Context, path, spaceDir string, linkHook mdconverter.LinkParseHook, attachmentIndex map[string]string) []fs.ValidationIssue {
-	var issues []fs.ValidationIssue
+func validateFile(ctx context.Context, path, spaceDir string, linkHook mdconverter.LinkParseHook, attachmentIndex map[string]string) validateFileResult {
+	result := validateFileResult{}
 
 	// Read full document
 	doc, err := fs.ReadMarkdownDocument(path)
 	if err != nil {
-		return append(issues, fs.ValidationIssue{
+		result.Issues = append(result.Issues, fs.ValidationIssue{
 			Code:    "read_error",
 			Message: err.Error(),
 		})
+		return result
 	}
+	result.Warnings = append(result.Warnings, mermaidValidationWarnings(doc.Body)...)
 
 	// 1. Validate Schema
 	res := fs.ValidateFrontmatterSchema(doc.Frontmatter)
-	issues = append(issues, res.Issues...)
+	result.Issues = append(result.Issues, res.Issues...)
 
 	strictAttachmentIndex, _, err := syncflow.BuildStrictAttachmentIndex(spaceDir, path, doc.Body, attachmentIndex)
 	if err != nil {
-		issues = append(issues, fs.ValidationIssue{
+		result.Issues = append(result.Issues, fs.ValidationIssue{
 			Code:    "conversion_error",
 			Message: err.Error(),
 		})
-		return issues
+		return result
 	}
 	preparedBody, err := syncflow.PrepareMarkdownForAttachmentConversion(spaceDir, path, doc.Body, strictAttachmentIndex)
 	if err != nil {
-		issues = append(issues, fs.ValidationIssue{
+		result.Issues = append(result.Issues, fs.ValidationIssue{
 			Code:    "conversion_error",
 			Message: err.Error(),
 		})
-		return issues
+		return result
 	}
 	mediaHook := syncflow.NewReverseMediaHook(spaceDir, strictAttachmentIndex)
 
@@ -373,13 +431,13 @@ func validateFile(ctx context.Context, path, spaceDir string, linkHook mdconvert
 	}, path)
 
 	if err != nil {
-		issues = append(issues, fs.ValidationIssue{
+		result.Issues = append(result.Issues, fs.ValidationIssue{
 			Code:    "conversion_error",
 			Message: err.Error(),
 		})
 	}
 
-	return issues
+	return result
 }
 
 // runValidateChangedPushFiles validates only the files in changedAbsPaths but builds the full
@@ -417,12 +475,7 @@ func runValidateChangedPushFiles(ctx context.Context, out io.Writer, spaceDir st
 		return fmt.Errorf("validation failed: duplicate page IDs detected - rename each file to have a unique id or remove the duplicate id")
 	}
 
-	var globalIndex syncflow.GlobalPageIndex
-	globalIndexRoot := filepath.Dir(targetCtx.spaceDir)
-	if repoRoot, rootErr := gitRepoRoot(); rootErr == nil {
-		globalIndexRoot = repoRoot
-	}
-	globalIndex, err = syncflow.BuildGlobalPageIndex(globalIndexRoot)
+	globalIndex, err := buildWorkspaceGlobalPageIndex(targetCtx.spaceDir)
 	if err != nil {
 		return fmt.Errorf("failed to build global page index: %w", err)
 	}
@@ -446,8 +499,9 @@ func runValidateChangedPushFiles(ctx context.Context, out io.Writer, spaceDir st
 
 		rel, _ := filepath.Rel(targetCtx.spaceDir, file)
 
-		issues := validateFile(ctx, file, targetCtx.spaceDir, linkHook, state.AttachmentIndex)
-		issues = append(issues, immutableResolver.validate(file)...)
+		fileResult := validateFile(ctx, file, targetCtx.spaceDir, linkHook, state.AttachmentIndex)
+		issues := append(fileResult.Issues, immutableResolver.validate(file)...)
+		printValidateWarnings(out, rel, fileResult.Warnings)
 		if len(issues) == 0 {
 			continue
 		}
@@ -477,6 +531,14 @@ func pushChangedAbsPaths(spaceDir string, changes []syncflow.PushFileChange) []s
 		out = append(out, filepath.Join(spaceDir, filepath.FromSlash(change.Path)))
 	}
 	return out
+}
+
+func buildWorkspaceGlobalPageIndex(spaceDir string) (syncflow.GlobalPageIndex, error) {
+	globalIndexRoot, err := syncflow.ResolveGlobalIndexRoot(spaceDir)
+	if err != nil {
+		return nil, err
+	}
+	return syncflow.BuildGlobalPageIndex(globalIndexRoot)
 }
 
 // detectDuplicatePageIDs returns an error message for each Confluence page ID
@@ -513,4 +575,33 @@ func detectDuplicatePageIDs(index syncflow.PageIndex) []string {
 		))
 	}
 	return errs
+}
+
+func printValidateWarnings(out io.Writer, relPath string, warnings []validateWarning) {
+	if len(warnings) == 0 {
+		return
+	}
+
+	_, _ = fmt.Fprintf(out, "Validation warning for %s:\n", filepath.ToSlash(relPath))
+	for _, warning := range warnings {
+		_, _ = fmt.Fprintf(out, "  - [%s] %s\n", warning.Code, warning.Message)
+	}
+}
+
+func mermaidValidationWarnings(body string) []validateWarning {
+	structure := search.ParseMarkdownStructure([]byte(body))
+	warnings := make([]validateWarning, 0)
+	for _, block := range structure.CodeBlocks {
+		if !strings.EqualFold(strings.TrimSpace(block.Language), "mermaid") {
+			continue
+		}
+		warnings = append(warnings, validateWarning{
+			Code: "MERMAID_PRESERVED_AS_CODEBLOCK",
+			Message: fmt.Sprintf(
+				"Mermaid fenced code at line %d will be pushed as a Confluence code block with language mermaid; it will not render as a Mermaid diagram macro",
+				block.Line,
+			),
+		})
+	}
+	return warnings
 }

@@ -29,6 +29,16 @@ func ensureSynchronizedCmdOutput(cmd *cobra.Command) io.Writer {
 	return out
 }
 
+func ensureSynchronizedCmdError(cmd *cobra.Command) io.Writer {
+	if errOut, ok := cmd.ErrOrStderr().(*synchronizedWriter); ok {
+		return errOut
+	}
+
+	errOut := &synchronizedWriter{w: cmd.ErrOrStderr()}
+	cmd.SetErr(errOut)
+	return errOut
+}
+
 type fdWriter interface {
 	Fd() uintptr
 }

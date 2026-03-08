@@ -2,12 +2,15 @@
 
 This guide covers day-to-day usage of `conf`.
 
+> **Beta** — `conf` is under active development. Core workflows are tested against live tenants, but edge cases remain. Pin a specific version for production use.
+
 ## What `conf` does
 
 `conf` synchronizes Confluence pages with local Markdown files.
 
 - `pull` converts Confluence ADF to Markdown.
 - `push` converts Markdown back to ADF and updates Confluence.
+- `status` inspects Markdown page drift against the last sync baseline and current remote state.
 - `validate` checks a workspace before remote writes.
 - `diff` previews local vs remote content.
 - `init agents` scaffolds an `AGENTS.md` file for AI-assisted authoring.
@@ -55,6 +58,7 @@ conf init
 - initialize Git when missing,
 - ensure `.gitignore` entries,
 - create `.env` when needed,
+- scaffold `.env` directly from already-set `ATLASSIAN_*` / `CONFLUENCE_*` variables without prompting,
 - scaffold helper files,
 - create an initial commit when a new Git repository is initialized.
 
@@ -87,8 +91,12 @@ Pulls remote Confluence content into local Markdown.
 Highlights:
 
 - best-effort conversion (unresolved references become diagnostics),
+- diagnostics distinguish preserved cross-space links (`note`), degraded-but-pullable fallbacks, and broken references left as fallback output,
 - page files follow Confluence hierarchy (folders and parent/child pages become nested directories),
 - pages that have children are written as `<Page>/<Page>.md` so they are distinguishable from folders,
+- leaf-page title renames can keep the existing Markdown path when the effective parent directory is unchanged,
+- pages that own subtree directories move when their self-owned directory segment changes,
+- hierarchy moves and ancestor/path-segment sanitization changes move the Markdown file and emit `PAGE_PATH_MOVED` notes with old/new paths,
 - same-space links rewritten to relative Markdown links,
 - attachments downloaded into `assets/<page-id>/<attachment-id>-<filename>`,
 - `--force` (`-f`) forces a full-space refresh (all tracked pages are re-pulled even when incremental changes are empty),
@@ -109,7 +117,22 @@ Checks include:
 - link/asset resolution,
 - strict Markdown -> ADF conversion compatibility.
 
+Validation also emits non-fatal compatibility warnings for content that will sync successfully but will not render as a first-class Confluence feature. Today that includes Mermaid fenced code blocks, which are preserved as ADF `codeBlock` nodes instead of diagram macros.
+
 Use this before major pushes or in CI.
+
+### `conf status [TARGET]`
+
+Shows a high-level sync summary for Markdown pages.
+
+Highlights:
+
+- compares local Markdown drift against the last sync baseline,
+- checks whether tracked remote pages are ahead, missing, or newly added,
+- surfaces planned tracked-page path relocations that would happen on the next pull,
+- focuses on Markdown page files only.
+
+Attachment-only changes are intentionally excluded from `conf status`. Use `git status` or `conf diff` when you need asset visibility.
 
 ### `conf diff [TARGET]`
 
@@ -119,6 +142,9 @@ Highlights:
 
 - fetches remote content,
 - converts using best-effort forward conversion,
+- reports planned Markdown path moves before showing the diff so hierarchy-driven renames are explicit,
+- includes synced frontmatter parity such as `state`, `status`, and `labels`,
+- strips read-only author/timestamp metadata so the diff stays focused on actionable drift,
 - compares using `git diff --no-index`,
 - supports both file and space targets.
 
@@ -166,7 +192,10 @@ Highlights:
 - two backends available: `--engine sqlite` (default, SQLite FTS5) and `--engine bleve`,
 - index stored in `.confluence-search-index/` (local-only, gitignored),
 - index updated automatically after each `conf pull` (non-fatal),
+- deleted Markdown paths are removed from the index during incremental updates and post-pull space refreshes,
 - results grouped by file with heading context and snippets,
+- metadata filters support creator/updater and created/updated date windows,
+- `--result-detail` controls whether JSON/text results include full document payloads or a smaller projection,
 - `--format auto` defaults to text on TTY, JSON when piped.
 
 Key flags:
@@ -182,6 +211,13 @@ Key flags:
 | `--list-labels` | false | List all indexed labels and exit |
 | `--list-spaces` | false | List all indexed spaces and exit |
 | `--format` | auto | Output format: `text`, `json`, or `auto` |
+| `--result-detail` | full | Result verbosity: `full`, `standard`, or `minimal` |
+| `--created-by USER` | | Filter to pages created by this user |
+| `--updated-by USER` | | Filter to pages last updated by this user |
+| `--created-after DATE` | | Filter to pages created on or after a date (`YYYY-MM-DD` or RFC3339) |
+| `--created-before DATE` | | Filter to pages created on or before a date |
+| `--updated-after DATE` | | Filter to pages updated on or after a date |
+| `--updated-before DATE` | | Filter to pages updated on or before a date |
 
 Examples:
 
@@ -201,6 +237,9 @@ conf search --list-spaces
 
 # Agent-friendly (piped → JSON automatically)
 conf search "security review" --format json | ConvertFrom-Json
+
+# Use metadata filters and smaller result payloads
+conf search "oauth" --created-by alice --updated-after 2024-01-01 --result-detail minimal
 ```
 
 ## Metadata and State
@@ -224,6 +263,26 @@ Markdown frontmatter keys:
 Local state file:
 
 - `.confluence-state.json` (per space, gitignored)
+
+## Extension and Macro Support
+
+For a full breakdown of which features depend on optional tenant APIs and what
+fallback behavior applies when those APIs are unavailable, see
+[docs/compatibility.md](compatibility.md).
+
+| Item | Support level | Markdown / ADF behavior | Notes |
+|------|---------------|-------------------------|-------|
+| PlantUML (`plantumlcloud`) | Rendered round-trip support | Pull/diff use the custom extension handler to turn the Confluence macro into a managed `adf-extension` wrapper with a `puml` code body; validate/push rebuild the same Confluence extension. | This is the only first-class extension handler registered by `conf`. |
+| Mermaid | Preserved but not rendered | Markdown keeps ` ```mermaid ` fences; push writes an ADF `codeBlock` with language `mermaid` instead of a Confluence diagram macro. | `conf validate` warns with `MERMAID_PRESERVED_AS_CODEBLOCK`, and push surfaces the same warning before writing. |
+| Raw ADF extension preservation | Best-effort preservation only | When an extension node has no repo-specific handler, pull/diff can preserve it as a raw ```` ```adf:extension ```` JSON fence that validate/push can pass back through with minimal interpretation. | Treat this as a low-level escape hatch, not as a rendered or human-friendly authoring format. It is not a verified end-to-end round-trip contract; validate in a sandbox before relying on it. |
+| Unknown Confluence macros/extensions | Unsupported as a first-class feature | `conf` does not add custom behavior for unknown macros beyond whatever best-effort raw ADF preservation may be possible for some remote payloads. | If Confluence rejects an unknown or uninstalled macro, push can still fail. Do not assume rendered round-trip support unless a handler is documented explicitly, and sandbox-validate any workflow that depends on this path. |
+
+Practical guidance:
+
+- Use PlantUML when the page must keep rendering as a Confluence diagram macro.
+- Use Mermaid only when preserving the source as code is acceptable.
+- Keep raw `adf:extension` fences unchanged if you need best-effort preservation of an unhandled extension node, and test that workflow in a sandbox before using it in a real space.
+- Do not treat unknown macros/extensions as supported authoring targets just because they may survive a pull in raw ADF form.
 
 ## Typical Team Workflow
 

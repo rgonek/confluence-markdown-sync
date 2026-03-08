@@ -23,6 +23,12 @@ type fakePageMove struct {
 	targetID string
 }
 
+type contentStatusCall struct {
+	PageID     string
+	PageStatus string
+	StatusName string
+}
+
 func (f *fakeFolderPushRemote) GetSpace(_ context.Context, spaceKey string) (confluence.Space, error) {
 	return confluence.Space{ID: "space-1", Key: spaceKey}, nil
 }
@@ -38,15 +44,15 @@ func (f *fakeFolderPushRemote) GetPage(_ context.Context, pageID string) (conflu
 	return confluence.Page{}, confluence.ErrNotFound
 }
 
-func (f *fakeFolderPushRemote) GetContentStatus(_ context.Context, pageID string) (string, error) {
+func (f *fakeFolderPushRemote) GetContentStatus(_ context.Context, pageID string, _ string) (string, error) {
 	return "", nil
 }
 
-func (f *fakeFolderPushRemote) SetContentStatus(_ context.Context, pageID string, statusName string) error {
+func (f *fakeFolderPushRemote) SetContentStatus(_ context.Context, pageID string, _ string, statusName string) error {
 	return nil
 }
 
-func (f *fakeFolderPushRemote) DeleteContentStatus(_ context.Context, pageID string) error {
+func (f *fakeFolderPushRemote) DeleteContentStatus(_ context.Context, pageID string, _ string) error {
 	return nil
 }
 
@@ -78,7 +84,7 @@ func (f *fakeFolderPushRemote) WaitForArchiveTask(_ context.Context, _ string, _
 	return confluence.ArchiveTaskStatus{State: confluence.ArchiveTaskStateSucceeded}, nil
 }
 
-func (f *fakeFolderPushRemote) DeletePage(_ context.Context, pageID string, hardDelete bool) error {
+func (f *fakeFolderPushRemote) DeletePage(_ context.Context, pageID string, opts confluence.PageDeleteOptions) error {
 	return nil
 }
 
@@ -127,23 +133,33 @@ type rollbackPushRemote struct {
 	pagesByID                map[string]confluence.Page
 	contentStatuses          map[string]string
 	labelsByPage             map[string][]string
+	folders                  []confluence.Folder
 	nextPageID               int
 	nextAttachmentID         int
 	createPageCalls          int
+	createFolderCalls        int
 	updatePageCalls          int
 	uploadAttachmentCalls    int
 	archiveTaskCalls         []string
 	deletePageCalls          []string
+	deletePageOpts           []confluence.PageDeleteOptions
 	deleteAttachmentCalls    []string
+	getContentStatusCalls    []string
 	setContentStatusCalls    []string
+	setContentStatusArgs     []contentStatusCall
 	deleteContentStatusCalls []string
+	deleteContentStatusArgs  []contentStatusCall
 	addLabelsCalls           []string
 	removeLabelCalls         []string
 	archiveTaskStatus        confluence.ArchiveTaskStatus
 	archivePagesErr          error
 	archiveTaskWaitErr       error
+	listFoldersErr           error
+	getContentStatusErr      error
 	failUpdate               bool
 	failAddLabels            bool
+	failSetContentStatus     bool
+	failDeleteContentStatus  bool
 	rejectParentID           string
 	rejectParentErr          error
 	updateInputsByPageID     map[string]confluence.PageUpsertInput
@@ -181,18 +197,37 @@ func (f *rollbackPushRemote) GetPage(_ context.Context, pageID string) (confluen
 	return page, nil
 }
 
-func (f *rollbackPushRemote) GetContentStatus(_ context.Context, pageID string) (string, error) {
+func (f *rollbackPushRemote) GetContentStatus(_ context.Context, pageID string, _ string) (string, error) {
+	f.getContentStatusCalls = append(f.getContentStatusCalls, pageID)
+	if f.getContentStatusErr != nil {
+		return "", f.getContentStatusErr
+	}
 	return f.contentStatuses[pageID], nil
 }
 
-func (f *rollbackPushRemote) SetContentStatus(_ context.Context, pageID string, statusName string) error {
+func (f *rollbackPushRemote) SetContentStatus(_ context.Context, pageID string, pageStatus string, statusName string) error {
 	f.setContentStatusCalls = append(f.setContentStatusCalls, pageID)
+	f.setContentStatusArgs = append(f.setContentStatusArgs, contentStatusCall{
+		PageID:     pageID,
+		PageStatus: strings.TrimSpace(pageStatus),
+		StatusName: strings.TrimSpace(statusName),
+	})
+	if f.failSetContentStatus {
+		return errors.New("simulated set content status failure")
+	}
 	f.contentStatuses[pageID] = strings.TrimSpace(statusName)
 	return nil
 }
 
-func (f *rollbackPushRemote) DeleteContentStatus(_ context.Context, pageID string) error {
+func (f *rollbackPushRemote) DeleteContentStatus(_ context.Context, pageID string, pageStatus string) error {
 	f.deleteContentStatusCalls = append(f.deleteContentStatusCalls, pageID)
+	f.deleteContentStatusArgs = append(f.deleteContentStatusArgs, contentStatusCall{
+		PageID:     pageID,
+		PageStatus: strings.TrimSpace(pageStatus),
+	})
+	if f.failDeleteContentStatus {
+		return errors.New("simulated delete content status failure")
+	}
 	f.contentStatuses[pageID] = ""
 	return nil
 }
@@ -233,6 +268,7 @@ func (f *rollbackPushRemote) CreatePage(_ context.Context, input confluence.Page
 		SpaceID:      input.SpaceID,
 		ParentPageID: input.ParentPageID,
 		Title:        input.Title,
+		Status:       input.Status,
 		Version:      1,
 		WebURL:       "https://example.atlassian.net/wiki/pages/" + id,
 		BodyADF:      []byte(`{"version":1,"type":"doc","content":[]}`),
@@ -301,8 +337,9 @@ func (f *rollbackPushRemote) WaitForArchiveTask(_ context.Context, taskID string
 	return status, nil
 }
 
-func (f *rollbackPushRemote) DeletePage(_ context.Context, pageID string, _ bool) error {
+func (f *rollbackPushRemote) DeletePage(_ context.Context, pageID string, opts confluence.PageDeleteOptions) error {
 	f.deletePageCalls = append(f.deletePageCalls, pageID)
+	f.deletePageOpts = append(f.deletePageOpts, opts)
 	delete(f.pagesByID, pageID)
 	filtered := make([]confluence.Page, 0, len(f.pages))
 	for _, page := range f.pages {
@@ -328,11 +365,17 @@ func (f *rollbackPushRemote) DeleteAttachment(_ context.Context, attachmentID st
 }
 
 func (f *rollbackPushRemote) CreateFolder(_ context.Context, input confluence.FolderCreateInput) (confluence.Folder, error) {
-	return confluence.Folder{ID: "folder-1", SpaceID: input.SpaceID, Title: input.Title, ParentID: input.ParentID}, nil
+	f.createFolderCalls++
+	folder := confluence.Folder{ID: fmt.Sprintf("folder-%d", f.createFolderCalls), SpaceID: input.SpaceID, Title: input.Title, ParentID: input.ParentID, ParentType: input.ParentType}
+	f.folders = append(f.folders, folder)
+	return folder, nil
 }
 
 func (f *rollbackPushRemote) ListFolders(_ context.Context, _ confluence.FolderListOptions) (confluence.FolderListResult, error) {
-	return confluence.FolderListResult{}, nil
+	if f.listFoldersErr != nil {
+		return confluence.FolderListResult{}, f.listFoldersErr
+	}
+	return confluence.FolderListResult{Folders: append([]confluence.Folder(nil), f.folders...)}, nil
 }
 
 func (f *rollbackPushRemote) DeleteFolder(_ context.Context, _ string) error {

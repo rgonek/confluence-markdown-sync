@@ -116,16 +116,40 @@ func FindAllStateFiles(root string) (map[string]SpaceState, error) {
 
 func (s *SpaceState) normalize() {
 	s.SpaceKey = strings.TrimSpace(s.SpaceKey)
+	s.PagePathIndex = normalizeStatePathMap(s.PagePathIndex)
+	s.AttachmentIndex = normalizeStatePathMap(s.AttachmentIndex)
+	s.FolderPathIndex = normalizeStatePathMap(s.FolderPathIndex)
+}
 
-	if s.PagePathIndex == nil {
-		s.PagePathIndex = map[string]string{}
+func normalizeStatePathMap(in map[string]string) map[string]string {
+	if in == nil {
+		return map[string]string{}
 	}
-	if s.AttachmentIndex == nil {
-		s.AttachmentIndex = map[string]string{}
+
+	out := make(map[string]string, len(in))
+	for key, value := range in {
+		normalizedKey := normalizeStatePath(key)
+		if normalizedKey == "" {
+			continue
+		}
+		out[normalizedKey] = strings.TrimSpace(value)
 	}
-	if s.FolderPathIndex == nil {
-		s.FolderPathIndex = map[string]string{}
+	return out
+}
+
+func normalizeStatePath(path string) string {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return ""
 	}
+
+	path = strings.ReplaceAll(path, `\`, "/")
+	path = filepath.ToSlash(filepath.Clean(path))
+	path = strings.TrimPrefix(path, "./")
+	if path == "." {
+		return ""
+	}
+	return path
 }
 
 func validateWatermark(v string) error {

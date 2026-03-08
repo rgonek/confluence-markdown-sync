@@ -59,3 +59,42 @@ func TestPlanPagePaths_UsesFolderHierarchy(t *testing.T) {
 		t.Fatalf("folder-based path = %q, want Policies/Onboarding/Start-Here.md", got)
 	}
 }
+
+func TestPlanPagePaths_PreservesExistingPathWhenTitleChangesInSameParent(t *testing.T) {
+	spaceDir := t.TempDir()
+
+	pages := []confluence.Page{
+		{ID: "1", Title: "Renamed Page"},
+	}
+	previousPageIndex := map[string]string{
+		"custom-title.md": "1",
+	}
+
+	_, relByID := PlanPagePaths(spaceDir, previousPageIndex, pages, nil)
+
+	if got := relByID["1"]; got != "custom-title.md" {
+		t.Fatalf("preserved path = %q, want custom-title.md", got)
+	}
+}
+
+func TestPlanPagePaths_SubtreeRootTitleRenameMovesOwnedDirectory(t *testing.T) {
+	spaceDir := t.TempDir()
+
+	pages := []confluence.Page{
+		{ID: "1", Title: "Renamed Root"},
+		{ID: "2", Title: "Child", ParentPageID: "1"},
+	}
+	previousPageIndex := map[string]string{
+		"Original-Root/Original-Root.md": "1",
+		"Original-Root/Child.md":         "2",
+	}
+
+	_, relByID := PlanPagePaths(spaceDir, previousPageIndex, pages, nil)
+
+	if got := relByID["1"]; got != "Renamed-Root/Renamed-Root.md" {
+		t.Fatalf("root path = %q, want Renamed-Root/Renamed-Root.md", got)
+	}
+	if got := relByID["2"]; got != "Renamed-Root/Child.md" {
+		t.Fatalf("child path = %q, want Renamed-Root/Child.md", got)
+	}
+}

@@ -35,7 +35,7 @@ type Service interface {
 	ListChanges(ctx context.Context, opts ChangeListOptions) (ChangeListResult, error)
 	ArchivePages(ctx context.Context, pageIDs []string) (ArchiveResult, error)
 	WaitForArchiveTask(ctx context.Context, taskID string, opts ArchiveTaskWaitOptions) (ArchiveTaskStatus, error)
-	DeletePage(ctx context.Context, pageID string, hardDelete bool) error
+	DeletePage(ctx context.Context, pageID string, opts PageDeleteOptions) error
 	CreateFolder(ctx context.Context, input FolderCreateInput) (Folder, error)
 	ListFolders(ctx context.Context, opts FolderListOptions) (FolderListResult, error)
 	DeleteFolder(ctx context.Context, folderID string) error
@@ -129,6 +129,12 @@ type PageUpsertInput struct {
 	Status       string
 	Version      int
 	BodyADF      json.RawMessage
+}
+
+// PageDeleteOptions controls page deletion semantics for current vs draft content.
+type PageDeleteOptions struct {
+	Purge bool
+	Draft bool
 }
 
 // Change captures a page change useful for incremental sync planning.

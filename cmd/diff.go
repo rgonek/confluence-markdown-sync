@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/rgonek/confluence-markdown-sync/internal/config"
@@ -30,7 +31,7 @@ type diffContext struct {
 }
 
 func newDiffCmd() *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:   "diff [TARGET]",
 		Short: "Show diff between local Markdown and remote Confluence content",
 		Long: `Diff fetches remote Confluence content, converts it to Markdown,
@@ -47,13 +48,25 @@ If omitted, the space is inferred from the current directory name.`,
 			return runDiff(cmd, config.ParseTarget(raw))
 		},
 	}
+	addReportJSONFlag(cmd)
+	return cmd
 }
 
 func runDiff(cmd *cobra.Command, target config.Target) (runErr error) {
-	_, restoreLogger := beginCommandRun("diff")
+	actualOut := cmd.OutOrStdout()
+	out := reportWriter(cmd, actualOut)
+	runID, restoreLogger := beginCommandRun("diff")
 	defer restoreLogger()
 
 	startedAt := time.Now()
+	report := newCommandRunReport(runID, "diff", target, startedAt)
+	defer func() {
+		if !commandRequestsJSONReport(cmd) {
+			return
+		}
+		report.finalize(runErr, time.Now())
+		_ = writeCommandRunReport(actualOut, report)
+	}()
 	telemetrySpaceKey := "unknown"
 	slog.Info("diff_started", "target_mode", target.Mode, "target", target.Value)
 	defer func() {
@@ -79,8 +92,6 @@ func runDiff(cmd *cobra.Command, target config.Target) (runErr error) {
 	if err := ensureWorkspaceSyncReady("diff"); err != nil {
 		return err
 	}
-	out := cmd.OutOrStdout()
-
 	initialCtx, err := resolveInitialPullContext(target)
 	if err != nil {
 		return err
@@ -114,12 +125,15 @@ func runDiff(cmd *cobra.Command, target config.Target) (runErr error) {
 		targetPageID: initialCtx.targetPageID,
 	}
 	telemetrySpaceKey = diffCtx.spaceKey
+	report.Target.SpaceKey = diffCtx.spaceKey
+	report.Target.SpaceDir = diffCtx.spaceDir
 	if target.IsFile() {
 		absPath, err := filepath.Abs(target.Value)
 		if err == nil {
 			diffCtx.targetFile = absPath
 		}
 	}
+	report.Target.File = diffCtx.targetFile
 
 	state, err := fs.LoadState(diffCtx.spaceDir)
 	if err != nil {
@@ -146,14 +160,21 @@ func runDiff(cmd *cobra.Command, target config.Target) (runErr error) {
 	if err != nil {
 		return err
 	}
+	report.Diagnostics = append(report.Diagnostics, reportDiagnosticsFromPull(folderDiags, diffCtx.spaceDir)...)
+	report.FallbackModes = append(report.FallbackModes, fallbackModesFromPullDiagnostics(folderDiags)...)
 	for _, diag := range folderDiags {
-		if _, err := fmt.Fprintf(out, "warning: %s [%s] %s\n", diag.Path, diag.Code, diag.Message); err != nil {
+		if err := writeSyncDiagnostic(out, diag); err != nil {
 			return fmt.Errorf("write diagnostic output: %w", err)
 		}
 	}
 
 	pagePathByIDAbs, pagePathByIDRel := syncflow.PlanPagePaths(diffCtx.spaceDir, state.PagePathIndex, pages, folderByID)
+	pathMoves := syncflow.PlannedPagePathMoves(state.PagePathIndex, pagePathByIDRel)
 	attachmentPathByID := buildDiffAttachmentPathByID(diffCtx.spaceDir, state.AttachmentIndex)
+	globalPageIndex, err := buildWorkspaceGlobalPageIndex(diffCtx.spaceDir)
+	if err != nil {
+		return fmt.Errorf("build global page index: %w", err)
+	}
 
 	tmpRoot, err := os.MkdirTemp("", "conf-diff-*")
 	if err != nil {
@@ -164,10 +185,13 @@ func runDiff(cmd *cobra.Command, target config.Target) (runErr error) {
 	}()
 
 	if target.IsFile() {
-		return runDiffFileMode(ctx, out, remote, diffCtx, pagePathByIDAbs, attachmentPathByID, tmpRoot)
+		result, err := runDiffFileMode(ctx, out, remote, diffCtx, pagePathByIDAbs, pathMoves, attachmentPathByID, globalPageIndex, tmpRoot)
+		report.Diagnostics = append(report.Diagnostics, reportDiagnosticsFromPull(result.Diagnostics, diffCtx.spaceDir)...)
+		report.MutatedFiles = append(report.MutatedFiles, result.ChangedFiles...)
+		return err
 	}
 
-	return runDiffSpaceMode(
+	result, err := runDiffSpaceMode(
 		ctx,
 		out,
 		remote,
@@ -175,9 +199,14 @@ func runDiff(cmd *cobra.Command, target config.Target) (runErr error) {
 		pages,
 		pagePathByIDAbs,
 		pagePathByIDRel,
+		pathMoves,
 		attachmentPathByID,
+		globalPageIndex,
 		tmpRoot,
 	)
+	report.Diagnostics = append(report.Diagnostics, reportDiagnosticsFromPull(result.Diagnostics, diffCtx.spaceDir)...)
+	report.MutatedFiles = append(report.MutatedFiles, result.ChangedFiles...)
+	return err
 }
 
 func runDiffFileMode(
@@ -186,70 +215,110 @@ func runDiffFileMode(
 	remote syncflow.PullRemote,
 	diffCtx diffContext,
 	pagePathByIDAbs map[string]string,
+	pathMoves []syncflow.PlannedPagePathMove,
 	attachmentPathByID map[string]string,
+	globalPageIndex syncflow.GlobalPageIndex,
 	tmpRoot string,
-) error {
+) (diffCommandResult, error) {
+	result := diffCommandResult{
+		SpaceKey:     diffCtx.spaceKey,
+		SpaceDir:     diffCtx.spaceDir,
+		TargetFile:   diffCtx.targetFile,
+		Diagnostics:  []syncflow.PullDiagnostic{},
+		ChangedFiles: []string{},
+	}
 	relPath := diffDisplayRelPath(diffCtx.spaceDir, diffCtx.targetFile)
 	localFile := filepath.Join(tmpRoot, "local", filepath.FromSlash(relPath))
 	remoteFile := filepath.Join(tmpRoot, "remote", filepath.FromSlash(relPath))
 
 	if err := os.MkdirAll(filepath.Dir(localFile), 0o750); err != nil {
-		return fmt.Errorf("prepare local diff file: %w", err)
+		return result, fmt.Errorf("prepare local diff file: %w", err)
 	}
 	if err := os.MkdirAll(filepath.Dir(remoteFile), 0o750); err != nil {
-		return fmt.Errorf("prepare diff file: %w", err)
+		return result, fmt.Errorf("prepare diff file: %w", err)
 	}
 
 	localRaw, err := os.ReadFile(diffCtx.targetFile) //nolint:gosec // target file path is user-selected markdown inside workspace
 	if err != nil {
-		return fmt.Errorf("read local file for diff: %w", err)
+		return result, fmt.Errorf("read local file for diff: %w", err)
 	}
 	localRaw, err = normalizeDiffMarkdown(localRaw)
 	if err != nil {
-		return fmt.Errorf("normalize local file for diff: %w", err)
+		return result, fmt.Errorf("normalize local file for diff: %w", err)
 	}
 	if err := os.WriteFile(localFile, localRaw, 0o600); err != nil {
-		return fmt.Errorf("write local diff file: %w", err)
+		return result, fmt.Errorf("write local diff file: %w", err)
 	}
 
 	page, err := remote.GetPage(ctx, diffCtx.targetPageID)
 	if err != nil {
 		if errors.Is(err, confluence.ErrNotFound) {
+			result.Diagnostics = append(result.Diagnostics, syncflow.PullDiagnostic{
+				Path:    relPath,
+				Code:    "missing_remote_page",
+				Message: fmt.Sprintf("remote page %s not found", diffCtx.targetPageID),
+			})
 			if _, err := fmt.Fprintf(out, "warning: %s [missing_remote_page] remote page %s not found\n", relPath, diffCtx.targetPageID); err != nil {
-				return fmt.Errorf("write diagnostic output: %w", err)
+				return result, fmt.Errorf("write diagnostic output: %w", err)
 			}
 			if err := os.WriteFile(remoteFile, []byte{}, 0o600); err != nil {
-				return fmt.Errorf("write diff file: %w", err)
+				return result, fmt.Errorf("write diff file: %w", err)
 			}
-			return printNoIndexDiff(out, localFile, remoteFile)
+			changed, err := renderNoIndexDiff(out, localFile, remoteFile)
+			if changed {
+				result.ChangedFiles = append(result.ChangedFiles, relPath)
+			}
+			return result, err
 		}
-		return fmt.Errorf("fetch page %s: %w", diffCtx.targetPageID, err)
+		return result, fmt.Errorf("fetch page %s: %w", diffCtx.targetPageID, err)
 	}
 
+	page, metadataDiags := hydrateDiffPageMetadata(ctx, remote, page, relPath)
+	renderSourcePath := diffCtx.targetFile
+	if plannedSourcePath, ok := pagePathByIDAbs[page.ID]; ok && strings.TrimSpace(plannedSourcePath) != "" {
+		renderSourcePath = plannedSourcePath
+	}
 	rendered, diagnostics, err := renderDiffMarkdown(
 		ctx,
 		page,
 		diffCtx.spaceKey,
-		diffCtx.targetFile,
+		diffCtx.spaceDir,
+		renderSourcePath,
 		relPath,
 		pagePathByIDAbs,
 		attachmentPathByID,
+		globalPageIndex,
 	)
 	if err != nil {
-		return err
+		return result, err
 	}
+	diagnostics = append(metadataDiags, diagnostics...)
+	for _, move := range pathMoves {
+		if move.PageID == diffCtx.targetPageID {
+			diagnostics = append([]syncflow.PullDiagnostic{syncflow.PagePathMoveDiagnostic(move)}, diagnostics...)
+			break
+		}
+	}
+	result.Diagnostics = append(result.Diagnostics, diagnostics...)
 
 	for _, diag := range diagnostics {
-		if _, err := fmt.Fprintf(out, "warning: %s [%s] %s\n", diag.Path, diag.Code, diag.Message); err != nil {
-			return fmt.Errorf("write diagnostic output: %w", err)
+		if err := writeSyncDiagnostic(out, diag); err != nil {
+			return result, fmt.Errorf("write diagnostic output: %w", err)
 		}
 	}
 
 	if err := os.WriteFile(remoteFile, rendered, 0o600); err != nil {
-		return fmt.Errorf("write diff file: %w", err)
+		return result, fmt.Errorf("write diff file: %w", err)
+	}
+	if err := writeDiffMetadataSummary(out, []diffMetadataSummary{summarizeMetadataDrift(relPath, localRaw, rendered)}); err != nil {
+		return result, err
 	}
 
-	return printNoIndexDiff(out, localFile, remoteFile)
+	changed, err := renderNoIndexDiff(out, localFile, remoteFile)
+	if changed {
+		result.ChangedFiles = append(result.ChangedFiles, relPath)
+	}
+	return result, err
 }
 
 func runDiffSpaceMode(
@@ -260,20 +329,29 @@ func runDiffSpaceMode(
 	pages []confluence.Page,
 	pagePathByIDAbs map[string]string,
 	pagePathByIDRel map[string]string,
+	pathMoves []syncflow.PlannedPagePathMove,
 	attachmentPathByID map[string]string,
+	globalPageIndex syncflow.GlobalPageIndex,
 	tmpRoot string,
-) error {
+) (diffCommandResult, error) {
+	result := diffCommandResult{
+		SpaceKey:     diffCtx.spaceKey,
+		SpaceDir:     diffCtx.spaceDir,
+		TargetFile:   diffCtx.targetFile,
+		Diagnostics:  []syncflow.PullDiagnostic{},
+		ChangedFiles: []string{},
+	}
 	localSnapshot := filepath.Join(tmpRoot, "local")
 	remoteSnapshot := filepath.Join(tmpRoot, "remote")
 	if err := os.MkdirAll(localSnapshot, 0o750); err != nil {
-		return fmt.Errorf("prepare local snapshot: %w", err)
+		return result, fmt.Errorf("prepare local snapshot: %w", err)
 	}
 	if err := os.MkdirAll(remoteSnapshot, 0o750); err != nil {
-		return fmt.Errorf("prepare remote snapshot: %w", err)
+		return result, fmt.Errorf("prepare remote snapshot: %w", err)
 	}
 
 	if err := copyLocalMarkdownSnapshot(diffCtx.spaceDir, localSnapshot); err != nil {
-		return err
+		return result, err
 	}
 
 	pageIDs := make([]string, 0, len(pages))
@@ -283,53 +361,80 @@ func runDiffSpaceMode(
 	sort.Strings(pageIDs)
 
 	diagnostics := make([]syncflow.PullDiagnostic, 0)
+	for _, move := range pathMoves {
+		diagnostics = append(diagnostics, syncflow.PagePathMoveDiagnostic(move))
+	}
+	metadataSummaries := make([]diffMetadataSummary, 0, len(pageIDs))
 	for _, pageID := range pageIDs {
 		page, err := remote.GetPage(ctx, pageID)
 		if err != nil {
 			if errors.Is(err, confluence.ErrNotFound) || errors.Is(err, confluence.ErrArchived) {
 				continue
 			}
-			return fmt.Errorf("fetch page %s: %w", pageID, err)
+			return result, fmt.Errorf("fetch page %s: %w", pageID, err)
 		}
 
 		sourcePath, ok := pagePathByIDAbs[page.ID]
 		if !ok {
-			return fmt.Errorf("planned path missing for page %s", page.ID)
+			return result, fmt.Errorf("planned path missing for page %s", page.ID)
 		}
 
 		relPath, ok := pagePathByIDRel[page.ID]
 		if !ok {
-			return fmt.Errorf("planned relative path missing for page %s", page.ID)
+			return result, fmt.Errorf("planned relative path missing for page %s", page.ID)
 		}
 
+		page, metadataDiags := hydrateDiffPageMetadata(ctx, remote, page, relPath)
 		rendered, pageDiags, err := renderDiffMarkdown(
 			ctx,
 			page,
 			diffCtx.spaceKey,
+			diffCtx.spaceDir,
 			sourcePath,
 			relPath,
 			pagePathByIDAbs,
 			attachmentPathByID,
+			globalPageIndex,
 		)
 		if err != nil {
-			return err
+			return result, err
 		}
+		pageDiags = append(metadataDiags, pageDiags...)
 		diagnostics = append(diagnostics, pageDiags...)
 
 		dstPath := filepath.Join(remoteSnapshot, filepath.FromSlash(relPath))
 		if err := os.MkdirAll(filepath.Dir(dstPath), 0o750); err != nil {
-			return fmt.Errorf("prepare remote snapshot path: %w", err)
+			return result, fmt.Errorf("prepare remote snapshot path: %w", err)
 		}
 		if err := os.WriteFile(dstPath, rendered, 0o600); err != nil {
-			return fmt.Errorf("write remote snapshot file: %w", err)
+			return result, fmt.Errorf("write remote snapshot file: %w", err)
+		}
+
+		localRaw, err := os.ReadFile(sourcePath) //nolint:gosec // planned path is scoped under the current workspace
+		if err == nil {
+			localRaw, err = normalizeDiffMarkdown(localRaw)
+		}
+		if err == nil {
+			metadataSummaries = append(metadataSummaries, summarizeMetadataDrift(relPath, localRaw, rendered))
 		}
 	}
 
 	for _, diag := range diagnostics {
-		if _, err := fmt.Fprintf(out, "warning: %s [%s] %s\n", diag.Path, diag.Code, diag.Message); err != nil {
-			return fmt.Errorf("write diagnostic output: %w", err)
+		if err := writeSyncDiagnostic(out, diag); err != nil {
+			return result, fmt.Errorf("write diagnostic output: %w", err)
 		}
 	}
-
-	return printNoIndexDiff(out, localSnapshot, remoteSnapshot)
+	if err := writeDiffMetadataSummary(out, metadataSummaries); err != nil {
+		return result, err
+	}
+	result.Diagnostics = append(result.Diagnostics, diagnostics...)
+	changed, err := renderNoIndexDiff(out, localSnapshot, remoteSnapshot)
+	if changed {
+		changedFiles, changedFilesErr := collectChangedSnapshotFiles(localSnapshot, remoteSnapshot)
+		if changedFilesErr != nil {
+			return result, changedFilesErr
+		}
+		result.ChangedFiles = append(result.ChangedFiles, changedFiles...)
+	}
+	return result, err
 }
