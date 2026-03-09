@@ -51,11 +51,13 @@ func (t *folderListFallbackTracker) Report(scope string, err error) {
 	t.mu.Unlock()
 
 	if firstOccurrence {
+		cause := folderFallbackCauseLabel(err)
 		slog.Warn(
 			"folder_list_unavailable_falling_back_to_pages",
 			"scope", scope,
+			"cause", cause,
 			"error", err.Error(),
-			"note", "continuing with page-based hierarchy fallback; repeated folder-list failures in this push will be suppressed",
+			"note", "continuing with page-based hierarchy fallback because of "+cause+"; repeated folder-list failures in this push will be suppressed",
 		)
 		return
 	}
@@ -64,6 +66,7 @@ func (t *folderListFallbackTracker) Report(scope string, err error) {
 		slog.Info(
 			"folder_list_unavailable_repeats_suppressed",
 			"scope", scope,
+			"cause", folderFallbackCauseLabel(err),
 			"error", err.Error(),
 			"repeat_count", state.count-1,
 		)

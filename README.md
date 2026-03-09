@@ -72,7 +72,7 @@ conf push ENG --on-conflict=cancel
 - Cross-space links are preserved as readable remote links rather than rewritten to local Markdown paths
 - Removing tracked Markdown pages archives the corresponding remote page; follow-up pull removes the archived page from tracked local state
 - `push` failures retain recovery refs and print exact `conf recover`, `git switch`, and cleanup commands for the retained run
-- Status scope: `conf status` reports Markdown page drift only; use `git status` or `conf diff` for attachment-only changes
+- Status scope: `conf status` reports Markdown page drift only; use `git status` for local asset changes or `conf diff` for attachment-aware remote inspection. There is no attachment-aware `conf status` mode yet
 - Label rules: labels are trimmed, lowercased, deduplicated, and sorted; empty labels and labels containing whitespace are rejected
 - Search filters: `--space`, repeatable `--label`, `--heading`, `--created-by`, `--updated-by`, date bounds, and `--result-detail`
 - Git remote is optional (local Git is enough)

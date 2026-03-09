@@ -2,6 +2,7 @@ package sync
 
 import (
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/url"
 	"strconv"
@@ -12,8 +13,7 @@ import (
 )
 
 const (
-	folderLookupUnavailablePath    = "folder hierarchy"
-	folderLookupUnavailableMessage = "folder lookup unavailable, falling back to page-only hierarchy for affected pages"
+	folderLookupUnavailablePath = "folder hierarchy"
 )
 
 type FolderLookupFallbackTracker struct {
@@ -63,17 +63,19 @@ func (t *FolderLookupFallbackTracker) Report(scope string, path string, err erro
 	t.mu.Unlock()
 
 	if firstOccurrence {
+		cause := folderFallbackCauseLabel(err)
 		slog.Warn(
 			"folder_lookup_unavailable_falling_back_to_pages",
 			"scope", scope,
 			"path", path,
+			"cause", cause,
 			"error", err.Error(),
-			"note", "continuing with page-based hierarchy fallback; repeated folder lookup failures in this run will be suppressed",
+			"note", fmt.Sprintf("continuing with page-based hierarchy fallback because of %s; repeated folder lookup failures in this run will be suppressed", cause),
 		)
 		return PullDiagnostic{
 			Path:    folderLookupUnavailablePath,
 			Code:    "FOLDER_LOOKUP_UNAVAILABLE",
-			Message: folderLookupUnavailableMessage,
+			Message: folderLookupUnavailableMessage(err),
 		}, true
 	}
 
@@ -82,6 +84,7 @@ func (t *FolderLookupFallbackTracker) Report(scope string, path string, err erro
 			"folder_lookup_unavailable_repeats_suppressed",
 			"scope", scope,
 			"path", path,
+			"cause", folderFallbackCauseLabel(err),
 			"error", err.Error(),
 			"repeat_count", state.count-1,
 		)
@@ -132,4 +135,44 @@ func normalizeFolderFallbackURLPath(rawURL string) string {
 	rawURL = strings.TrimSpace(rawURL)
 	rawURL = strings.TrimSuffix(rawURL, "/")
 	return rawURL
+}
+
+func folderLookupUnavailableMessage(err error) string {
+	switch folderFallbackCause(err) {
+	case folderFallbackCauseUnsupportedCapability:
+		return "compatibility mode active: tenant does not support the folder API; falling back to page-only hierarchy for affected pages"
+	default:
+		return "compatibility mode active: folder API endpoint failed upstream; falling back to page-only hierarchy for affected pages"
+	}
+}
+
+func folderCompatibilityModeMessage(err error) string {
+	switch folderFallbackCause(err) {
+	case folderFallbackCauseUnsupportedCapability:
+		return "compatibility mode active: tenant does not support the folder API; using page-based hierarchy mode for this push"
+	default:
+		return "compatibility mode active: folder API endpoint failed upstream; using page-based hierarchy mode for this push"
+	}
+}
+
+type folderFallbackCauseKind string
+
+const (
+	folderFallbackCauseUnsupportedCapability folderFallbackCauseKind = "unsupported tenant capability"
+	folderFallbackCauseUpstreamFailure       folderFallbackCauseKind = "upstream endpoint failure"
+)
+
+func folderFallbackCause(err error) folderFallbackCauseKind {
+	switch {
+	case err == nil:
+		return folderFallbackCauseUpstreamFailure
+	case errors.Is(err, confluence.ErrNotFound), isCompatibilityProbeError(err):
+		return folderFallbackCauseUnsupportedCapability
+	default:
+		return folderFallbackCauseUpstreamFailure
+	}
+}
+
+func folderFallbackCauseLabel(err error) string {
+	return string(folderFallbackCause(err))
 }

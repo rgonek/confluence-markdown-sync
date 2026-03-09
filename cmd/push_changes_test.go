@@ -17,7 +17,7 @@ func TestPrintPushSyncSummary_UploadOnlyPush(t *testing.T) {
 	})
 
 	got := out.String()
-	if !strings.Contains(got, "pages changed: 1 (deleted: 0)") {
+	if !strings.Contains(got, "pages changed: 1 (archived remotely: 0)") {
 		t.Fatalf("expected page count summary, got:\n%s", got)
 	}
 	if !strings.Contains(got, "attachments: uploaded 1, deleted 0, preserved 0, skipped 0") {
@@ -34,8 +34,8 @@ func TestPrintPushSyncSummary_DeleteOnlyPush(t *testing.T) {
 	})
 
 	got := out.String()
-	if !strings.Contains(got, "pages changed: 1 (deleted: 1)") {
-		t.Fatalf("expected deleted page count summary, got:\n%s", got)
+	if !strings.Contains(got, "pages changed: 1 (archived remotely: 1)") {
+		t.Fatalf("expected archived page count summary, got:\n%s", got)
 	}
 	if !strings.Contains(got, "attachments: uploaded 0, deleted 1, preserved 0, skipped 0") {
 		t.Fatalf("expected delete-focused attachment summary, got:\n%s", got)
@@ -55,7 +55,7 @@ func TestPrintPushSyncSummary_MixedPageAndAttachmentPush(t *testing.T) {
 	})
 
 	got := out.String()
-	if !strings.Contains(got, "pages changed: 2 (deleted: 1)") {
+	if !strings.Contains(got, "pages changed: 2 (archived remotely: 1)") {
 		t.Fatalf("expected mixed page summary, got:\n%s", got)
 	}
 	if !strings.Contains(got, "attachments: uploaded 1, deleted 1, preserved 0, skipped 0") {

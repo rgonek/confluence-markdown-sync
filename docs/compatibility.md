@@ -40,8 +40,9 @@ returned), `conf` automatically falls back to page-based hierarchy:
 
 No configuration change is needed. The mode is detected automatically on the
 first folder lookup attempt each run. Diagnostics should make it clear whether
-the fallback was triggered by an unsupported tenant capability or by an
-upstream endpoint failure.
+the fallback was triggered by an unsupported tenant capability ("tenant does
+not support the folder API") or by an upstream endpoint failure ("folder API
+endpoint failed upstream").
 
 ### Content Status API (`CONTENT_STATUS_COMPATIBILITY_MODE`)
 
@@ -101,6 +102,8 @@ validate any workflow that relies on raw ADF preservation.
 ## Preflight Capability Check
 
 Running `conf push --preflight` probes the remote tenant before any write and
-reports which compatibility modes are active. This surfaces degraded behavior
-(folder API, content status API) ahead of time so operators can decide whether
-to proceed.
+reports which compatibility modes are active. When the pending push needs
+folder hierarchy writes, preflight surfaces whether fallback is caused by an
+unsupported tenant capability or by an upstream folder endpoint failure. It
+also probes content-status compatibility ahead of time so operators can decide
+whether to proceed.

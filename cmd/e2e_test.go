@@ -854,6 +854,78 @@ func TestWorkflow_AttachmentPublicationRoundTripAndDeletion(t *testing.T) {
 	}
 }
 
+func TestWorkflow_PageDeleteArchivesRemotely(t *testing.T) {
+	e2eCfg := requireE2EConfig(t)
+	spaceKey := e2eCfg.PrimarySpaceKey
+
+	ctx := context.Background()
+	cfg, err := config.Load("")
+	if err != nil {
+		t.Fatalf("Load config: %v", err)
+	}
+
+	client, err := confluence.NewClient(confluence.ClientConfig{
+		BaseURL:  cfg.Domain,
+		Email:    cfg.Email,
+		APIToken: cfg.APIToken,
+	})
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+
+	rootDir := projectRootFromWD(t)
+	confBin := confBinaryForOS(rootDir)
+
+	tmpDir, err := os.MkdirTemp("", "conf-e2e-archive-delete-*")
+	if err != nil {
+		t.Fatalf("MkdirTemp: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	runCMS := func(args ...string) string {
+		cmd := exec.Command(confBin, args...)
+		cmd.Dir = tmpDir
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("Command conf %v failed: %v\n%s", args, err, string(out))
+		}
+		return string(out)
+	}
+
+	runCMS("init")
+	runCMS("pull", spaceKey, "--yes", "--non-interactive")
+
+	spaceDir := findPulledSpaceDirBySpaceKey(t, tmpDir, spaceKey)
+	filePath, pageID := createE2EScratchPage(t, spaceDir, client, runCMS, "Archive Delete E2E")
+
+	if err := os.Remove(filePath); err != nil {
+		t.Fatalf("remove scratch markdown: %v", err)
+	}
+
+	runCMS("push", spaceKey, "--on-conflict=cancel", "--yes", "--non-interactive")
+
+	archivedPage := waitForArchivedPageInSpace(t, ctx, client, spaceKey, pageID)
+	if !strings.EqualFold(strings.TrimSpace(archivedPage.Status), "archived") {
+		t.Fatalf("expected remote page %s to be archived, got status=%q", pageID, archivedPage.Status)
+	}
+
+	runCMS("pull", spaceKey, "--yes", "--non-interactive")
+
+	if _, err := os.Stat(filePath); !os.IsNotExist(err) {
+		t.Fatalf("expected deleted markdown to stay absent after pull, stat=%v", err)
+	}
+
+	state, err := fs.LoadState(spaceDir)
+	if err != nil {
+		t.Fatalf("LoadState: %v", err)
+	}
+	for relPath, trackedPageID := range state.PagePathIndex {
+		if strings.TrimSpace(trackedPageID) == pageID {
+			t.Fatalf("expected archived page %s to be removed from tracked state, still mapped at %s", pageID, relPath)
+		}
+	}
+}
+
 func TestWorkflow_PushDryRunNonMutating(t *testing.T) {
 	e2eCfg := requireE2EConfig(t)
 	spaceKey := e2eCfg.PrimarySpaceKey
@@ -1272,6 +1344,40 @@ func waitForPageAttachments(t *testing.T, ctx context.Context, client *confluenc
 				t.Fatalf("ListAttachments(%s) did not satisfy predicate before timeout: %v", pageID, err)
 			}
 			t.Fatalf("attachments for page %s did not satisfy predicate before timeout: %+v", pageID, attachments)
+		}
+		time.Sleep(2 * time.Second)
+	}
+}
+
+func waitForArchivedPageInSpace(t *testing.T, ctx context.Context, client *confluence.Client, spaceKey, pageID string) confluence.Page {
+	t.Helper()
+
+	deadline := time.Now().Add(45 * time.Second)
+	for {
+		cursor := ""
+		for {
+			result, err := client.ListPages(ctx, confluence.PageListOptions{
+				SpaceKey: spaceKey,
+				Status:   "archived",
+				Limit:    100,
+				Cursor:   cursor,
+			})
+			if err != nil {
+				break
+			}
+			for _, page := range result.Pages {
+				if strings.TrimSpace(page.ID) == strings.TrimSpace(pageID) {
+					return page
+				}
+			}
+			if strings.TrimSpace(result.NextCursor) == "" || result.NextCursor == cursor {
+				break
+			}
+			cursor = result.NextCursor
+		}
+
+		if time.Now().After(deadline) {
+			t.Fatalf("page %s did not appear in archived state before timeout", pageID)
 		}
 		time.Sleep(2 * time.Second)
 	}

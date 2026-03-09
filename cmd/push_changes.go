@@ -61,11 +61,30 @@ func runPushPreflight(
 	}
 	defer closeRemoteIfPossible(remote)
 
+	concerns := make([]string, 0, 2)
+	if preflightChangesNeedFolderHierarchy(syncChanges) {
+		space, spaceErr := remote.GetSpace(ctx, spaceKey)
+		if spaceErr == nil {
+			_, folderErr := remote.ListFolders(ctx, confluence.FolderListOptions{
+				SpaceID: space.ID,
+				Limit:   1,
+			})
+			if shouldIgnorePreflightFolderHierarchyError(folderErr) {
+				concerns = append(concerns, preflightFolderCapabilityConcern(folderErr))
+			}
+		}
+	}
+
 	// Probe GetContentStatus to detect degraded modes.
 	_, probeErr := remote.GetContentStatus(ctx, "", "")
 	if isPreflightCapabilityProbeError(probeErr) {
+		concerns = append(concerns, "content-status metadata sync disabled for this push")
+	}
+	if len(concerns) > 0 {
 		_, _ = fmt.Fprintln(out, "Remote capability concerns:")
-		_, _ = fmt.Fprintln(out, "  content-status metadata sync disabled for this push")
+		for _, concern := range concerns {
+			_, _ = fmt.Fprintf(out, "  %s\n", concern)
+		}
 	}
 
 	// List remote pages for mutation planning.
@@ -109,9 +128,9 @@ func runPushPreflight(
 			if pageID != "" {
 				remotePage, hasRemote := remotePageByID[pageID]
 				if hasRemote && strings.TrimSpace(remotePage.Title) != "" {
-					_, _ = fmt.Fprintf(out, "  ⚠ Destructive: delete %s (page %s, %q)\n", change.Path, pageID, remotePage.Title)
+					_, _ = fmt.Fprintf(out, "  ⚠ Destructive: archive remote page for %s (page %s, %q)\n", change.Path, pageID, remotePage.Title)
 				} else {
-					_, _ = fmt.Fprintf(out, "  ⚠ Destructive: delete %s (page %s)\n", change.Path, pageID)
+					_, _ = fmt.Fprintf(out, "  ⚠ Destructive: archive remote page for %s (page %s)\n", change.Path, pageID)
 				}
 			} else {
 				_, _ = fmt.Fprintf(out, "  ⚠ Destructive: delete %s\n", change.Path)
@@ -176,9 +195,9 @@ func runPushPreflight(
 			if pageID != "" {
 				remotePage, hasRemote := remotePageByID[pageID]
 				if hasRemote && strings.TrimSpace(remotePage.Title) != "" {
-					_, _ = fmt.Fprintf(out, "  archive %s %q (%s)\n", pageID, remotePage.Title, change.Path)
+					_, _ = fmt.Fprintf(out, "  archive remote page %s %q (%s)\n", pageID, remotePage.Title, change.Path)
 				} else {
-					_, _ = fmt.Fprintf(out, "  archive %s (%s)\n", pageID, change.Path)
+					_, _ = fmt.Fprintf(out, "  archive remote page %s (%s)\n", pageID, change.Path)
 				}
 			} else {
 				_, _ = fmt.Fprintf(out, "  delete %s\n", change.Path)
@@ -207,6 +226,37 @@ func isPreflightCapabilityProbeError(err error) bool {
 	default:
 		return false
 	}
+}
+
+func shouldIgnorePreflightFolderHierarchyError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, confluence.ErrNotFound) {
+		return true
+	}
+	var apiErr *confluence.APIError
+	return errors.As(err, &apiErr)
+}
+
+func preflightFolderCapabilityConcern(err error) string {
+	if isPreflightCapabilityProbeError(err) || errors.Is(err, confluence.ErrNotFound) {
+		return "folder hierarchy writes will use page-based compatibility mode because the tenant does not support the folder API"
+	}
+	return "folder hierarchy writes will use page-based compatibility mode because the folder API endpoint failed upstream"
+}
+
+func preflightChangesNeedFolderHierarchy(changes []syncflow.PushFileChange) bool {
+	for _, change := range changes {
+		if change.Type == syncflow.PushChangeDelete {
+			continue
+		}
+		dirPath := strings.TrimSpace(filepath.ToSlash(filepath.Dir(filepath.FromSlash(change.Path))))
+		if dirPath != "" && dirPath != "." {
+			return true
+		}
+	}
+	return false
 }
 
 // preflightAttachmentMutations returns planned upload and delete paths for
@@ -567,7 +617,7 @@ func printDestructivePushPreview(out io.Writer, changes []syncflow.PushFileChang
 			pageID = strings.TrimSpace(state.PagePathIndex[change.Path])
 		}
 		if pageID != "" {
-			_, _ = fmt.Fprintf(out, "  archive page %s (%s)\n", pageID, change.Path)
+			_, _ = fmt.Fprintf(out, "  archive remote page %s (%s)\n", pageID, change.Path)
 		} else {
 			_, _ = fmt.Fprintf(out, "  delete %s\n", change.Path)
 		}
@@ -629,7 +679,7 @@ func printPushSyncSummary(out io.Writer, commits []syncflow.PushCommitPlan, diag
 	}
 
 	_, _ = fmt.Fprintln(out, "\nSync Summary:")
-	_, _ = fmt.Fprintf(out, "  pages changed: %d (deleted: %d)\n", len(commits), deletedPages)
+	_, _ = fmt.Fprintf(out, "  pages changed: %d (archived remotely: %d)\n", len(commits), deletedPages)
 	if attachmentUploaded > 0 || attachmentDeleted > 0 || attachmentPreserved > 0 || attachmentSkipped > 0 {
 		_, _ = fmt.Fprintf(out, "  attachments: uploaded %d, deleted %d, preserved %d, skipped %d\n", attachmentUploaded, attachmentDeleted, attachmentPreserved, attachmentSkipped)
 	}

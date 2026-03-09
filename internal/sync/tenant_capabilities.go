@@ -77,7 +77,7 @@ func (c *tenantCapabilityCache) detectPullFolderMode(ctx context.Context, remote
 			diags = append(diags, PullDiagnostic{
 				Path:    folderLookupUnavailablePath,
 				Code:    "FOLDER_LOOKUP_UNAVAILABLE",
-				Message: "compatibility mode active: folder lookup unavailable, falling back to page-only hierarchy for affected pages",
+				Message: folderLookupUnavailableMessage(err),
 			})
 		default:
 			return "", nil, err
@@ -132,7 +132,7 @@ func (c *tenantCapabilityCache) detectPushFolderMode(changes []PushFileChange, l
 		diags = append(diags, PushDiagnostic{
 			Path:    "",
 			Code:    "FOLDER_COMPATIBILITY_MODE",
-			Message: "compatibility mode active: folder API unavailable; using page-based hierarchy mode for this push",
+			Message: folderCompatibilityModeMessage(listErr),
 		})
 	}
 

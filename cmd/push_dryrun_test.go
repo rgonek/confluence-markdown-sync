@@ -18,6 +18,7 @@ import (
 type preflightCapabilityFakePushRemote struct {
 	*cmdFakePushRemote
 	contentStatusErr error
+	folderErr        error
 }
 
 func (f *preflightCapabilityFakePushRemote) GetContentStatus(_ context.Context, _ string, _ string) (string, error) {
@@ -25,6 +26,13 @@ func (f *preflightCapabilityFakePushRemote) GetContentStatus(_ context.Context, 
 		return "", f.contentStatusErr
 	}
 	return "", nil
+}
+
+func (f *preflightCapabilityFakePushRemote) ListFolders(_ context.Context, _ confluence.FolderListOptions) (confluence.FolderListResult, error) {
+	if f.folderErr != nil {
+		return confluence.FolderListResult{}, f.folderErr
+	}
+	return f.cmdFakePushRemote.ListFolders(context.Background(), confluence.FolderListOptions{})
 }
 
 func TestRunPush_DryRunDoesNotMutateFrontmatter(t *testing.T) {
@@ -418,8 +426,8 @@ func TestRunPush_PreflightShowsDestructiveDeleteProminent(t *testing.T) {
 	text := out.String()
 
 	// Delete entries in the planned mutations section must be prominent.
-	if !strings.Contains(text, "Destructive: delete") {
-		t.Fatalf("preflight output missing prominent destructive delete marker:\n%s", text)
+	if !strings.Contains(text, "Destructive: archive remote page for") {
+		t.Fatalf("preflight output missing prominent remote archive marker:\n%s", text)
 	}
 	if !strings.Contains(text, "root.md") {
 		t.Fatalf("preflight output missing deleted file name:\n%s", text)
@@ -433,6 +441,68 @@ func TestRunPush_PreflightShowsDestructiveDeleteProminent(t *testing.T) {
 	// safety confirmation notice must appear.
 	if !strings.Contains(text, "safety confirmation would be required") {
 		t.Fatalf("preflight output missing safety confirmation notice:\n%s", text)
+	}
+}
+
+func TestRunPush_PreflightReportsFolderCapabilityCause(t *testing.T) {
+	runParallelCommandTest(t)
+
+	repo := t.TempDir()
+	spaceDir := preparePushRepoWithBaseline(t, repo)
+
+	nestedDir := filepath.Join(spaceDir, "Parent")
+	if err := os.MkdirAll(nestedDir, 0o750); err != nil {
+		t.Fatalf("mkdir nested dir: %v", err)
+	}
+	writeMarkdown(t, filepath.Join(nestedDir, "Child.md"), fs.MarkdownDocument{
+		Frontmatter: fs.Frontmatter{Title: "Child"},
+		Body:        "child\n",
+	})
+	runGitForTest(t, repo, "add", ".")
+	runGitForTest(t, repo, "commit", "-m", "add nested page")
+
+	previousPreflight := flagPushPreflight
+	flagPushPreflight = true
+	t.Cleanup(func() { flagPushPreflight = previousPreflight })
+
+	oldPushFactory := newPushRemote
+	oldPullFactory := newPullRemote
+	newPushRemote = func(_ *config.Config) (syncflow.PushRemote, error) {
+		return &preflightCapabilityFakePushRemote{
+			cmdFakePushRemote: newCmdFakePushRemote(1),
+			folderErr: &confluence.APIError{
+				StatusCode: 501,
+				Method:     "GET",
+				URL:        "/wiki/api/v2/folders",
+				Message:    "Not Implemented",
+			},
+		}, nil
+	}
+	newPullRemote = func(_ *config.Config) (syncflow.PullRemote, error) {
+		return newCmdFakePushRemote(1), nil
+	}
+	t.Cleanup(func() {
+		newPushRemote = oldPushFactory
+		newPullRemote = oldPullFactory
+	})
+
+	setupEnv(t)
+	chdirRepo(t, spaceDir)
+
+	cmd := &cobra.Command{}
+	out := &bytes.Buffer{}
+	cmd.SetOut(out)
+
+	if err := runPush(cmd, config.Target{Mode: config.TargetModeSpace, Value: ""}, "", false); err != nil {
+		t.Fatalf("runPush() preflight unexpected error: %v", err)
+	}
+
+	text := out.String()
+	if !strings.Contains(text, "Remote capability concerns:") {
+		t.Fatalf("preflight output missing remote capability section:\n%s", text)
+	}
+	if !strings.Contains(text, "tenant does not support the folder API") {
+		t.Fatalf("preflight output missing explicit folder compatibility cause:\n%s", text)
 	}
 }
 

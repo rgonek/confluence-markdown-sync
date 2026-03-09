@@ -134,7 +134,7 @@ Highlights:
 - surfaces planned tracked-page path relocations that would happen on the next pull,
 - focuses on Markdown page files only.
 
-Attachment-only changes are intentionally excluded from `conf status`. Use `git status` or `conf diff` when you need asset visibility.
+Attachment-only changes are intentionally excluded from `conf status`. Use `git status` for local asset changes or `conf diff` for attachment-aware remote inspection. There is no attachment-aware `conf status` mode yet.
 
 ### `conf diff [TARGET]`
 
@@ -187,7 +187,8 @@ Highlights:
 - `--preflight` uses the same validation scope and strictness as a real push,
 - `--on-conflict=pull-merge` restores local edits before running `pull` and preserves them via merge results, conflict markers, or retained recovery state instead of silently discarding them,
 - removing tracked Markdown pages archives the corresponding remote page and follow-up pull removes it from tracked local state,
-- archive deletes require long-task completion (`--archive-task-timeout`, `--archive-task-poll-interval`),
+- tracked page removals are previewed and summarized as remote archive operations rather than hard deletes,
+- remote archive operations require long-task completion (`--archive-task-timeout`, `--archive-task-poll-interval`),
 - `--preflight` for a concise local push plan (change summary + validation) without remote writes.
 
 ### `conf search QUERY`

@@ -649,8 +649,78 @@ func TestRunDiff_FolderListFailureFallsBackToPageHierarchy(t *testing.T) {
 	if !strings.Contains(got, "[FOLDER_LOOKUP_UNAVAILABLE]") {
 		t.Fatalf("expected folder fallback warning, got:\n%s", got)
 	}
+	if !strings.Contains(got, "folder API endpoint failed upstream") {
+		t.Fatalf("expected upstream folder failure cause, got:\n%s", got)
+	}
 	if !strings.Contains(got, "+new body") {
 		t.Fatalf("diff output missing added remote line:\n%s", got)
+	}
+}
+
+func TestRunDiff_FolderListUnsupportedTenantCapabilityIsExplicit(t *testing.T) {
+	runParallelCommandTest(t)
+	repo := t.TempDir()
+	spaceDir := filepath.Join(repo, "ENG")
+	if err := os.MkdirAll(spaceDir, 0o750); err != nil {
+		t.Fatalf("mkdir space: %v", err)
+	}
+
+	localFile := filepath.Join(spaceDir, "root.md")
+	writeMarkdown(t, localFile, fs.MarkdownDocument{
+		Frontmatter: fs.Frontmatter{
+			Title: "Root",
+			ID:    "1",
+
+			Version:                1,
+			ConfluenceLastModified: "2026-02-01T10:00:00Z",
+		},
+		Body: "old body\n",
+	})
+
+	fake := &cmdFakePullRemote{
+		space: confluence.Space{ID: "space-1", Key: "ENG", Name: "Engineering"},
+		pages: []confluence.Page{
+			{ID: "1", SpaceID: "space-1", Title: "Root", ParentPageID: "folder-1", ParentType: "folder", Version: 2, LastModified: time.Date(2026, time.February, 1, 11, 0, 0, 0, time.UTC)},
+		},
+		folderErr: &confluence.APIError{
+			StatusCode: 501,
+			Method:     "GET",
+			URL:        "/wiki/api/v2/folders",
+			Message:    "Not Implemented",
+		},
+		pagesByID: map[string]confluence.Page{
+			"1": {
+				ID:           "1",
+				SpaceID:      "space-1",
+				Title:        "Root",
+				ParentPageID: "folder-1",
+				ParentType:   "folder",
+				Version:      2,
+				LastModified: time.Date(2026, time.February, 1, 11, 0, 0, 0, time.UTC),
+				BodyADF:      rawJSON(t, simpleADF("new body")),
+			},
+		},
+		attachments: map[string][]byte{},
+	}
+
+	oldFactory := newDiffRemote
+	newDiffRemote = func(_ *config.Config) (syncflow.PullRemote, error) { return fake, nil }
+	t.Cleanup(func() { newDiffRemote = oldFactory })
+
+	setupEnv(t)
+	chdirRepo(t, repo)
+
+	cmd := &cobra.Command{}
+	out := &bytes.Buffer{}
+	cmd.SetOut(out)
+
+	if err := runDiff(cmd, config.Target{Mode: config.TargetModeFile, Value: localFile}); err != nil {
+		t.Fatalf("runDiff() error: %v", err)
+	}
+
+	got := out.String()
+	if !strings.Contains(got, "tenant does not support the folder API") {
+		t.Fatalf("expected unsupported folder capability cause, got:\n%s", got)
 	}
 }
 
@@ -736,7 +806,7 @@ func TestRunDiff_DeduplicatesFolderFallbackWarnings(t *testing.T) {
 	if strings.Contains(got, "/wiki/api/v2/folders") {
 		t.Fatalf("expected concise operator warning without raw API URL, got:\n%s", got)
 	}
-	if !strings.Contains(got, "falling back to page-only hierarchy for affected pages") {
+	if !strings.Contains(got, "folder API endpoint failed upstream") || !strings.Contains(got, "falling back to page-only hierarchy for affected pages") {
 		t.Fatalf("expected concise folder fallback warning, got:\n%s", got)
 	}
 }
