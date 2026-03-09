@@ -24,6 +24,12 @@ The system SHALL degrade safely when the Confluence Folder API is unavailable.
 - THEN the system SHALL fall back to page-based hierarchy behavior
 - AND the system SHALL emit compatibility diagnostics
 
+#### Scenario: Folder fallback distinguishes incompatibility from upstream failure
+
+- GIVEN folder fallback is activated because the folder API probe failed
+- WHEN the system emits compatibility diagnostics
+- THEN the diagnostics SHALL identify whether the cause was unsupported capability or an upstream endpoint failure
+
 ### Requirement: Content status API fallback
 
 The system SHALL keep syncing page content even when the tenant does not support content-status operations.

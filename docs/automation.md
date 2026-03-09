@@ -44,7 +44,7 @@ Behavior:
 
 When remote versions are ahead:
 
-- `pull-merge`: when a remote-ahead conflict is detected, `push` triggers `pull`, then stops so you can review/resolve and retry push.
+- `pull-merge`: when a remote-ahead conflict is detected, `push` triggers `pull`, preserves local edits via merge/conflict state/recoverable artifacts, then stops so you can review/resolve and retry push.
 - `force`: overwrite based on remote head.
 - `cancel`: stop without remote writes.
 
@@ -114,6 +114,37 @@ conf validate ENG
 conf push ENG --yes --non-interactive --on-conflict=cancel
 ```
 
+## Live E2E Environment Contract
+
+The `go test -tags=e2e ./cmd -run TestWorkflow` suite is intended for explicit live sandbox spaces only.
+
+Required environment for `make test-e2e`:
+
+- `CONF_E2E_DOMAIN`
+- `CONF_E2E_EMAIL`
+- `CONF_E2E_API_TOKEN`
+- `CONF_E2E_PRIMARY_SPACE_KEY`
+- `CONF_E2E_SECONDARY_SPACE_KEY`
+
+Compatibility notes:
+
+- No `ATLASSIAN_*`, `CONFLUENCE_*`, `CONF_LIVE_*`, legacy alias, or page-ID variables are required by the E2E harness.
+- The E2E test process maps `CONF_E2E_DOMAIN`, `CONF_E2E_EMAIL`, and `CONF_E2E_API_TOKEN` into the runtime config expected by `conf` and the direct API client.
+- Core conflict-path tests create and clean up their own temporary pages rather than depending on shared seeded page IDs.
+- Capability-specific live suites, such as folder-fallback coverage, should be opt-in and skip unless the required tenant behavior or capability flag is available.
+
+Example:
+
+```powershell
+$env:CONF_E2E_DOMAIN = 'https://your-domain.atlassian.net'
+$env:CONF_E2E_EMAIL = 'you@example.com'
+$env:CONF_E2E_API_TOKEN = 'your-token'
+$env:CONF_E2E_PRIMARY_SPACE_KEY = 'SANDBOX'
+$env:CONF_E2E_SECONDARY_SPACE_KEY = 'SANDBOX2'
+
+go test -v -tags=e2e ./cmd -run TestWorkflow
+```
+
 ## Live Sandbox Smoke-Test Runbook
 
 Use this runbook for manual live verification against an explicit non-production Confluence space. It is intentionally operator-driven and repeatable; do **not** run it in the repository root and do **not** point it at production content.
@@ -134,7 +165,9 @@ Recommended environment contract:
 ```powershell
 $RepoRoot      = 'C:\Dev\confluence-markdown-sync'
 $Conf          = Join-Path $RepoRoot 'conf.exe'
-$SandboxSpace  = 'SANDBOX'
+$env:CONF_LIVE_PRIMARY_SPACE_KEY = 'SANDBOX'
+$env:CONF_LIVE_SECONDARY_SPACE_KEY = 'SANDBOX2' # optional, for cross-space smoke tests
+$SandboxSpace  = $env:CONF_LIVE_PRIMARY_SPACE_KEY
 $SmokeRoot     = Join-Path $env:TEMP ("conf-live-smoke-" + (Get-Date -Format 'yyyyMMdd-HHmmss'))
 $WorkspaceA    = Join-Path $SmokeRoot 'workspace-a'
 $WorkspaceB    = Join-Path $SmokeRoot 'workspace-b'

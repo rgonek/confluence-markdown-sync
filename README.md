@@ -66,6 +66,8 @@ conf push ENG --on-conflict=cancel
 - Target rule: `.md` suffix means file mode; otherwise space mode (`SPACE_KEY`)
 - Required auth: `ATLASSIAN_DOMAIN`, `ATLASSIAN_EMAIL`, `ATLASSIAN_API_TOKEN`
 - Extension support: PlantUML is the only first-class rendered extension handler; Mermaid is preserved as code, and raw `adf:extension` / unknown macro handling is best-effort and should be sandbox-validated before relying on it
+- Cross-space links are preserved as readable remote links rather than rewritten to local Markdown paths
+- Removing tracked Markdown pages archives the corresponding remote page; follow-up pull removes the archived page from tracked local state
 - Status scope: `conf status` reports Markdown page drift only; use `git status` or `conf diff` for attachment-only changes
 - Label rules: labels are trimmed, lowercased, deduplicated, and sorted; empty labels and labels containing whitespace are rejected
 - Search filters: `--space`, repeatable `--label`, `--heading`, `--created-by`, `--updated-by`, date bounds, and `--result-detail`

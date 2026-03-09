@@ -21,7 +21,7 @@ test:
 coverage-check:
 	$(GO) run ./tools/coveragecheck
 
-## test-e2e: run all end-to-end tests (requires credentials)
+## test-e2e: run all end-to-end tests (requires CONF_E2E_DOMAIN, CONF_E2E_EMAIL, CONF_E2E_API_TOKEN, CONF_E2E_PRIMARY_SPACE_KEY, CONF_E2E_SECONDARY_SPACE_KEY)
 test-e2e: build
 	$(GO) test -v -tags=e2e ./cmd -run TestWorkflow
 

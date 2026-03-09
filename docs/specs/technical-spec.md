@@ -154,6 +154,8 @@ Structured run reports:
    - fetch changed pages, labels, content status, and attachments
    - convert ADF to Markdown with best-effort hooks
    - write Markdown files with normalized frontmatter
+   - materialize remotely created pages during incremental pull only after the file write succeeds
+   - reconcile remotely updated pages during incremental pull without requiring `--force`
    - delete tracked local files/assets removed remotely
    - update state indexes and watermark
 7. Save state, print diagnostics, create a scoped commit and `confluence-sync/pull/<space>/<timestamp>` tag when changes exist.
@@ -167,6 +169,7 @@ Pull-specific rules:
 - `--skip-missing-assets` turns missing-attachment failures into diagnostics.
 - Pull no-ops create no commit and no sync tag.
 - Remote deletions are hard-deleted locally.
+- Cross-space links stay as readable remote links and emit preserved cross-space diagnostics instead of generic unresolved-reference failures.
 
 ## Validate Contract
 
@@ -178,6 +181,11 @@ Pull-specific rules:
 - validate immutable metadata against local state and push baseline
 - resolve link/media references with the same strict hook profile used by `push`
 - emit Mermaid downgrade warnings
+
+Supported structured round-trip content includes:
+
+- Markdown task lists with preserved checkbox state
+- ordinary ISO-like date text that remains plain text unless the source explicitly requested date markup
 
 Validation failure must stop `push` immediately.
 
@@ -191,6 +199,7 @@ Validation failure must stop `push` immediately.
    - normal pre-validation before real push
    - `--preflight` for concise change/validation planning
    - `--dry-run` for simulated remote operations without local Git mutation
+   - `--preflight` uses the same validation scope and strictness as a real push
 4. For a real push:
    - capture the current in-scope workspace state by stashing dirty changes when needed
    - create a snapshot ref at `refs/confluence-sync/snapshots/<space>/<timestamp>`
@@ -205,9 +214,12 @@ Validation failure must stop `push` immediately.
 6. `sync.Push` must:
    - resolve page, folder, and attachment identity maps
    - handle remote version conflicts according to `pull-merge`, `force`, or `cancel`
+   - preserve local edits during `pull-merge` via merge results, conflict markers, or explicit recoverable state instead of silently discarding them
    - convert Markdown to ADF strictly
    - upload missing assets
-   - update, create, archive, or delete remote content as required
+   - update and create remote content as required
+   - archive remote pages when tracked Markdown page deletions are pushed
+   - delete remote attachments when tracked attachment deletions are pushed and not suppressed by `--keep-orphan-assets`
    - sync labels and content status where supported
    - emit rollback diagnostics when a partial failure needs recovery work
 7. Finalize Git state:

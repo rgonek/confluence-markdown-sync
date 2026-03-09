@@ -90,7 +90,9 @@ Users recover from failed sync runs or local state drift with:
 
 - `pull` must convert remote ADF to Markdown using best-effort resolution.
 - Same-space page links must rewrite to relative Markdown links when local targets are known.
+- Cross-space page links must remain readable remote links with preserved-cross-space diagnostics.
 - Attachments must be downloaded to deterministic local asset paths.
+- Incremental pull must materialize remote page creations and reconcile remote page updates without requiring `--force`.
 - Remote deletions must remove tracked local Markdown and asset files.
 - Non-fatal degradation must surface as diagnostics instead of silently disappearing.
 
@@ -99,6 +101,7 @@ Users recover from failed sync runs or local state drift with:
 - `validate` must be strict and use the same reverse-conversion profile as `push`.
 - Validation must catch frontmatter schema issues, immutable metadata edits, broken link/media resolution, and strict Markdown-to-ADF conversion failures.
 - Mermaid content must trigger a warning before push because it is preserved as code, not rendered as a Confluence diagram macro.
+- Supported structured Markdown such as task lists and ordinary ISO-like date text must round-trip without silent data corruption.
 
 ### Diff And Status
 
@@ -111,6 +114,9 @@ Users recover from failed sync runs or local state drift with:
 - Push execution must be isolated from the user workspace through a temporary worktree and ephemeral sync branch.
 - Push must operate against the full captured workspace state, including uncommitted in-scope changes.
 - Conflict policy must be explicit and automatable.
+- `push --preflight` must use the same validation scope and strictness as a real push.
+- `--on-conflict=pull-merge` must preserve local edits via merge, conflict markers, or explicit recovery state instead of silently discarding them.
+- Removing a tracked Markdown page must archive the corresponding remote page, while tracked attachment deletions remove remote attachments unless suppressed.
 - Successful non-no-op push runs must create audit tags and update the local baseline used for later status/diff/push calculations.
 - Failed runs must retain enough state for `recover` to inspect and discard safely later.
 

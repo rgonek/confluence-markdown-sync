@@ -19,9 +19,17 @@ import (
 	"github.com/rgonek/confluence-markdown-sync/internal/fs"
 )
 
+type e2eConfig struct {
+	Domain            string
+	Email             string
+	APIToken          string
+	PrimarySpaceKey   string
+	SecondarySpaceKey string
+}
+
 func TestWorkflow_ConflictResolution(t *testing.T) {
-	spaceKey := requireE2ESandboxSpaceKey(t)
-	pageID := requireE2ESandboxPageID(t)
+	e2eCfg := requireE2EConfig(t)
+	spaceKey := e2eCfg.PrimarySpaceKey
 
 	ctx := context.Background()
 	cfg, err := config.Load("") // Load from env
@@ -71,7 +79,7 @@ func TestWorkflow_ConflictResolution(t *testing.T) {
 	runCMS("pull", spaceKey, "--yes")
 
 	spaceDir := findPulledSpaceDir(t, tmpDir)
-	simplePath := findMarkdownByPageID(t, spaceDir, pageID)
+	simplePath, pageID := prepareE2EConflictTarget(t, spaceDir, client, runCMS)
 
 	// 2. Modify local
 	doc, err := fs.ReadMarkdownDocument(simplePath)
@@ -124,6 +132,7 @@ func TestWorkflow_ConflictResolution(t *testing.T) {
 		t.Fatalf("Pull should have reported conflict: %s", string(out))
 	}
 	fmt.Printf("Pull reported conflict as expected\n")
+	simplePath = findMarkdownByPageID(t, spaceDir, pageID)
 
 	// 6. Force resolve conflict by rewriting the file with new content and correct version
 	remotePageAfterUpdate, err := client.GetPage(ctx, pageID)
@@ -150,8 +159,8 @@ func TestWorkflow_ConflictResolution(t *testing.T) {
 }
 
 func TestWorkflow_PushAutoPullMerge(t *testing.T) {
-	spaceKey := requireE2ESandboxSpaceKey(t)
-	pageID := requireE2ESandboxPageID(t)
+	e2eCfg := requireE2EConfig(t)
+	spaceKey := e2eCfg.PrimarySpaceKey
 
 	ctx := context.Background()
 	cfg, err := config.Load("")
@@ -187,7 +196,7 @@ func TestWorkflow_PushAutoPullMerge(t *testing.T) {
 
 	// 2. Modify local
 	spaceDir := findPulledSpaceDir(t, tmpDir)
-	simplePath := findMarkdownByPageID(t, spaceDir, pageID)
+	simplePath, pageID := prepareE2EConflictTarget(t, spaceDir, client, runCMS)
 	doc, _ := fs.ReadMarkdownDocument(simplePath)
 	doc.Body += "\n\nLocal change for auto pull-merge test"
 	_ = fs.WriteMarkdownDocument(simplePath, doc)
@@ -219,6 +228,7 @@ func TestWorkflow_PushAutoPullMerge(t *testing.T) {
 	fmt.Printf("Push automatically triggered pull-merge (Error handled if content conflict)\n")
 
 	// 5. Verify local state
+	simplePath = findMarkdownByPageID(t, spaceDir, pageID)
 	doc, _ = fs.ReadMarkdownDocument(simplePath)
 	// After pull (even with conflict), the frontmatter version should be updated
 	if doc.Frontmatter.Version != remotePage.Version+1 {
@@ -228,7 +238,8 @@ func TestWorkflow_PushAutoPullMerge(t *testing.T) {
 }
 
 func TestWorkflow_AgenticFullCycle(t *testing.T) {
-	spaceKey := requireE2ESandboxSpaceKey(t)
+	e2eCfg := requireE2EConfig(t)
+	spaceKey := e2eCfg.PrimarySpaceKey
 
 	// 0. Setup
 	rootDir := projectRootFromWD(t)
@@ -279,7 +290,8 @@ func TestWorkflow_AgenticFullCycle(t *testing.T) {
 }
 
 func TestWorkflow_MermaidPushPreservesCodeBlock(t *testing.T) {
-	spaceKey := requireE2ESandboxSpaceKey(t)
+	e2eCfg := requireE2EConfig(t)
+	spaceKey := e2eCfg.PrimarySpaceKey
 
 	ctx := context.Background()
 	cfg, err := config.Load("")
@@ -363,7 +375,8 @@ func TestWorkflow_MermaidPushPreservesCodeBlock(t *testing.T) {
 }
 
 func TestWorkflow_PushDryRunNonMutating(t *testing.T) {
-	spaceKey := requireE2ESandboxSpaceKey(t)
+	e2eCfg := requireE2EConfig(t)
+	spaceKey := e2eCfg.PrimarySpaceKey
 
 	// 0. Setup
 	rootDir := projectRootFromWD(t)
@@ -431,7 +444,8 @@ func TestWorkflow_PushDryRunNonMutating(t *testing.T) {
 }
 
 func TestWorkflow_PullDiscardLocal(t *testing.T) {
-	spaceKey := requireE2ESandboxSpaceKey(t)
+	e2eCfg := requireE2EConfig(t)
+	spaceKey := e2eCfg.PrimarySpaceKey
 
 	// 0. Setup
 
@@ -477,30 +491,33 @@ func TestWorkflow_PullDiscardLocal(t *testing.T) {
 	fmt.Printf("Pull --discard-local test passed\n")
 }
 
-func requireE2ESandboxSpaceKey(t *testing.T) string {
+func requireE2EConfig(t *testing.T) e2eConfig {
 	t.Helper()
 
-	if strings.TrimSpace(os.Getenv("ATLASSIAN_DOMAIN")) == "" {
-		t.Skip("Skipping E2E test: ATLASSIAN_DOMAIN not set")
+	required := map[string]string{
+		"CONF_E2E_DOMAIN":              strings.TrimSpace(os.Getenv("CONF_E2E_DOMAIN")),
+		"CONF_E2E_EMAIL":               strings.TrimSpace(os.Getenv("CONF_E2E_EMAIL")),
+		"CONF_E2E_API_TOKEN":           strings.TrimSpace(os.Getenv("CONF_E2E_API_TOKEN")),
+		"CONF_E2E_PRIMARY_SPACE_KEY":   strings.TrimSpace(os.Getenv("CONF_E2E_PRIMARY_SPACE_KEY")),
+		"CONF_E2E_SECONDARY_SPACE_KEY": strings.TrimSpace(os.Getenv("CONF_E2E_SECONDARY_SPACE_KEY")),
+	}
+	for name, value := range required {
+		if value == "" {
+			t.Skipf("Skipping E2E test: %s not set", name)
+		}
 	}
 
-	spaceKey := strings.TrimSpace(os.Getenv("CONF_E2E_SANDBOX_SPACE_KEY"))
-	if spaceKey == "" {
-		t.Skip("Skipping E2E test: CONF_E2E_SANDBOX_SPACE_KEY not set")
+	t.Setenv("ATLASSIAN_DOMAIN", required["CONF_E2E_DOMAIN"])
+	t.Setenv("ATLASSIAN_EMAIL", required["CONF_E2E_EMAIL"])
+	t.Setenv("ATLASSIAN_API_TOKEN", required["CONF_E2E_API_TOKEN"])
+
+	return e2eConfig{
+		Domain:            required["CONF_E2E_DOMAIN"],
+		Email:             required["CONF_E2E_EMAIL"],
+		APIToken:          required["CONF_E2E_API_TOKEN"],
+		PrimarySpaceKey:   required["CONF_E2E_PRIMARY_SPACE_KEY"],
+		SecondarySpaceKey: required["CONF_E2E_SECONDARY_SPACE_KEY"],
 	}
-
-	return spaceKey
-}
-
-func requireE2ESandboxPageID(t *testing.T) string {
-	t.Helper()
-
-	pageID := strings.TrimSpace(os.Getenv("CONF_E2E_CONFLICT_PAGE_ID"))
-	if pageID == "" {
-		t.Skip("Skipping E2E test: CONF_E2E_CONFLICT_PAGE_ID not set")
-	}
-
-	return pageID
 }
 
 func projectRootFromWD(t *testing.T) string {
@@ -620,6 +637,57 @@ func findFirstMarkdownFile(t *testing.T, spaceDir string) string {
 		t.Fatalf("no markdown files found in %s", spaceDir)
 	}
 	return matched
+}
+
+func prepareE2EConflictTarget(t *testing.T, spaceDir string, client *confluence.Client, runCMS func(args ...string) string) (string, string) {
+	t.Helper()
+
+	return createE2EScratchPage(t, spaceDir, client, runCMS, "Conflict E2E")
+}
+
+func createE2EScratchPage(t *testing.T, spaceDir string, client *confluence.Client, runCMS func(args ...string) string, titlePrefix string) (string, string) {
+	t.Helper()
+
+	stamp := time.Now().UTC().Format("20060102T150405") + fmt.Sprintf("-%09d", time.Now().UTC().Nanosecond())
+	title := fmt.Sprintf("%s %s", titlePrefix, stamp)
+	parentDir := filepath.Dir(findFirstMarkdownFile(t, spaceDir))
+	filePath := filepath.Join(parentDir, sanitizeE2EFileStem(title)+".md")
+	if err := fs.WriteMarkdownDocument(filePath, fs.MarkdownDocument{
+		Frontmatter: fs.Frontmatter{Title: title},
+		Body:        "Scratch page for Confluence E2E coverage.\n",
+	}); err != nil {
+		t.Fatalf("WriteMarkdown scratch page: %v", err)
+	}
+
+	runCMS("push", filePath, "--on-conflict=cancel", "--yes", "--non-interactive")
+
+	doc, err := fs.ReadMarkdownDocument(filePath)
+	if err != nil {
+		t.Fatalf("ReadMarkdown scratch page: %v", err)
+	}
+	pageID := strings.TrimSpace(doc.Frontmatter.ID)
+	if pageID == "" {
+		t.Fatal("expected scratch page push to assign a page id")
+	}
+
+	t.Cleanup(func() {
+		if err := client.DeletePage(context.Background(), pageID, confluence.PageDeleteOptions{}); err != nil && err != confluence.ErrNotFound {
+			t.Logf("cleanup delete scratch page %s: %v", pageID, err)
+		}
+	})
+
+	return filePath, pageID
+}
+
+func sanitizeE2EFileStem(value string) string {
+	replacer := strings.NewReplacer(
+		" ", "-",
+		"/", "-",
+		"\\", "-",
+		":", "-",
+		".", "-",
+	)
+	return replacer.Replace(value)
 }
 
 func adfContainsCodeBlockLanguage(adf []byte, language string) bool {

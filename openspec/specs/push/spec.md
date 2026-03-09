@@ -74,6 +74,15 @@ The system SHALL make remote-ahead conflict handling explicit.
 - THEN the system SHALL run pull for the target scope
 - AND the system SHALL stop so the user can review and rerun push
 
+#### Scenario: Pull-merge never silently discards local edits
+
+- GIVEN push detects a remote-ahead conflict
+- AND the policy is `pull-merge`
+- AND the target scope contains unpushed local edits
+- WHEN push handles the conflict
+- THEN the system SHALL preserve the local edits via a clean merge, conflict markers, or explicit recoverable state
+- AND the system SHALL not silently discard local edits
+
 ### Requirement: Strict remote publishing
 
 The system SHALL publish Markdown to Confluence using strict conversion and explicit attachment/link resolution.
@@ -83,7 +92,20 @@ The system SHALL publish Markdown to Confluence using strict conversion and expl
 - GIVEN a changed Markdown file validates successfully
 - WHEN push processes the file
 - THEN the system SHALL resolve page identity, links, and attachments
-- AND the system SHALL create, update, archive, or delete remote content as required
+- AND the system SHALL create or update remote content as required
+
+#### Scenario: Removing a tracked Markdown page archives the remote page
+
+- GIVEN a tracked Markdown page is removed locally and is in push scope
+- WHEN push applies the deletion
+- THEN the system SHALL archive the corresponding remote page
+- AND the archived page SHALL be treated as removed from tracked local state after reconciliation
+
+#### Scenario: Removing tracked attachments deletes remote attachments
+
+- GIVEN a push would remove tracked remote attachments
+- WHEN push reconciles attachments
+- THEN the system SHALL delete those remote attachments unless `--keep-orphan-assets` suppresses the deletion
 
 #### Scenario: Orphan attachment deletion can be suppressed
 
@@ -101,6 +123,12 @@ The system SHALL provide safe non-write inspection modes for push.
 - WHEN the command evaluates the target scope
 - THEN the system SHALL show the planned changes and validation outcome
 - AND the system SHALL not modify remote content or local Git state
+
+#### Scenario: Preflight uses the same validation scope as real push
+
+- GIVEN the target scope contains a validation failure, including one introduced by planned deletions outside the directly changed file set
+- WHEN the user runs `conf push --preflight`
+- THEN the system SHALL surface the same validation failure a real push would surface before any remote write
 
 #### Scenario: Dry-run simulates remote work without mutation
 

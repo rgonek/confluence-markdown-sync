@@ -98,6 +98,7 @@ Highlights:
 - pages that own subtree directories move when their self-owned directory segment changes,
 - hierarchy moves and ancestor/path-segment sanitization changes move the Markdown file and emit `PAGE_PATH_MOVED` notes with old/new paths,
 - same-space links rewritten to relative Markdown links,
+- cross-space links preserved as readable remote URLs/references instead of being rewritten to local Markdown paths,
 - attachments downloaded into `assets/<page-id>/<attachment-id>-<filename>`,
 - `--force` (`-f`) forces a full-space refresh (all tracked pages are re-pulled even when incremental changes are empty),
 - attachment download failures include the owning page ID,
@@ -179,6 +180,9 @@ Highlights:
 - isolated sync branch and worktree execution,
 - per-page commit metadata with Confluence trailers,
 - recovery refs retained on failures,
+- `--preflight` uses the same validation scope and strictness as a real push,
+- `--on-conflict=pull-merge` must preserve local edits via merge/conflict state/recoverable artifacts instead of silently discarding them,
+- removing tracked Markdown pages archives the corresponding remote page and follow-up pull removes it from tracked local state,
 - archive deletes require long-task completion (`--archive-task-timeout`, `--archive-task-poll-interval`),
 - `--preflight` for a concise local push plan (change summary + validation) without remote writes.
 
@@ -246,9 +250,9 @@ conf search "oauth" --created-by alice --updated-after 2024-01-01 --result-detai
 
 Markdown frontmatter keys:
 
+- `space` is not stored in frontmatter; space identity comes from workspace context and `.confluence-state.json`.
 - immutable keys:
   - `id`
-  - `space`
 - sync-managed keys:
   - `version`
   - `created_by`
@@ -272,8 +276,10 @@ fallback behavior applies when those APIs are unavailable, see
 
 | Item | Support level | Markdown / ADF behavior | Notes |
 |------|---------------|-------------------------|-------|
+| Markdown task lists | Native round-trip support | Push writes Confluence task nodes and pull restores checkbox lists. | Checked/unchecked state should survive push/pull round-trips. |
 | PlantUML (`plantumlcloud`) | Rendered round-trip support | Pull/diff use the custom extension handler to turn the Confluence macro into a managed `adf-extension` wrapper with a `puml` code body; validate/push rebuild the same Confluence extension. | This is the only first-class extension handler registered by `conf`. |
 | Mermaid | Preserved but not rendered | Markdown keeps ` ```mermaid ` fences; push writes an ADF `codeBlock` with language `mermaid` instead of a Confluence diagram macro. | `conf validate` warns with `MERMAID_PRESERVED_AS_CODEBLOCK`, and push surfaces the same warning before writing. |
+| Plain ISO-like date text | Text-preserving round-trip | Ordinary body text such as `2026-03-09` stays plain text through push/pull unless the source explicitly requests date markup. | Date-looking text must not be silently coerced into a different calendar date or implicit macro. |
 | Raw ADF extension preservation | Best-effort preservation only | When an extension node has no repo-specific handler, pull/diff can preserve it as a raw ```` ```adf:extension ```` JSON fence that validate/push can pass back through with minimal interpretation. | Treat this as a low-level escape hatch, not as a rendered or human-friendly authoring format. It is not a verified end-to-end round-trip contract; validate in a sandbox before relying on it. |
 | Unknown Confluence macros/extensions | Unsupported as a first-class feature | `conf` does not add custom behavior for unknown macros beyond whatever best-effort raw ADF preservation may be possible for some remote payloads. | If Confluence rejects an unknown or uninstalled macro, push can still fail. Do not assume rendered round-trip support unless a handler is documented explicitly, and sandbox-validate any workflow that depends on this path. |
 
