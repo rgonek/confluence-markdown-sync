@@ -264,6 +264,18 @@
 
 ## Follow-Up Plan
 
+## Execution Split For New Sessions
+
+Run these plans in order. Each plan is scoped so a fresh session can implement it, update specs first when behavior changes, add tests for changed invariants, commit once at the end of the section, and stop cleanly for the next session.
+
+1. `docs/plans/2026-03-09-live-sync-01-attachment-publication.md`
+2. `docs/plans/2026-03-09-live-sync-02-validation-preflight-and-new-page-ux.md`
+3. `docs/plans/2026-03-09-live-sync-03-incremental-pull-reconciliation.md`
+4. `docs/plans/2026-03-09-live-sync-04-conflict-recovery-and-operator-guidance.md`
+5. `docs/plans/2026-03-09-live-sync-05-round-trip-fidelity-and-link-diagnostics.md`
+6. `docs/plans/2026-03-09-live-sync-06-compatibility-delete-semantics-and-status.md`
+7. `docs/plans/2026-03-09-live-sync-07-sandbox-baseline-and-release-checklist.md`
+
 ### P0: Blockers before production release
 
 1. Fix attachment publication so remote ADF references real uploaded attachment IDs instead of `UNKNOWN_MEDIA_ID`.
