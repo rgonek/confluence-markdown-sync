@@ -76,16 +76,9 @@ func runPushInWorktree(
 		return outcome, err
 	}
 
-	// 4. Validate (in worktree) — only the changed files for space targets
-	if target.IsFile() {
-		if err := runValidateTargetWithContext(ctx, out, wtTarget); err != nil {
-			return outcome, fmt.Errorf("pre-push validate failed: %w", err)
-		}
-	} else {
-		changedAbsPaths := pushChangedAbsPaths(wtSpaceDir, syncChanges)
-		if err := runValidateChangedPushFiles(ctx, out, wtSpaceDir, changedAbsPaths); err != nil {
-			return outcome, fmt.Errorf("pre-push validate failed: %w", err)
-		}
+	// 4. Validate (in worktree) using the same scope as preflight and dry-run.
+	if err := runPushValidation(ctx, out, wtTarget, wtSpaceDir, "pre-push validate failed"); err != nil {
+		return outcome, err
 	}
 
 	if len(syncChanges) == 0 {

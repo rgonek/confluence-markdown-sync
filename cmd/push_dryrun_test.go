@@ -435,3 +435,68 @@ func TestRunPush_PreflightShowsDestructiveDeleteProminent(t *testing.T) {
 		t.Fatalf("preflight output missing safety confirmation notice:\n%s", text)
 	}
 }
+
+func TestRunPush_AllModesCatchBrokenLinksIntroducedByDeletion(t *testing.T) {
+	runParallelCommandTest(t)
+
+	testCases := []struct {
+		name      string
+		preflight bool
+		dryRun    bool
+	}{
+		{name: "preflight", preflight: true},
+		{name: "dry-run", dryRun: true},
+		{name: "push"},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := t.TempDir()
+			spaceDir := preparePushRepoWithLinkedChildBaseline(t, repo)
+
+			if err := os.Remove(filepath.Join(spaceDir, "child.md")); err != nil {
+				t.Fatalf("remove child.md: %v", err)
+			}
+
+			previousPreflight := flagPushPreflight
+			flagPushPreflight = tc.preflight
+			t.Cleanup(func() { flagPushPreflight = previousPreflight })
+
+			factoryCalls := 0
+			oldPushFactory := newPushRemote
+			oldPullFactory := newPullRemote
+			newPushRemote = func(_ *config.Config) (syncflow.PushRemote, error) {
+				factoryCalls++
+				return newCmdFakePushRemote(1), nil
+			}
+			newPullRemote = func(_ *config.Config) (syncflow.PullRemote, error) {
+				return newCmdFakePushRemote(1), nil
+			}
+			t.Cleanup(func() {
+				newPushRemote = oldPushFactory
+				newPullRemote = oldPullFactory
+			})
+
+			setupEnv(t)
+			chdirRepo(t, spaceDir)
+
+			out := &bytes.Buffer{}
+			cmd := &cobra.Command{}
+			cmd.SetOut(out)
+
+			err := runPush(cmd, config.Target{Mode: config.TargetModeSpace, Value: ""}, OnConflictCancel, tc.dryRun)
+			if err == nil {
+				t.Fatal("expected push validation failure")
+			}
+			if !strings.Contains(err.Error(), "validate failed") {
+				t.Fatalf("expected validation failure, got: %v", err)
+			}
+			if !strings.Contains(out.String(), "Validation failed for root.md") {
+				t.Fatalf("expected broken link validation to surface in root.md, got:\n%s", out.String())
+			}
+			if factoryCalls != 0 {
+				t.Fatalf("expected validation failure before remote factory calls, got %d", factoryCalls)
+			}
+		})
+	}
+}

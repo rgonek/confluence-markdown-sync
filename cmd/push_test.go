@@ -525,6 +525,56 @@ func preparePushRepoWithBaseline(t *testing.T, repo string) string {
 	return spaceDir
 }
 
+func preparePushRepoWithLinkedChildBaseline(t *testing.T, repo string) string {
+	t.Helper()
+	setupGitRepo(t, repo)
+
+	spaceDir := filepath.Join(repo, "Engineering (ENG)")
+	if err := os.MkdirAll(spaceDir, 0o750); err != nil {
+		t.Fatalf("mkdir space: %v", err)
+	}
+
+	writeMarkdown(t, filepath.Join(spaceDir, "root.md"), fs.MarkdownDocument{
+		Frontmatter: fs.Frontmatter{
+			Title:                  "Root",
+			ID:                     "1",
+			Version:                1,
+			ConfluenceLastModified: "2026-02-01T10:00:00Z",
+		},
+		Body: "[Child](child.md)\n",
+	})
+	writeMarkdown(t, filepath.Join(spaceDir, "child.md"), fs.MarkdownDocument{
+		Frontmatter: fs.Frontmatter{
+			Title:                  "Child",
+			ID:                     "2",
+			Version:                1,
+			ConfluenceLastModified: "2026-02-01T10:00:00Z",
+		},
+		Body: "child body\n",
+	})
+
+	if err := fs.SaveState(spaceDir, fs.SpaceState{
+		SpaceKey: "ENG",
+		PagePathIndex: map[string]string{
+			"root.md":  "1",
+			"child.md": "2",
+		},
+		AttachmentIndex: map[string]string{},
+	}); err != nil {
+		t.Fatalf("save state: %v", err)
+	}
+
+	if err := os.WriteFile(filepath.Join(repo, ".gitignore"), []byte(".env\n.confluence-state.json\n"), 0o600); err != nil {
+		t.Fatalf("write .gitignore: %v", err)
+	}
+
+	runGitForTest(t, repo, "add", ".")
+	runGitForTest(t, repo, "commit", "-m", "baseline")
+	runGitForTest(t, repo, "tag", "-a", "confluence-sync/pull/ENG/20260201T120000Z", "-m", "baseline pull")
+
+	return spaceDir
+}
+
 type cmdFakePushRemote struct {
 	space                 confluence.Space
 	pages                 []confluence.Page

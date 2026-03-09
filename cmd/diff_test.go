@@ -756,6 +756,46 @@ func TestRunDiff_RespectsCanceledContext(t *testing.T) {
 	}
 }
 
+func TestRunDiff_FileModeNewPageWithoutIDPointsToPreflight(t *testing.T) {
+	runParallelCommandTest(t)
+	repo := t.TempDir()
+	setupGitRepo(t, repo)
+	setupEnv(t)
+
+	spaceDir := filepath.Join(repo, "Engineering (ENG)")
+	if err := os.MkdirAll(spaceDir, 0o750); err != nil {
+		t.Fatalf("mkdir space: %v", err)
+	}
+
+	newFile := filepath.Join(spaceDir, "new-page.md")
+	writeMarkdown(t, newFile, fs.MarkdownDocument{
+		Frontmatter: fs.Frontmatter{Title: "New Page"},
+		Body:        "preview me\n",
+	})
+	if err := fs.SaveState(spaceDir, fs.SpaceState{SpaceKey: "ENG"}); err != nil {
+		t.Fatalf("save state: %v", err)
+	}
+
+	runGitForTest(t, repo, "add", ".")
+	runGitForTest(t, repo, "commit", "-m", "baseline")
+
+	chdirRepo(t, repo)
+
+	cmd := &cobra.Command{}
+	cmd.SetOut(&bytes.Buffer{})
+
+	err := runDiff(cmd, config.Target{Mode: config.TargetModeFile, Value: newFile})
+	if err == nil {
+		t.Fatal("expected diff guidance error for brand-new file")
+	}
+	if !strings.Contains(err.Error(), "has no id") {
+		t.Fatalf("expected missing-id guidance, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "conf push --preflight") {
+		t.Fatalf("expected preflight guidance, got: %v", err)
+	}
+}
+
 func TestRecoverMissingPagesForDiff_SkipsTrashedPages(t *testing.T) {
 	runParallelCommandTest(t)
 	fake := &cmdFakePullRemote{

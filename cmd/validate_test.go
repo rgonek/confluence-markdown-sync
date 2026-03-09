@@ -448,6 +448,39 @@ func TestRunValidateTarget_AllowsLinkToSimultaneousNewPageInSpaceScope(t *testin
 	}
 }
 
+func TestRunValidateTarget_FileModeAllowsBrandNewPageWithoutID(t *testing.T) {
+	runParallelCommandTest(t)
+	repo := t.TempDir()
+	setupGitRepo(t, repo)
+	setupEnv(t)
+
+	spaceDir := filepath.Join(repo, "Engineering (ENG)")
+	if err := os.MkdirAll(spaceDir, 0o750); err != nil {
+		t.Fatalf("mkdir space dir: %v", err)
+	}
+
+	newPath := filepath.Join(spaceDir, "new-page.md")
+	writeMarkdown(t, newPath, fs.MarkdownDocument{
+		Frontmatter: fs.Frontmatter{Title: "New Page"},
+		Body:        "hello\n",
+	})
+	if err := fs.SaveState(spaceDir, fs.SpaceState{SpaceKey: "ENG"}); err != nil {
+		t.Fatalf("save state: %v", err)
+	}
+
+	runGitForTest(t, repo, "add", ".")
+	runGitForTest(t, repo, "commit", "-m", "baseline")
+
+	chdirRepo(t, repo)
+	out := &bytes.Buffer{}
+	if err := runValidateTargetWithContext(context.Background(), out, config.Target{Mode: config.TargetModeFile, Value: newPath}); err != nil {
+		t.Fatalf("expected validate success for brand-new file, got: %v\nOutput:\n%s", err, out.String())
+	}
+	if !strings.Contains(out.String(), "Validation successful") {
+		t.Fatalf("expected validate success footer, got:\n%s", out.String())
+	}
+}
+
 func TestRunValidateTargetWithContext_ReturnsCancellation(t *testing.T) {
 	runParallelCommandTest(t)
 	repo := t.TempDir()

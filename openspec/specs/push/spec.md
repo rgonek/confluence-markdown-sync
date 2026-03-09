@@ -130,6 +130,12 @@ The system SHALL provide safe non-write inspection modes for push.
 - WHEN the user runs `conf push --preflight`
 - THEN the system SHALL surface the same validation failure a real push would surface before any remote write
 
+#### Scenario: Space-scoped push validates the full space target
+
+- GIVEN a space-scoped push has one or more in-scope Markdown changes
+- WHEN the system performs preflight, dry-run, or real push validation
+- THEN the system SHALL validate the full target space with the same strict profile before any remote write
+
 #### Scenario: Dry-run simulates remote work without mutation
 
 - GIVEN the user runs `conf push --dry-run`

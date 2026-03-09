@@ -9,7 +9,7 @@ Write docs like code. Publish to Confluence with confidence. ✍️
 ## Why teams use `conf` ✨
 - 📝 Markdown-first authoring with Confluence as the destination.
 - 🛡️ Safe sync model with validation before remote writes.
-- 👀 Clear preview step via `conf diff` before push.
+- 👀 Clear preview step via `conf diff` for tracked pages and `conf push --preflight` for brand-new files.
 - 🔎 Local full-text search across synced Markdown with SQLite or Bleve backends.
 - 🤖 Works in local repos and automation pipelines.
 
@@ -55,6 +55,9 @@ conf validate ENG
 
 # 3) Preview local vs remote
 conf diff ENG
+
+# Preview a brand-new file before its first push
+conf push .\ENG\New-Page.md --preflight
 
 # 4) Push local changes
 conf push ENG --on-conflict=cancel

@@ -92,6 +92,9 @@ func runDiff(cmd *cobra.Command, target config.Target) (runErr error) {
 	if err := ensureWorkspaceSyncReady("diff"); err != nil {
 		return err
 	}
+	if err := ensureDiffTargetSupportsRemoteComparison(target); err != nil {
+		return err
+	}
 	initialCtx, err := resolveInitialPullContext(target)
 	if err != nil {
 		return err
@@ -207,6 +210,31 @@ func runDiff(cmd *cobra.Command, target config.Target) (runErr error) {
 	report.Diagnostics = append(report.Diagnostics, reportDiagnosticsFromPull(result.Diagnostics, diffCtx.spaceDir)...)
 	report.MutatedFiles = append(report.MutatedFiles, result.ChangedFiles...)
 	return err
+}
+
+func ensureDiffTargetSupportsRemoteComparison(target config.Target) error {
+	if !target.IsFile() {
+		return nil
+	}
+
+	absPath, err := filepath.Abs(target.Value)
+	if err != nil {
+		return err
+	}
+
+	doc, err := fs.ReadMarkdownDocument(absPath)
+	if err != nil {
+		return fmt.Errorf("read target file %s: %w", target.Value, err)
+	}
+	if strings.TrimSpace(doc.Frontmatter.ID) != "" {
+		return nil
+	}
+
+	return fmt.Errorf(
+		"target file %s has no id, so diff cannot compare it to an existing remote page; for a brand-new page preview, run `conf push --preflight %s`",
+		target.Value,
+		target.Value,
+	)
 }
 
 func runDiffFileMode(

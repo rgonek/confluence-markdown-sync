@@ -159,6 +159,12 @@ The system SHALL validate local Markdown with the same strict reverse-conversion
 - WHEN `conf validate` runs
 - THEN the system SHALL emit a warning indicating the content will be preserved as a code block on push
 
+#### Scenario: Space-scoped push validation evaluates the full space target
+
+- GIVEN a space-scoped push has one or more in-scope Markdown changes
+- WHEN push or `push --preflight` reuses the strict validation profile
+- THEN the system SHALL validate the full target space rather than only the directly changed files
+
 ### Requirement: Structured content round-trip fidelity
 
 The system SHALL preserve supported structured Markdown content across push/pull round-trips.

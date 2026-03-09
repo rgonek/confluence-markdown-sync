@@ -44,17 +44,8 @@ func runPushPreflight(
 		return nil
 	}
 
-	if target.IsFile() {
-		abs, _ := filepath.Abs(target.Value)
-		currentTarget := config.Target{Mode: config.TargetModeFile, Value: abs}
-		if err := runValidateTargetWithContext(ctx, out, currentTarget); err != nil {
-			return fmt.Errorf("preflight validate failed: %w", err)
-		}
-	} else {
-		changedAbsPaths := pushChangedAbsPaths(spaceDir, syncChanges)
-		if err := runValidateChangedPushFiles(ctx, out, spaceDir, changedAbsPaths); err != nil {
-			return fmt.Errorf("preflight validate failed: %w", err)
-		}
+	if err := runPushValidation(ctx, out, target, spaceDir, "preflight validate failed"); err != nil {
+		return err
 	}
 
 	// Load config and create remote to probe capabilities and list remote pages.
@@ -304,17 +295,8 @@ func runPushDryRun(
 		return nil
 	}
 
-	if target.IsFile() {
-		abs, _ := filepath.Abs(target.Value)
-		currentTarget := config.Target{Mode: config.TargetModeFile, Value: abs}
-		if err := runValidateTargetWithContext(ctx, out, currentTarget); err != nil {
-			return fmt.Errorf("pre-push validate failed: %w", err)
-		}
-	} else {
-		changedAbsPaths := pushChangedAbsPaths(spaceDir, syncChanges)
-		if err := runValidateChangedPushFiles(ctx, out, spaceDir, changedAbsPaths); err != nil {
-			return fmt.Errorf("pre-push validate failed: %w", err)
-		}
+	if err := runPushValidation(ctx, out, target, spaceDir, "pre-push validate failed"); err != nil {
+		return err
 	}
 
 	envPath := findEnvPath(spaceDir)

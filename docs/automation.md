@@ -96,6 +96,7 @@ Use it to verify:
 
 - changed markdown scope,
 - planned page operations,
+- full-space strict validation for space-scoped pushes,
 - conversion and link/media resolution readiness.
 
 Recommended sequence before unattended push:

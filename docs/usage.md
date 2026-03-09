@@ -147,7 +147,8 @@ Highlights:
 - includes synced frontmatter parity such as `state`, `status`, and `labels`,
 - strips read-only author/timestamp metadata so the diff stays focused on actionable drift,
 - compares using `git diff --no-index`,
-- supports both file and space targets.
+- supports both file and space targets,
+- requires an `id` for file-mode remote comparison; for a brand-new local file without `id`, use `conf push <file> --preflight` instead.
 
 ### `conf init agents [TARGET]`
 
@@ -180,6 +181,7 @@ Highlights:
 - isolated sync branch and worktree execution,
 - per-page commit metadata with Confluence trailers,
 - recovery refs retained on failures,
+- space-scoped push, `--preflight`, and `--dry-run` validate the full target space whenever there are in-scope changes,
 - `--preflight` uses the same validation scope and strictness as a real push,
 - `--on-conflict=pull-merge` must preserve local edits via merge/conflict state/recoverable artifacts instead of silently discarding them,
 - removing tracked Markdown pages archives the corresponding remote page and follow-up pull removes it from tracked local state,
