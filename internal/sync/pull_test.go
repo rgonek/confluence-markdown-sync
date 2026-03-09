@@ -344,11 +344,214 @@ func TestPull_IncrementalRewriteDeleteAndWatermark(t *testing.T) {
 	if got := result.State.AttachmentIndex["assets/1/att-1-diagram.png"]; got != "att-1" {
 		t.Fatalf("state attachment_index mismatch for att-1: %q", got)
 	}
-	if _, exists := result.State.AttachmentIndex["assets/2/att-2-inline.png"]; exists {
-		t.Fatalf("state attachment_index should not include att-2 for unchanged page")
+	if got := result.State.AttachmentIndex["assets/2/att-2-inline.png"]; got != "att-2" {
+		t.Fatalf("state attachment_index mismatch for att-2: %q", got)
 	}
 	if _, exists := result.State.AttachmentIndex["assets/999/att-old-legacy.png"]; exists {
 		t.Fatalf("state attachment_index should not include legacy asset")
+	}
+}
+
+func TestPull_IncrementalCreateRetriesUntilRemotePageMaterializes(t *testing.T) {
+	tmpDir := t.TempDir()
+	spaceDir := filepath.Join(tmpDir, "ENG")
+	if err := os.MkdirAll(spaceDir, 0o750); err != nil {
+		t.Fatalf("mkdir space: %v", err)
+	}
+
+	parentPath := filepath.Join(spaceDir, "Parent.md")
+	if err := fs.WriteMarkdownDocument(parentPath, fs.MarkdownDocument{
+		Frontmatter: fs.Frontmatter{
+			Title:   "Parent",
+			ID:      "10",
+			Version: 1,
+		},
+		Body: "old parent\n",
+	}); err != nil {
+		t.Fatalf("write Parent.md: %v", err)
+	}
+
+	watermark := "2026-03-09T09:00:00Z"
+	modifiedAt := time.Date(2026, time.March, 9, 9, 30, 0, 0, time.UTC)
+	emptyADF := map[string]any{"version": 1, "type": "doc", "content": []any{}}
+
+	fake := &fakePullRemote{
+		space: confluence.Space{ID: "space-1", Key: "ENG", Name: "Engineering"},
+		pages: []confluence.Page{
+			{ID: "10", SpaceID: "space-1", Title: "Parent", Version: 1, LastModified: modifiedAt},
+			{ID: "20", SpaceID: "space-1", Title: "Remote Child", ParentPageID: "10", Version: 1, LastModified: modifiedAt},
+		},
+		changes: []confluence.Change{
+			{PageID: "20", SpaceKey: "ENG", Version: 1, LastModified: modifiedAt},
+		},
+		pagesByID: map[string]confluence.Page{
+			"10": {ID: "10", SpaceID: "space-1", Title: "Parent", Version: 1, LastModified: modifiedAt, BodyADF: rawJSON(t, emptyADF)},
+			"20": {ID: "20", SpaceID: "space-1", Title: "Remote Child", ParentPageID: "10", Version: 1, LastModified: modifiedAt, BodyADF: rawJSON(t, emptyADF)},
+		},
+	}
+	childFetches := 0
+	fake.getPageFunc = func(pageID string) (confluence.Page, error) {
+		if pageID == "20" {
+			childFetches++
+			if childFetches == 1 {
+				return confluence.Page{}, confluence.ErrNotFound
+			}
+		}
+		page, ok := fake.pagesByID[pageID]
+		if !ok {
+			return confluence.Page{}, confluence.ErrNotFound
+		}
+		return page, nil
+	}
+
+	result, err := Pull(context.Background(), fake, PullOptions{
+		SpaceKey: "ENG",
+		SpaceDir: spaceDir,
+		State: fs.SpaceState{
+			LastPullHighWatermark: watermark,
+			PagePathIndex: map[string]string{
+				"Parent.md": "10",
+			},
+		},
+		PullStartedAt: time.Date(2026, time.March, 9, 10, 0, 0, 0, time.UTC),
+		OverlapWindow: 5 * time.Minute,
+	})
+	if err != nil {
+		t.Fatalf("Pull() error: %v", err)
+	}
+
+	if childFetches < 2 {
+		t.Fatalf("expected child page fetch to retry, got %d attempt(s)", childFetches)
+	}
+	if _, err := os.Stat(filepath.Join(spaceDir, "Parent", "Parent.md")); err != nil {
+		t.Fatalf("expected moved parent markdown: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(spaceDir, "Parent", "Remote-Child.md")); err != nil {
+		t.Fatalf("expected new child markdown: %v", err)
+	}
+	if _, err := os.Stat(parentPath); !os.IsNotExist(err) {
+		t.Fatalf("expected old Parent.md path to be removed, stat=%v", err)
+	}
+	if got := result.State.PagePathIndex["Parent/Remote-Child.md"]; got != "20" {
+		t.Fatalf("state page_path_index[Parent/Remote-Child.md] = %q, want 20", got)
+	}
+}
+
+func TestPull_IncrementalUpdateRetriesUntilExpectedVersionIsReadable(t *testing.T) {
+	tmpDir := t.TempDir()
+	spaceDir := filepath.Join(tmpDir, "ENG")
+	if err := os.MkdirAll(spaceDir, 0o750); err != nil {
+		t.Fatalf("mkdir space: %v", err)
+	}
+
+	pagePath := filepath.Join(spaceDir, "Remote-Page.md")
+	if err := fs.WriteMarkdownDocument(pagePath, fs.MarkdownDocument{
+		Frontmatter: fs.Frontmatter{
+			Title:   "Remote Page",
+			ID:      "20",
+			Version: 1,
+		},
+		Body: "old body\n",
+	}); err != nil {
+		t.Fatalf("write Remote-Page.md: %v", err)
+	}
+
+	changeTime := time.Date(2026, time.March, 9, 11, 30, 0, 0, time.UTC)
+	stalePage := confluence.Page{
+		ID:           "20",
+		SpaceID:      "space-1",
+		Title:        "Remote Page",
+		Version:      1,
+		LastModified: time.Date(2026, time.March, 9, 11, 0, 0, 0, time.UTC),
+		BodyADF: rawJSON(t, map[string]any{
+			"version": 1,
+			"type":    "doc",
+			"content": []any{
+				map[string]any{
+					"type": "paragraph",
+					"content": []any{
+						map[string]any{"type": "text", "text": "old body"},
+					},
+				},
+			},
+		}),
+	}
+	freshPage := confluence.Page{
+		ID:           "20",
+		SpaceID:      "space-1",
+		Title:        "Remote Page",
+		Version:      2,
+		LastModified: changeTime,
+		BodyADF: rawJSON(t, map[string]any{
+			"version": 1,
+			"type":    "doc",
+			"content": []any{
+				map[string]any{
+					"type": "paragraph",
+					"content": []any{
+						map[string]any{"type": "text", "text": "fresh body"},
+					},
+				},
+			},
+		}),
+	}
+
+	fake := &fakePullRemote{
+		space: confluence.Space{ID: "space-1", Key: "ENG", Name: "Engineering"},
+		pages: []confluence.Page{
+			{ID: "20", SpaceID: "space-1", Title: "Remote Page", Version: 1, LastModified: stalePage.LastModified},
+		},
+		changes: []confluence.Change{
+			{PageID: "20", SpaceKey: "ENG", Version: 2, LastModified: changeTime},
+		},
+		pagesByID: map[string]confluence.Page{
+			"20": freshPage,
+		},
+	}
+	updateFetches := 0
+	fake.getPageFunc = func(pageID string) (confluence.Page, error) {
+		if pageID != "20" {
+			return confluence.Page{}, confluence.ErrNotFound
+		}
+		updateFetches++
+		if updateFetches == 1 {
+			return stalePage, nil
+		}
+		return freshPage, nil
+	}
+
+	result, err := Pull(context.Background(), fake, PullOptions{
+		SpaceKey: "ENG",
+		SpaceDir: spaceDir,
+		State: fs.SpaceState{
+			LastPullHighWatermark: "2026-03-09T11:00:00Z",
+			PagePathIndex: map[string]string{
+				"Remote-Page.md": "20",
+			},
+		},
+		PullStartedAt: time.Date(2026, time.March, 9, 12, 0, 0, 0, time.UTC),
+		OverlapWindow: 5 * time.Minute,
+	})
+	if err != nil {
+		t.Fatalf("Pull() error: %v", err)
+	}
+
+	if updateFetches < 2 {
+		t.Fatalf("expected updated page fetch to retry, got %d attempt(s)", updateFetches)
+	}
+
+	doc, err := fs.ReadMarkdownDocument(pagePath)
+	if err != nil {
+		t.Fatalf("read Remote-Page.md: %v", err)
+	}
+	if doc.Frontmatter.Version != 2 {
+		t.Fatalf("version = %d, want 2", doc.Frontmatter.Version)
+	}
+	if !strings.Contains(doc.Body, "fresh body") {
+		t.Fatalf("expected updated body after incremental pull, got:\n%s", doc.Body)
+	}
+	if len(result.UpdatedMarkdown) != 1 || result.UpdatedMarkdown[0] != "Remote-Page.md" {
+		t.Fatalf("unexpected updated markdown list: %+v", result.UpdatedMarkdown)
 	}
 }
 
@@ -717,16 +920,16 @@ func TestPull_ForceFullPullsAllPagesWithoutIncrementalChanges(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Pull() without force error: %v", err)
 	}
-	if len(resultNoForce.UpdatedMarkdown) != 0 {
-		t.Fatalf("expected no updated markdown without force, got %+v", resultNoForce.UpdatedMarkdown)
+	if len(resultNoForce.UpdatedMarkdown) != 1 || resultNoForce.UpdatedMarkdown[0] != "root.md" {
+		t.Fatalf("expected incremental pull to update root.md without force, got %+v", resultNoForce.UpdatedMarkdown)
 	}
 
 	rootNoForce, err := fs.ReadMarkdownDocument(filepath.Join(spaceDir, "root.md"))
 	if err != nil {
 		t.Fatalf("read root.md without force: %v", err)
 	}
-	if strings.Contains(rootNoForce.Body, "new body") {
-		t.Fatalf("root.md should not be updated without force")
+	if !strings.Contains(rootNoForce.Body, "new body") {
+		t.Fatalf("root.md should be updated without force when the remote version advances")
 	}
 
 	forceRemote := &fakePullRemote{

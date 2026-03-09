@@ -50,6 +50,7 @@ type cmdFakePullRemote struct {
 	folderByID        map[string]confluence.Folder
 	folderErr         error
 	getPageErr        error
+	getPageFunc       func(pageID string) (confluence.Page, error)
 	changes           []confluence.Change
 	listChanges       func(opts confluence.ChangeListOptions) (confluence.ChangeListResult, error)
 	pagesByID         map[string]confluence.Page
@@ -90,6 +91,9 @@ func (f *cmdFakePullRemote) ListChanges(_ context.Context, opts confluence.Chang
 }
 
 func (f *cmdFakePullRemote) GetPage(_ context.Context, pageID string) (confluence.Page, error) {
+	if f.getPageFunc != nil {
+		return f.getPageFunc(pageID)
+	}
 	if f.getPageErr != nil {
 		return confluence.Page{}, f.getPageErr
 	}

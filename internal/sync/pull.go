@@ -216,7 +216,7 @@ func Pull(ctx context.Context, remote PullRemote, opts PullOptions) (PullResult,
 	if opts.Progress != nil {
 		opts.Progress.SetDescription("Identifying changed pages")
 	}
-	changedPageIDs, err := selectChangedPageIDs(ctx, remote, opts, overlapWindow, pageByID)
+	changedPageIDs, changedPageMeta, err := selectChangedPages(ctx, remote, opts, overlapWindow, pageByID)
 	if err != nil {
 		return PullResult{}, err
 	}
@@ -266,15 +266,12 @@ func Pull(ctx context.Context, remote PullRemote, opts PullOptions) (PullResult,
 				opts.Progress.SetCurrentItem(pageID)
 			}
 
-			page, err := remote.GetPage(gCtx, pageID)
+			page, err := fetchChangedPageWithRetry(gCtx, remote, pageID, pageByID[pageID], changedPageMeta[pageID])
 			if err != nil {
 				if opts.Progress != nil {
 					opts.Progress.Add(1)
 				}
-				if errors.Is(err, confluence.ErrNotFound) {
-					return nil
-				}
-				return fmt.Errorf("fetch page %s: %w", pageID, err)
+				return err
 			}
 
 			if contentStatusMode == tenantContentStatusModeDisabled {

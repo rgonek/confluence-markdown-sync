@@ -94,6 +94,7 @@ Highlights:
 - diagnostics distinguish preserved cross-space links (`note`), degraded-but-pullable fallbacks, and broken references left as fallback output,
 - page files follow Confluence hierarchy (folders and parent/child pages become nested directories),
 - pages that have children are written as `<Page>/<Page>.md` so they are distinguishable from folders,
+- incremental pulls reconcile remote page creates, updates, and deletes without requiring `--force`,
 - leaf-page title renames can keep the existing Markdown path when the effective parent directory is unchanged,
 - pages that own subtree directories move when their self-owned directory segment changes,
 - hierarchy moves and ancestor/path-segment sanitization changes move the Markdown file and emit `PAGE_PATH_MOVED` notes with old/new paths,
