@@ -10,9 +10,9 @@ import (
 	"github.com/rgonek/confluence-markdown-sync/internal/fs"
 )
 
-// ensureADFMediaCollection post-processes the ADF JSON to add required 'collection'
-// attributes to 'media' nodes, which is often needed for Confluence v2 API storage conversion.
-func ensureADFMediaCollection(adfJSON []byte, pageID string) ([]byte, error) {
+// ensureADFMediaCollection post-processes media nodes with the collection and
+// attachment metadata Confluence needs to preserve uploaded attachments.
+func ensureADFMediaCollection(adfJSON []byte, pageID string, refsByPath map[string]publishedAttachmentRef) ([]byte, error) {
 	if len(adfJSON) == 0 {
 		return adfJSON, nil
 	}
@@ -25,7 +25,17 @@ func ensureADFMediaCollection(adfJSON []byte, pageID string) ([]byte, error) {
 		return nil, fmt.Errorf("unmarshal ADF: %w", err)
 	}
 
-	modified := walkAndFixMediaNodes(root, pageID)
+	refByID := map[string]publishedAttachmentRef{}
+	for _, ref := range refsByPath {
+		if mediaID := strings.TrimSpace(ref.MediaID); mediaID != "" {
+			refByID[mediaID] = ref
+		}
+		if attachmentID := strings.TrimSpace(ref.AttachmentID); attachmentID != "" {
+			refByID[attachmentID] = ref
+		}
+	}
+
+	modified := walkAndFixMediaNodes(root, pageID, refByID)
 	if !modified {
 		return adfJSON, nil
 	}
@@ -37,41 +47,85 @@ func ensureADFMediaCollection(adfJSON []byte, pageID string) ([]byte, error) {
 	return out, nil
 }
 
-func walkAndFixMediaNodes(node any, pageID string) bool {
+func walkAndFixMediaNodes(node any, pageID string, refByID map[string]publishedAttachmentRef) bool {
 	modified := false
 	switch n := node.(type) {
 	case map[string]any:
 		if nodeType, ok := n["type"].(string); ok && (nodeType == "media" || nodeType == "mediaInline") {
 			if attrs, ok := n["attrs"].(map[string]any); ok {
-				// If we have an id but no collection, add it
+				ref := lookupPublishedAttachmentRef(attrs, refByID)
+				resolvedPageID := strings.TrimSpace(pageID)
+				if ref.PageID != "" {
+					resolvedPageID = strings.TrimSpace(ref.PageID)
+				}
+				if ref.MediaID != "" && strings.TrimSpace(stringValue(attrs["id"])) != ref.MediaID {
+					attrs["id"] = ref.MediaID
+					modified = true
+				}
+				if ref.AttachmentID != "" && strings.TrimSpace(stringValue(attrs["attachmentId"])) != ref.AttachmentID {
+					attrs["attachmentId"] = ref.AttachmentID
+					modified = true
+				}
+				if ref.Filename != "" && strings.TrimSpace(stringValue(attrs["fileName"])) == "" {
+					attrs["fileName"] = ref.Filename
+					modified = true
+				}
+				if strings.TrimSpace(ref.PageID) != "" && strings.TrimSpace(stringValue(attrs["pageId"])) == "" {
+					attrs["pageId"] = strings.TrimSpace(ref.PageID)
+					modified = true
+				}
+
 				_, hasID := attrs["id"]
 				if !hasID {
 					_, hasID = attrs["attachmentId"]
 				}
 				collection, hasCollection := attrs["collection"].(string)
-				if hasID && (!hasCollection || collection == "") {
-					attrs["collection"] = "contentId-" + pageID
+				if hasID && resolvedPageID != "" && (!hasCollection || collection == "") {
+					attrs["collection"] = "contentId-" + resolvedPageID
 					modified = true
 				}
 				if _, hasType := attrs["type"]; !hasType {
-					attrs["type"] = "file"
+					mediaType := strings.TrimSpace(ref.MediaType)
+					if mediaType == "" {
+						mediaType = "file"
+					}
+					attrs["type"] = mediaType
 					modified = true
 				}
 			}
 		}
 		for _, v := range n {
-			if walkAndFixMediaNodes(v, pageID) {
+			if walkAndFixMediaNodes(v, pageID, refByID) {
 				modified = true
 			}
 		}
 	case []any:
 		for _, item := range n {
-			if walkAndFixMediaNodes(item, pageID) {
+			if walkAndFixMediaNodes(item, pageID, refByID) {
 				modified = true
 			}
 		}
 	}
 	return modified
+}
+
+func lookupPublishedAttachmentRef(attrs map[string]any, refByID map[string]publishedAttachmentRef) publishedAttachmentRef {
+	if len(refByID) == 0 {
+		return publishedAttachmentRef{}
+	}
+	for _, candidate := range []string{
+		strings.TrimSpace(stringValue(attrs["id"])),
+		strings.TrimSpace(stringValue(attrs["attachmentId"])),
+		strings.TrimSpace(stringValue(attrs["fileId"])),
+	} {
+		if candidate == "" {
+			continue
+		}
+		if ref, ok := refByID[candidate]; ok {
+			return ref
+		}
+	}
+	return publishedAttachmentRef{}
 }
 
 func syncPageMetadata(ctx context.Context, remote PushRemote, pageID string, doc fs.MarkdownDocument, existingPage bool, capabilities *tenantCapabilityCache, diagnostics *[]PushDiagnostic) error {

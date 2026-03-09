@@ -193,6 +193,7 @@ type ArchiveTaskWaitOptions struct {
 // Attachment represents a Confluence attachment.
 type Attachment struct {
 	ID        string
+	FileID    string
 	PageID    string
 	Filename  string
 	MediaType string

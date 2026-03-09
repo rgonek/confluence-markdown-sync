@@ -373,8 +373,23 @@ func Pull(ctx context.Context, remote PullRemote, opts PullOptions) (PullResult,
 		if diag != nil {
 			diagnostics = append(diagnostics, *diag)
 		}
+		hasUnknownMediaRefs := false
+		for _, ref := range refs {
+			if isUnknownMediaID(ref.AttachmentID) {
+				hasUnknownMediaRefs = true
+				break
+			}
+		}
 
-		refs, resolvedUnknownCount, unresolvedUnknownCount, resolveErr := resolveUnknownAttachmentRefsByFilename(ctx, remote, page.ID, refs, attachmentIndex)
+		remoteAttachments, listAttachmentsErr := remote.ListAttachments(ctx, page.ID)
+		if listAttachmentsErr == nil {
+			refs, _ = resolveAttachmentRefsByRemoteMetadata(refs, remoteAttachments)
+		}
+
+		refs, resolvedUnknownCount, unresolvedUnknownCount, resolveErr := resolveUnknownAttachmentRefsByFilename(refs, attachmentIndex, remoteAttachments)
+		if resolveErr == nil && listAttachmentsErr != nil && hasUnknownMediaRefs {
+			resolveErr = listAttachmentsErr
+		}
 		if resolveErr != nil {
 			diagnostics = append(diagnostics, PullDiagnostic{
 				Path:    page.ID,

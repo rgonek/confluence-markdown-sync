@@ -577,6 +577,7 @@ func pushUpsertPage(
 	}
 
 	referencedIDs := map[string]struct{}{}
+	uploadedAttachmentsByPath := map[string]confluence.Attachment{}
 	for _, assetRelPath := range referencedAssetPaths {
 		if existingID := strings.TrimSpace(attachmentIDByPath[assetRelPath]); existingID != "" {
 			referencedIDs[existingID] = struct{}{}
@@ -606,6 +607,7 @@ func pushUpsertPage(
 		}
 
 		attachmentIDByPath[assetRelPath] = uploadedID
+		uploadedAttachmentsByPath[assetRelPath] = uploaded
 		state.AttachmentIndex[assetRelPath] = uploadedID
 		rollback.trackUploadedAttachment(pageID, uploadedID, assetRelPath)
 		appendPushDiagnostic(
@@ -652,12 +654,24 @@ func pushUpsertPage(
 		touchedAssets = append(touchedAssets, stalePath)
 	}
 
-	preparedBody, err = PrepareMarkdownForAttachmentConversion(opts.SpaceDir, absPath, doc.Body, attachmentIDByPath)
+	publishedAttachmentRefs, publishedMediaIDByPath, err := resolvePublishedAttachmentRefs(
+		ctx,
+		remote,
+		pageID,
+		referencedAssetPaths,
+		attachmentIDByPath,
+		uploadedAttachmentsByPath,
+	)
+	if err != nil {
+		return failWithRollback(fmt.Errorf("resolve published attachment metadata for %s: %w", relPath, err))
+	}
+
+	preparedBody, err = PrepareMarkdownForAttachmentConversion(opts.SpaceDir, absPath, doc.Body, publishedMediaIDByPath)
 	if err != nil {
 		return failWithRollback(fmt.Errorf("prepare attachment conversion for %s with resolved attachment IDs: %w", relPath, err))
 	}
 
-	mediaHook = NewReverseMediaHook(opts.SpaceDir, attachmentIDByPath)
+	mediaHook = NewReverseMediaHook(opts.SpaceDir, publishedMediaIDByPath)
 	reverse, err := converter.Reverse(ctx, []byte(preparedBody), converter.ReverseConfig{
 		LinkHook:  linkHook,
 		MediaHook: mediaHook,
@@ -674,7 +688,7 @@ func pushUpsertPage(
 	}
 
 	// Post-process ADF to ensure required attributes for Confluence v2 API
-	finalADF, err := ensureADFMediaCollection(reverse.ADF, pageID)
+	finalADF, err := ensureADFMediaCollection(reverse.ADF, pageID, publishedAttachmentRefs)
 	if err != nil {
 		return failWithRollback(fmt.Errorf("post-process ADF for %s: %w", relPath, err))
 	}

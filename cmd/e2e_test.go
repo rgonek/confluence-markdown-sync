@@ -374,6 +374,189 @@ func TestWorkflow_MermaidPushPreservesCodeBlock(t *testing.T) {
 	}
 }
 
+func TestWorkflow_AttachmentPublicationRoundTripAndDeletion(t *testing.T) {
+	e2eCfg := requireE2EConfig(t)
+	spaceKey := e2eCfg.PrimarySpaceKey
+
+	ctx := context.Background()
+	cfg, err := config.Load("")
+	if err != nil {
+		t.Fatalf("Load config: %v", err)
+	}
+
+	client, err := confluence.NewClient(confluence.ClientConfig{
+		BaseURL:  cfg.Domain,
+		Email:    cfg.Email,
+		APIToken: cfg.APIToken,
+	})
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+
+	rootDir := projectRootFromWD(t)
+	confBin := confBinaryForOS(rootDir)
+
+	tmpDir, err := os.MkdirTemp("", "conf-e2e-attachments-*")
+	if err != nil {
+		t.Fatalf("MkdirTemp: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	runCMS := func(args ...string) string {
+		cmd := exec.Command(confBin, args...)
+		cmd.Dir = tmpDir
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("Command conf %v failed: %v\n%s", args, err, string(out))
+		}
+		return string(out)
+	}
+
+	runCMS("init")
+	runCMS("pull", spaceKey, "--yes", "--non-interactive")
+
+	spaceDir := findPulledSpaceDir(t, tmpDir)
+	parentDir := filepath.Dir(findFirstMarkdownFile(t, spaceDir))
+	stamp := time.Now().UTC().Format("20060102T150405")
+	title := "Attachment E2E " + stamp
+	filePath := filepath.Join(parentDir, sanitizeE2EFileStem(title)+".md")
+	imageName := "diagram-" + stamp + ".png"
+	fileName := "manual-" + stamp + ".txt"
+	imagePath := filepath.Join(parentDir, imageName)
+	fileAssetPath := filepath.Join(parentDir, fileName)
+
+	if err := os.WriteFile(imagePath, []byte("png-bytes"), 0o600); err != nil {
+		t.Fatalf("write image asset: %v", err)
+	}
+	if err := os.WriteFile(fileAssetPath, []byte("manual-bytes"), 0o600); err != nil {
+		t.Fatalf("write file asset: %v", err)
+	}
+
+	if err := fs.WriteMarkdownDocument(filePath, fs.MarkdownDocument{
+		Frontmatter: fs.Frontmatter{Title: title},
+		Body:        fmt.Sprintf("![Diagram](%s)\n[Manual](%s)\n", imageName, fileName),
+	}); err != nil {
+		t.Fatalf("WriteMarkdown attachment page: %v", err)
+	}
+
+	runCMS("validate", filePath)
+	runCMS("push", filePath, "--on-conflict=cancel", "--yes", "--non-interactive")
+
+	doc, err := fs.ReadMarkdownDocument(filePath)
+	if err != nil {
+		t.Fatalf("ReadMarkdown attachment page: %v", err)
+	}
+	pageID := strings.TrimSpace(doc.Frontmatter.ID)
+	if pageID == "" {
+		t.Fatal("expected attachment page push to assign a page id")
+	}
+	t.Cleanup(func() {
+		if err := client.DeletePage(context.Background(), pageID, confluence.PageDeleteOptions{}); err != nil && err != confluence.ErrNotFound {
+			t.Logf("cleanup delete attachment page %s: %v", pageID, err)
+		}
+	})
+
+	attachments := waitForPageAttachments(t, ctx, client, pageID, func(got []confluence.Attachment) bool {
+		return len(got) == 2
+	})
+	attachmentIDByFilename := map[string]string{}
+	for _, attachment := range attachments {
+		attachmentIDByFilename[strings.TrimSpace(attachment.Filename)] = strings.TrimSpace(attachment.ID)
+	}
+
+	imageAttachmentID := attachmentIDByFilename[imageName]
+	fileAttachmentID := attachmentIDByFilename[fileName]
+	if imageAttachmentID == "" || fileAttachmentID == "" {
+		t.Fatalf("expected uploaded attachments for %s and %s, got %+v", imageName, fileName, attachments)
+	}
+
+	page := waitForPageADF(t, ctx, client, pageID, func(adf []byte) bool {
+		if strings.Contains(string(adf), "UNKNOWN_MEDIA_ID") {
+			return false
+		}
+		attachmentIDs, renderIDs := collectADFMediaIdentitySets(adf)
+		if _, ok := attachmentIDs[imageAttachmentID]; !ok {
+			return false
+		}
+		if _, ok := attachmentIDs[fileAttachmentID]; !ok {
+			return false
+		}
+		return len(renderIDs) >= 2
+	})
+	if strings.Contains(string(page.BodyADF), "UNKNOWN_MEDIA_ID") {
+		t.Fatalf("expected published ADF without UNKNOWN_MEDIA_ID, got %s", string(page.BodyADF))
+	}
+
+	runCMS("pull", spaceKey, "--force", "--yes", "--non-interactive")
+
+	filePath = findMarkdownByPageID(t, spaceDir, pageID)
+	pulledDoc, err := fs.ReadMarkdownDocument(filePath)
+	if err != nil {
+		t.Fatalf("ReadMarkdown after pull: %v", err)
+	}
+
+	expectedImageRel := filepath.ToSlash(filepath.Join("assets", pageID, imageAttachmentID+"-"+imageName))
+	expectedFileRel := filepath.ToSlash(filepath.Join("assets", pageID, fileAttachmentID+"-"+fileName))
+	if !strings.Contains(pulledDoc.Body, expectedImageRel) {
+		t.Fatalf("expected pulled markdown to reference %s, body=\n%s", expectedImageRel, pulledDoc.Body)
+	}
+	if !strings.Contains(pulledDoc.Body, expectedFileRel) {
+		t.Fatalf("expected pulled markdown to reference %s, body=\n%s", expectedFileRel, pulledDoc.Body)
+	}
+	if _, err := os.Stat(filepath.Join(spaceDir, filepath.FromSlash(expectedImageRel))); err != nil {
+		t.Fatalf("expected pulled image asset to exist: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(spaceDir, filepath.FromSlash(expectedFileRel))); err != nil {
+		t.Fatalf("expected pulled file asset to exist: %v", err)
+	}
+
+	pulledDoc.Body = fmt.Sprintf("![Diagram](%s)\n", expectedImageRel)
+	if err := fs.WriteMarkdownDocument(filePath, pulledDoc); err != nil {
+		t.Fatalf("WriteMarkdown after attachment removal: %v", err)
+	}
+	if err := os.Remove(filepath.Join(spaceDir, filepath.FromSlash(expectedFileRel))); err != nil {
+		t.Fatalf("remove local attachment asset: %v", err)
+	}
+
+	runCMS("validate", filePath)
+	runCMS("push", filePath, "--on-conflict=cancel", "--yes", "--non-interactive")
+
+	attachments = waitForPageAttachments(t, ctx, client, pageID, func(got []confluence.Attachment) bool {
+		if len(got) != 1 {
+			return false
+		}
+		return strings.TrimSpace(got[0].Filename) == imageName
+	})
+	if len(attachments) != 1 || strings.TrimSpace(attachments[0].Filename) != imageName {
+		t.Fatalf("expected only remaining attachment %s, got %+v", imageName, attachments)
+	}
+
+	runCMS("pull", spaceKey, "--force", "--yes", "--non-interactive")
+
+	filePath = findMarkdownByPageID(t, spaceDir, pageID)
+	finalDoc, err := fs.ReadMarkdownDocument(filePath)
+	if err != nil {
+		t.Fatalf("ReadMarkdown after deletion pull: %v", err)
+	}
+	if strings.Contains(finalDoc.Body, fileName) || strings.Contains(finalDoc.Body, expectedFileRel) {
+		t.Fatalf("expected deleted attachment reference to be removed, body=\n%s", finalDoc.Body)
+	}
+	if _, err := os.Stat(filepath.Join(spaceDir, filepath.FromSlash(expectedFileRel))); !os.IsNotExist(err) {
+		t.Fatalf("expected deleted local asset to be gone, stat=%v", err)
+	}
+
+	state, err := fs.LoadState(spaceDir)
+	if err != nil {
+		t.Fatalf("LoadState: %v", err)
+	}
+	if _, exists := state.AttachmentIndex[expectedFileRel]; exists {
+		t.Fatalf("expected deleted attachment state entry to be removed for %s", expectedFileRel)
+	}
+	if got := strings.TrimSpace(state.AttachmentIndex[expectedImageRel]); got == "" {
+		t.Fatalf("expected remaining attachment state entry for %s", expectedImageRel)
+	}
+}
+
 func TestWorkflow_PushDryRunNonMutating(t *testing.T) {
 	e2eCfg := requireE2EConfig(t)
 	spaceKey := e2eCfg.PrimarySpaceKey
@@ -688,6 +871,83 @@ func sanitizeE2EFileStem(value string) string {
 		".", "-",
 	)
 	return replacer.Replace(value)
+}
+
+func waitForPageADF(t *testing.T, ctx context.Context, client *confluence.Client, pageID string, predicate func(adf []byte) bool) confluence.Page {
+	t.Helper()
+
+	deadline := time.Now().Add(45 * time.Second)
+	for {
+		page, err := client.GetPage(ctx, pageID)
+		if err == nil && predicate(page.BodyADF) {
+			return page
+		}
+		if time.Now().After(deadline) {
+			if err != nil {
+				t.Fatalf("GetPage(%s) did not satisfy predicate before timeout: %v", pageID, err)
+			}
+			t.Fatalf("remote ADF for page %s did not satisfy predicate before timeout: %s", pageID, string(page.BodyADF))
+		}
+		time.Sleep(2 * time.Second)
+	}
+}
+
+func waitForPageAttachments(t *testing.T, ctx context.Context, client *confluence.Client, pageID string, predicate func([]confluence.Attachment) bool) []confluence.Attachment {
+	t.Helper()
+
+	deadline := time.Now().Add(45 * time.Second)
+	for {
+		attachments, err := client.ListAttachments(ctx, pageID)
+		if err == nil && predicate(attachments) {
+			return attachments
+		}
+		if time.Now().After(deadline) {
+			if err != nil {
+				t.Fatalf("ListAttachments(%s) did not satisfy predicate before timeout: %v", pageID, err)
+			}
+			t.Fatalf("attachments for page %s did not satisfy predicate before timeout: %+v", pageID, attachments)
+		}
+		time.Sleep(2 * time.Second)
+	}
+}
+
+func collectADFMediaIdentitySets(adf []byte) (map[string]struct{}, map[string]struct{}) {
+	attachmentIDs := map[string]struct{}{}
+	renderIDs := map[string]struct{}{}
+
+	var root any
+	if err := json.Unmarshal(adf, &root); err != nil {
+		return attachmentIDs, renderIDs
+	}
+
+	walkADFMediaNodes(root, func(attrs map[string]any) {
+		if attachmentID, ok := attrs["attachmentId"].(string); ok && strings.TrimSpace(attachmentID) != "" {
+			attachmentIDs[strings.TrimSpace(attachmentID)] = struct{}{}
+		}
+		if renderID, ok := attrs["id"].(string); ok && strings.TrimSpace(renderID) != "" {
+			renderIDs[strings.TrimSpace(renderID)] = struct{}{}
+		}
+	})
+
+	return attachmentIDs, renderIDs
+}
+
+func walkADFMediaNodes(node any, visit func(attrs map[string]any)) {
+	switch typed := node.(type) {
+	case map[string]any:
+		if nodeType, ok := typed["type"].(string); ok && (nodeType == "media" || nodeType == "mediaInline") {
+			if attrs, ok := typed["attrs"].(map[string]any); ok {
+				visit(attrs)
+			}
+		}
+		for _, value := range typed {
+			walkADFMediaNodes(value, visit)
+		}
+	case []any:
+		for _, value := range typed {
+			walkADFMediaNodes(value, visit)
+		}
+	}
 }
 
 func adfContainsCodeBlockLanguage(adf []byte, language string) bool {

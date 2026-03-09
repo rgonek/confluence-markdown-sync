@@ -62,7 +62,7 @@ func TestEnsureADFMediaCollection(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := ensureADFMediaCollection([]byte(tc.adf), tc.pageID)
+			got, err := ensureADFMediaCollection([]byte(tc.adf), tc.pageID, nil)
 			if err != nil {
 				t.Fatalf("ensureADFMediaCollection() error: %v", err)
 			}
@@ -82,6 +82,39 @@ func TestEnsureADFMediaCollection(t *testing.T) {
 				t.Errorf("got  %s\nwant %s", string(gotJSON), string(wantJSON))
 			}
 		})
+	}
+}
+
+func TestEnsureADFMediaCollection_EnrichesPublishedAttachmentMetadata(t *testing.T) {
+	adf := `{"version":1,"type":"doc","content":[{"type":"paragraph","content":[{"type":"mediaInline","attrs":{"id":"att-1"}}]}]}`
+
+	got, err := ensureADFMediaCollection([]byte(adf), "123", map[string]publishedAttachmentRef{
+		"assets/123/manual.pdf": {
+			AttachmentID: "att-1",
+			MediaID:      "file-1",
+			PageID:       "123",
+			Filename:     "manual.pdf",
+			MediaType:    "file",
+		},
+	})
+	if err != nil {
+		t.Fatalf("ensureADFMediaCollection() error: %v", err)
+	}
+
+	expected := `{"version":1,"type":"doc","content":[{"type":"paragraph","content":[{"type":"mediaInline","attrs":{"id":"file-1","attachmentId":"att-1","pageId":"123","fileName":"manual.pdf","collection":"contentId-123","type":"file"}}]}]}`
+
+	var gotObj, wantObj any
+	if err := json.Unmarshal(got, &gotObj); err != nil {
+		t.Fatalf("unmarshal got: %v", err)
+	}
+	if err := json.Unmarshal([]byte(expected), &wantObj); err != nil {
+		t.Fatalf("unmarshal expected: %v", err)
+	}
+
+	gotJSON, _ := json.Marshal(gotObj)
+	wantJSON, _ := json.Marshal(wantObj)
+	if string(gotJSON) != string(wantJSON) {
+		t.Fatalf("got  %s\nwant %s", string(gotJSON), string(wantJSON))
 	}
 }
 

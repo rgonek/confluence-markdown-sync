@@ -68,7 +68,7 @@ func TestListAttachments_PaginatesAndMapsFields(t *testing.T) {
 				t.Fatalf("first call path = %s", r.URL.Path)
 			}
 			if _, err := io.WriteString(w, `{
-				"results":[{"id":"att-1","title":"diagram.png","mediaType":"image/png"}],
+				"results":[{"id":"att-1","fileId":"file-1","title":"diagram.png","mediaType":"image/png"}],
 				"_links":{"next":"/wiki/api/v2/pages/123/attachments?cursor=next-token"}
 			}`); err != nil {
 				t.Fatalf("write response: %v", err)
@@ -77,7 +77,7 @@ func TestListAttachments_PaginatesAndMapsFields(t *testing.T) {
 			if !strings.Contains(r.URL.RawQuery, "cursor=next-token") {
 				t.Fatalf("second call query = %s", r.URL.RawQuery)
 			}
-			if _, err := io.WriteString(w, `{"results":[{"id":"att-2","filename":"spec.pdf","mediaType":"application/pdf"}]}`); err != nil {
+			if _, err := io.WriteString(w, `{"results":[{"id":"att-2","fileId":"file-2","filename":"spec.pdf","mediaType":"application/pdf"}]}`); err != nil {
 				t.Fatalf("write response: %v", err)
 			}
 		default:
@@ -105,8 +105,14 @@ func TestListAttachments_PaginatesAndMapsFields(t *testing.T) {
 	if attachments[0].ID != "att-1" || attachments[0].Filename != "diagram.png" {
 		t.Fatalf("first attachment = %+v", attachments[0])
 	}
+	if attachments[0].FileID != "file-1" {
+		t.Fatalf("first attachment file id = %q, want file-1", attachments[0].FileID)
+	}
 	if attachments[1].ID != "att-2" || attachments[1].Filename != "spec.pdf" {
 		t.Fatalf("second attachment = %+v", attachments[1])
+	}
+	if attachments[1].FileID != "file-2" {
+		t.Fatalf("second attachment file id = %q, want file-2", attachments[1].FileID)
 	}
 }
 
@@ -239,7 +245,7 @@ func TestUploadAndDeleteAttachmentEndpoints(t *testing.T) {
 			}
 
 			w.Header().Set("Content-Type", "application/json")
-			if _, err := io.WriteString(w, `{"results":[{"id":"att-9","title":"diagram.png","_links":{"webui":"/wiki/pages/viewpage.action?pageId=42"}}]}`); err != nil {
+			if _, err := io.WriteString(w, `{"results":[{"id":"att-9","fileId":"file-9","title":"diagram.png","_links":{"webui":"/wiki/pages/viewpage.action?pageId=42"}}]}`); err != nil {
 				t.Fatalf("write response: %v", err)
 			}
 		case r.Method == http.MethodDelete && r.URL.Path == "/wiki/api/v2/attachments/att-9":
@@ -273,6 +279,9 @@ func TestUploadAndDeleteAttachmentEndpoints(t *testing.T) {
 	}
 	if attachment.PageID != "42" {
 		t.Fatalf("page ID = %q, want 42", attachment.PageID)
+	}
+	if attachment.FileID != "file-9" {
+		t.Fatalf("file ID = %q, want file-9", attachment.FileID)
 	}
 
 	if err := client.DeleteAttachment(context.Background(), "att-9", "42"); err != nil {

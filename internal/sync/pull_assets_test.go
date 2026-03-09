@@ -147,3 +147,124 @@ func TestPull_ResolvesUnknownMediaIDByFilename(t *testing.T) {
 		t.Fatalf("did not expect ATTACHMENT_DOWNLOAD_SKIPPED diagnostic, got %+v", result.Diagnostics)
 	}
 }
+
+func TestPull_PrefersAttachmentIDMetadataForDownloadedAssetPaths(t *testing.T) {
+	tmpDir := t.TempDir()
+	spaceDir := filepath.Join(tmpDir, "ENG")
+	if err := os.MkdirAll(spaceDir, 0o750); err != nil {
+		t.Fatalf("mkdir space: %v", err)
+	}
+
+	adf := map[string]any{
+		"version": 1,
+		"type":    "doc",
+		"content": []any{
+			map[string]any{
+				"type": "mediaSingle",
+				"content": []any{
+					map[string]any{
+						"type": "media",
+						"attrs": map[string]any{
+							"id":           "file-real",
+							"attachmentId": "att-real",
+							"pageId":       "1",
+							"fileName":     "diagram.png",
+						},
+					},
+				},
+			},
+		},
+	}
+
+	fake := &fakePullRemote{
+		space: confluence.Space{ID: "space-1", Key: "ENG"},
+		pages: []confluence.Page{{ID: "1", SpaceID: "space-1", Title: "Page 1"}},
+		pagesByID: map[string]confluence.Page{
+			"1": {ID: "1", Title: "Page 1", BodyADF: rawJSON(t, adf)},
+		},
+		attachments: map[string][]byte{
+			"att-real": []byte("asset-bytes"),
+		},
+		attachmentsByPage: map[string][]confluence.Attachment{
+			"1": {
+				{ID: "att-real", FileID: "file-real", PageID: "1", Filename: "diagram.png"},
+			},
+		},
+	}
+
+	result, err := Pull(context.Background(), fake, PullOptions{
+		SpaceKey: "ENG",
+		SpaceDir: spaceDir,
+	})
+	if err != nil {
+		t.Fatalf("Pull() unexpected error: %v", err)
+	}
+
+	assetPath := filepath.Join(spaceDir, "assets", "1", "att-real-diagram.png")
+	if _, err := os.Stat(assetPath); err != nil {
+		t.Fatalf("expected asset at attachment-id path: %v", err)
+	}
+	if got := strings.TrimSpace(result.State.AttachmentIndex["assets/1/att-real-diagram.png"]); got != "att-real" {
+		t.Fatalf("attachment index = %q, want att-real", got)
+	}
+}
+
+func TestPull_ResolvesFileIDToAttachmentIDForDownloadedAssetPaths(t *testing.T) {
+	tmpDir := t.TempDir()
+	spaceDir := filepath.Join(tmpDir, "ENG")
+	if err := os.MkdirAll(spaceDir, 0o750); err != nil {
+		t.Fatalf("mkdir space: %v", err)
+	}
+
+	adf := map[string]any{
+		"version": 1,
+		"type":    "doc",
+		"content": []any{
+			map[string]any{
+				"type": "mediaSingle",
+				"content": []any{
+					map[string]any{
+						"type": "media",
+						"attrs": map[string]any{
+							"id":       "file-real",
+							"pageId":   "1",
+							"fileName": "diagram.png",
+						},
+					},
+				},
+			},
+		},
+	}
+
+	fake := &fakePullRemote{
+		space: confluence.Space{ID: "space-1", Key: "ENG"},
+		pages: []confluence.Page{{ID: "1", SpaceID: "space-1", Title: "Page 1"}},
+		pagesByID: map[string]confluence.Page{
+			"1": {ID: "1", Title: "Page 1", BodyADF: rawJSON(t, adf)},
+		},
+		attachments: map[string][]byte{
+			"att-real": []byte("asset-bytes"),
+		},
+		attachmentsByPage: map[string][]confluence.Attachment{
+			"1": {
+				{ID: "att-real", FileID: "file-real", PageID: "1", Filename: "diagram.png"},
+			},
+		},
+	}
+
+	result, err := Pull(context.Background(), fake, PullOptions{
+		SpaceKey: "ENG",
+		SpaceDir: spaceDir,
+	})
+	if err != nil {
+		t.Fatalf("Pull() unexpected error: %v", err)
+	}
+
+	assetPath := filepath.Join(spaceDir, "assets", "1", "att-real-diagram.png")
+	if _, err := os.Stat(assetPath); err != nil {
+		t.Fatalf("expected asset at attachment-id path after fileId resolution: %v", err)
+	}
+	if got := strings.TrimSpace(result.State.AttachmentIndex["assets/1/att-real-diagram.png"]); got != "att-real" {
+		t.Fatalf("attachment index = %q, want att-real", got)
+	}
+}

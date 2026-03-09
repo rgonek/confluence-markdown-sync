@@ -171,6 +171,13 @@ func (d *dryRunPushRemote) DeletePage(ctx context.Context, pageID string, opts c
 	return nil
 }
 
+func (d *dryRunPushRemote) ListAttachments(ctx context.Context, pageID string) ([]confluence.Attachment, error) {
+	if strings.HasPrefix(pageID, "dry-run-") {
+		return nil, nil
+	}
+	return d.inner.ListAttachments(ctx, pageID)
+}
+
 func (d *dryRunPushRemote) UploadAttachment(ctx context.Context, input confluence.AttachmentUploadInput) (confluence.Attachment, error) {
 	d.printf("[DRY-RUN] UPLOAD ATTACHMENT (POST %s/wiki/rest/api/content/%s/child/attachment)\n", d.domain, input.PageID)
 	d.printf("  Filename: %s\n", input.Filename)
@@ -179,6 +186,7 @@ func (d *dryRunPushRemote) UploadAttachment(ctx context.Context, input confluenc
 
 	return confluence.Attachment{
 		ID:        "dry-run-attachment-id-" + input.Filename,
+		FileID:    "dry-run-file-id-" + input.Filename,
 		PageID:    input.PageID,
 		Filename:  input.Filename,
 		MediaType: input.ContentType,

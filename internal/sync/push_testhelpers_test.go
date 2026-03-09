@@ -88,6 +88,10 @@ func (f *fakeFolderPushRemote) DeletePage(_ context.Context, pageID string, opts
 	return nil
 }
 
+func (f *fakeFolderPushRemote) ListAttachments(_ context.Context, pageID string) ([]confluence.Attachment, error) {
+	return nil, nil
+}
+
 func (f *fakeFolderPushRemote) UploadAttachment(_ context.Context, input confluence.AttachmentUploadInput) (confluence.Attachment, error) {
 	return confluence.Attachment{}, nil
 }
@@ -134,6 +138,7 @@ type rollbackPushRemote struct {
 	contentStatuses          map[string]string
 	labelsByPage             map[string][]string
 	folders                  []confluence.Folder
+	attachmentsByPage        map[string][]confluence.Attachment
 	nextPageID               int
 	nextAttachmentID         int
 	createPageCalls          int
@@ -172,6 +177,7 @@ func newRollbackPushRemote() *rollbackPushRemote {
 		pagesByID:            map[string]confluence.Page{},
 		contentStatuses:      map[string]string{},
 		labelsByPage:         map[string][]string{},
+		attachmentsByPage:    map[string][]confluence.Attachment{},
 		updateInputsByPageID: map[string]confluence.PageUpsertInput{},
 		nextPageID:           1,
 		nextAttachmentID:     1,
@@ -341,6 +347,7 @@ func (f *rollbackPushRemote) DeletePage(_ context.Context, pageID string, opts c
 	f.deletePageCalls = append(f.deletePageCalls, pageID)
 	f.deletePageOpts = append(f.deletePageOpts, opts)
 	delete(f.pagesByID, pageID)
+	delete(f.attachmentsByPage, pageID)
 	filtered := make([]confluence.Page, 0, len(f.pages))
 	for _, page := range f.pages {
 		if page.ID == pageID {
@@ -352,15 +359,32 @@ func (f *rollbackPushRemote) DeletePage(_ context.Context, pageID string, opts c
 	return nil
 }
 
+func (f *rollbackPushRemote) ListAttachments(_ context.Context, pageID string) ([]confluence.Attachment, error) {
+	return append([]confluence.Attachment(nil), f.attachmentsByPage[pageID]...), nil
+}
+
 func (f *rollbackPushRemote) UploadAttachment(_ context.Context, input confluence.AttachmentUploadInput) (confluence.Attachment, error) {
 	f.uploadAttachmentCalls++
 	id := fmt.Sprintf("att-%d", f.nextAttachmentID)
+	fileID := fmt.Sprintf("file-%d", f.nextAttachmentID)
 	f.nextAttachmentID++
-	return confluence.Attachment{ID: id, PageID: input.PageID, Filename: input.Filename}, nil
+	attachment := confluence.Attachment{ID: id, FileID: fileID, PageID: input.PageID, Filename: input.Filename}
+	f.attachmentsByPage[input.PageID] = append(f.attachmentsByPage[input.PageID], attachment)
+	return attachment, nil
 }
 
-func (f *rollbackPushRemote) DeleteAttachment(_ context.Context, attachmentID string, _ string) error {
+func (f *rollbackPushRemote) DeleteAttachment(_ context.Context, attachmentID string, pageID string) error {
 	f.deleteAttachmentCalls = append(f.deleteAttachmentCalls, attachmentID)
+	if strings.TrimSpace(pageID) != "" {
+		filtered := make([]confluence.Attachment, 0, len(f.attachmentsByPage[pageID]))
+		for _, attachment := range f.attachmentsByPage[pageID] {
+			if strings.TrimSpace(attachment.ID) == strings.TrimSpace(attachmentID) {
+				continue
+			}
+			filtered = append(filtered, attachment)
+		}
+		f.attachmentsByPage[pageID] = filtered
+	}
 	return nil
 }
 

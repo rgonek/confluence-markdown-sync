@@ -28,6 +28,7 @@ type PushRemote interface {
 	ArchivePages(ctx context.Context, pageIDs []string) (confluence.ArchiveResult, error)
 	WaitForArchiveTask(ctx context.Context, taskID string, opts confluence.ArchiveTaskWaitOptions) (confluence.ArchiveTaskStatus, error)
 	DeletePage(ctx context.Context, pageID string, opts confluence.PageDeleteOptions) error
+	ListAttachments(ctx context.Context, pageID string) ([]confluence.Attachment, error)
 	UploadAttachment(ctx context.Context, input confluence.AttachmentUploadInput) (confluence.Attachment, error)
 	DeleteAttachment(ctx context.Context, attachmentID string, pageID string) error
 	CreateFolder(ctx context.Context, input confluence.FolderCreateInput) (confluence.Folder, error)
