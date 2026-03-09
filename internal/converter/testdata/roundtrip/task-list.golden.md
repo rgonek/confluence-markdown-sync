@@ -1,0 +1,2 @@
+- [ ] Open migration checklist
+- [x] Verify round-trip coverage

@@ -102,3 +102,21 @@ func TestReverse_MermaidCodeFenceProducesCodeBlockADF(t *testing.T) {
 		t.Fatalf("expected Mermaid ADF to preserve mermaid language, got %s", adfStr)
 	}
 }
+
+func TestReverse_PlainISODateTextRemainsText(t *testing.T) {
+	ctx := context.Background()
+	markdown := []byte("Release date: 2026-03-09\n")
+
+	res, err := Reverse(ctx, markdown, ReverseConfig{Strict: true}, "test.md")
+	if err != nil {
+		t.Fatalf("Reverse failed: %v", err)
+	}
+
+	adfStr := string(res.ADF)
+	if strings.Contains(adfStr, "\"type\":\"date\"") {
+		t.Fatalf("expected plain ISO date text to stay text, got %s", adfStr)
+	}
+	if !strings.Contains(adfStr, "\"text\":\"Release date: 2026-03-09\"") {
+		t.Fatalf("expected plain ISO date text to remain visible text, got %s", adfStr)
+	}
+}

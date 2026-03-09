@@ -296,7 +296,216 @@ func TestWorkflow_AgenticFullCycle(t *testing.T) {
 	fmt.Printf("Agentic full cycle succeeded\n")
 }
 
-func TestWorkflow_MermaidPushPreservesCodeBlock(t *testing.T) {
+func TestWorkflow_CrossSpaceLinkPreservation(t *testing.T) {
+	e2eCfg := requireE2EConfig(t)
+	cfg, err := config.Load("")
+	if err != nil {
+		t.Fatalf("Load config: %v", err)
+	}
+
+	client, err := confluence.NewClient(confluence.ClientConfig{
+		BaseURL:  cfg.Domain,
+		Email:    cfg.Email,
+		APIToken: cfg.APIToken,
+	})
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+
+	rootDir := projectRootFromWD(t)
+	confBin := confBinaryForOS(rootDir)
+
+	tmpDir, err := os.MkdirTemp("", "conf-e2e-cross-space-*")
+	if err != nil {
+		t.Fatalf("MkdirTemp: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	runCMS := func(args ...string) string {
+		cmd := exec.Command(confBin, args...)
+		cmd.Dir = tmpDir
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("Command conf %v failed: %v\n%s", args, err, string(out))
+		}
+		return string(out)
+	}
+
+	runCMS("init")
+	runCMS("pull", e2eCfg.PrimarySpaceKey, "--yes", "--non-interactive")
+	runCMS("pull", e2eCfg.SecondarySpaceKey, "--yes", "--non-interactive")
+
+	primaryDir := findPulledSpaceDirBySpaceKey(t, tmpDir, e2eCfg.PrimarySpaceKey)
+	secondaryDir := findPulledSpaceDirBySpaceKey(t, tmpDir, e2eCfg.SecondarySpaceKey)
+
+	targetPath, targetPageID := createE2EScratchPageWithBody(t, secondaryDir, client, runCMS, "Cross Space Target", "## Section A\n\nRemote cross-space target.\n")
+	sourceTitle := "Cross Space Source"
+	sourceBody := "[Cross Space](" + encodeMarkdownRelPath(relativeMarkdownPath(t, primaryDir, targetPath)) + "#section-a)\n"
+	_, sourcePageID := createE2EScratchPageWithBody(t, primaryDir, client, runCMS, sourceTitle, sourceBody)
+
+	report := runConfJSONReport(t, confBin, tmpDir, "pull", e2eCfg.PrimarySpaceKey, "--force", "--yes", "--non-interactive", "--report-json")
+	if !report.Success {
+		t.Fatalf("pull report should be successful: %+v", report)
+	}
+
+	sourcePath := findMarkdownByPageID(t, primaryDir, sourcePageID)
+	doc, err := fs.ReadMarkdownDocument(sourcePath)
+	if err != nil {
+		t.Fatalf("ReadMarkdown: %v", err)
+	}
+
+	expectedHref := cfg.Domain + "/wiki/pages/viewpage.action?pageId=" + targetPageID + "#section-a"
+	if !strings.Contains(doc.Body, "[Cross Space]("+expectedHref+")") {
+		t.Fatalf("expected preserved cross-space href %q, body=\n%s", expectedHref, doc.Body)
+	}
+
+	diag := findReportDiagnostic(report.Diagnostics, "CROSS_SPACE_LINK_PRESERVED")
+	if diag == nil {
+		t.Fatalf("expected CROSS_SPACE_LINK_PRESERVED diagnostic, got %+v", report.Diagnostics)
+	}
+	if diag.Category != "preserved_external_link" {
+		t.Fatalf("diagnostic category = %q, want preserved_external_link", diag.Category)
+	}
+	if diag.ActionRequired {
+		t.Fatalf("diagnostic should not require action: %+v", diag)
+	}
+}
+
+func TestWorkflow_TaskListRoundTrip(t *testing.T) {
+	e2eCfg := requireE2EConfig(t)
+	spaceKey := e2eCfg.PrimarySpaceKey
+
+	ctx := context.Background()
+	cfg, err := config.Load("")
+	if err != nil {
+		t.Fatalf("Load config: %v", err)
+	}
+
+	client, err := confluence.NewClient(confluence.ClientConfig{
+		BaseURL:  cfg.Domain,
+		Email:    cfg.Email,
+		APIToken: cfg.APIToken,
+	})
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+
+	rootDir := projectRootFromWD(t)
+	confBin := confBinaryForOS(rootDir)
+
+	tmpDir, err := os.MkdirTemp("", "conf-e2e-tasklist-*")
+	if err != nil {
+		t.Fatalf("MkdirTemp: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	runCMS := func(args ...string) string {
+		cmd := exec.Command(confBin, args...)
+		cmd.Dir = tmpDir
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("Command conf %v failed: %v\n%s", args, err, string(out))
+		}
+		return string(out)
+	}
+
+	runCMS("init")
+	runCMS("pull", spaceKey, "--yes", "--non-interactive")
+
+	spaceDir := findPulledSpaceDirBySpaceKey(t, tmpDir, spaceKey)
+	body := "- [ ] Open migration checklist\n- [x] Verify round-trip coverage\n"
+	filePath, pageID := createE2EScratchPageWithBody(t, spaceDir, client, runCMS, "Task List E2E", body)
+
+	waitForPageADF(t, ctx, client, pageID, func(adf []byte) bool {
+		adfStr := string(adf)
+		return strings.Contains(adfStr, "\"type\":\"taskList\"") &&
+			strings.Contains(adfStr, "\"type\":\"taskItem\"") &&
+			strings.Contains(adfStr, "\"state\":\"TODO\"") &&
+			strings.Contains(adfStr, "\"state\":\"DONE\"")
+	})
+
+	runCMS("pull", filePath, "--yes", "--non-interactive")
+
+	filePath = findMarkdownByPageID(t, spaceDir, pageID)
+	doc, err := fs.ReadMarkdownDocument(filePath)
+	if err != nil {
+		t.Fatalf("ReadMarkdown: %v", err)
+	}
+	if !strings.Contains(doc.Body, "- [ ] Open migration checklist") {
+		t.Fatalf("expected unchecked task after round-trip, body=\n%s", doc.Body)
+	}
+	if !strings.Contains(doc.Body, "- [x] Verify round-trip coverage") {
+		t.Fatalf("expected checked task after round-trip, body=\n%s", doc.Body)
+	}
+}
+
+func TestWorkflow_PlantUMLRoundTrip(t *testing.T) {
+	e2eCfg := requireE2EConfig(t)
+	spaceKey := e2eCfg.PrimarySpaceKey
+
+	ctx := context.Background()
+	cfg, err := config.Load("")
+	if err != nil {
+		t.Fatalf("Load config: %v", err)
+	}
+
+	client, err := confluence.NewClient(confluence.ClientConfig{
+		BaseURL:  cfg.Domain,
+		Email:    cfg.Email,
+		APIToken: cfg.APIToken,
+	})
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+
+	rootDir := projectRootFromWD(t)
+	confBin := confBinaryForOS(rootDir)
+
+	tmpDir, err := os.MkdirTemp("", "conf-e2e-plantuml-*")
+	if err != nil {
+		t.Fatalf("MkdirTemp: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	runCMS := func(args ...string) string {
+		cmd := exec.Command(confBin, args...)
+		cmd.Dir = tmpDir
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("Command conf %v failed: %v\n%s", args, err, string(out))
+		}
+		return string(out)
+	}
+
+	runCMS("init")
+	runCMS("pull", spaceKey, "--yes", "--non-interactive")
+
+	spaceDir := findPulledSpaceDirBySpaceKey(t, tmpDir, spaceKey)
+	body := "::: { .adf-extension key=\"plantumlcloud\" filename=\"architecture.puml\" }\n```puml\n@startuml\nA -> B: Hello\n@enduml\n```\n:::\n"
+	filePath, pageID := createE2EScratchPageWithBody(t, spaceDir, client, runCMS, "PlantUML E2E", body)
+
+	waitForPageADF(t, ctx, client, pageID, func(adf []byte) bool {
+		adfStr := string(adf)
+		return strings.Contains(adfStr, "\"extensionKey\":\"plantumlcloud\"") &&
+			strings.Contains(adfStr, "\"filename\":{\"value\":\"architecture.puml\"")
+	})
+
+	runCMS("pull", filePath, "--yes", "--non-interactive")
+
+	filePath = findMarkdownByPageID(t, spaceDir, pageID)
+	doc, err := fs.ReadMarkdownDocument(filePath)
+	if err != nil {
+		t.Fatalf("ReadMarkdown: %v", err)
+	}
+	if !strings.Contains(doc.Body, "key=\"plantumlcloud\"") {
+		t.Fatalf("expected plantuml extension wrapper after round-trip, body=\n%s", doc.Body)
+	}
+	if !strings.Contains(doc.Body, "```puml") || !strings.Contains(doc.Body, "A -> B: Hello") {
+		t.Fatalf("expected plantuml code block after round-trip, body=\n%s", doc.Body)
+	}
+}
+
+func TestWorkflow_MermaidWarningAndRoundTrip(t *testing.T) {
 	e2eCfg := requireE2EConfig(t)
 	spaceKey := e2eCfg.PrimarySpaceKey
 
@@ -337,7 +546,7 @@ func TestWorkflow_MermaidPushPreservesCodeBlock(t *testing.T) {
 	runCMS("init")
 	runCMS("pull", spaceKey, "--yes", "--non-interactive")
 
-	spaceDir := findPulledSpaceDir(t, tmpDir)
+	spaceDir := findPulledSpaceDirBySpaceKey(t, tmpDir, spaceKey)
 	stamp := time.Now().UTC().Format("20060102T150405")
 	title := "Mermaid E2E " + stamp
 	filePath := filepath.Join(spaceDir, "Mermaid-E2E-"+stamp+".md")
@@ -348,7 +557,10 @@ func TestWorkflow_MermaidPushPreservesCodeBlock(t *testing.T) {
 		t.Fatalf("WriteMarkdown: %v", err)
 	}
 
-	runCMS("validate", filePath)
+	validateOut := runCMS("validate", filePath)
+	if !strings.Contains(validateOut, "MERMAID_PRESERVED_AS_CODEBLOCK") {
+		t.Fatalf("expected Mermaid validate warning, got:\n%s", validateOut)
+	}
 	runCMS("push", filePath, "--on-conflict=cancel", "--yes", "--non-interactive")
 
 	doc, err := fs.ReadMarkdownDocument(filePath)
@@ -366,10 +578,12 @@ func TestWorkflow_MermaidPushPreservesCodeBlock(t *testing.T) {
 	})
 
 	deadline := time.Now().Add(30 * time.Second)
+	mermaidPublished := false
 	for {
 		page, err := client.GetPage(ctx, pageID)
 		if err == nil && adfContainsCodeBlockLanguage(page.BodyADF, "mermaid") {
-			return
+			mermaidPublished = true
+			break
 		}
 		if time.Now().After(deadline) {
 			if err != nil {
@@ -378,6 +592,82 @@ func TestWorkflow_MermaidPushPreservesCodeBlock(t *testing.T) {
 			t.Fatalf("remote ADF for page %s did not contain Mermaid codeBlock before timeout: %s", pageID, string(page.BodyADF))
 		}
 		time.Sleep(2 * time.Second)
+	}
+	if !mermaidPublished {
+		t.Fatalf("remote ADF for page %s did not contain Mermaid codeBlock before timeout", pageID)
+	}
+
+	runCMS("pull", filePath, "--yes", "--non-interactive")
+
+	filePath = findMarkdownByPageID(t, spaceDir, pageID)
+	doc, err = fs.ReadMarkdownDocument(filePath)
+	if err != nil {
+		t.Fatalf("ReadMarkdown after pull: %v", err)
+	}
+	if !strings.Contains(doc.Body, "```mermaid") || !strings.Contains(doc.Body, "A --> B") {
+		t.Fatalf("expected Mermaid fence after round-trip, body=\n%s", doc.Body)
+	}
+}
+
+func TestWorkflow_PlainISODateTextStability(t *testing.T) {
+	e2eCfg := requireE2EConfig(t)
+	spaceKey := e2eCfg.PrimarySpaceKey
+
+	ctx := context.Background()
+	cfg, err := config.Load("")
+	if err != nil {
+		t.Fatalf("Load config: %v", err)
+	}
+
+	client, err := confluence.NewClient(confluence.ClientConfig{
+		BaseURL:  cfg.Domain,
+		Email:    cfg.Email,
+		APIToken: cfg.APIToken,
+	})
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+
+	rootDir := projectRootFromWD(t)
+	confBin := confBinaryForOS(rootDir)
+
+	tmpDir, err := os.MkdirTemp("", "conf-e2e-date-*")
+	if err != nil {
+		t.Fatalf("MkdirTemp: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	runCMS := func(args ...string) string {
+		cmd := exec.Command(confBin, args...)
+		cmd.Dir = tmpDir
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("Command conf %v failed: %v\n%s", args, err, string(out))
+		}
+		return string(out)
+	}
+
+	runCMS("init")
+	runCMS("pull", spaceKey, "--yes", "--non-interactive")
+
+	spaceDir := findPulledSpaceDirBySpaceKey(t, tmpDir, spaceKey)
+	filePath, pageID := createE2EScratchPageWithBody(t, spaceDir, client, runCMS, "Plain Date E2E", "Release date: 2026-03-09\n")
+
+	waitForPageADF(t, ctx, client, pageID, func(adf []byte) bool {
+		adfStr := string(adf)
+		return !strings.Contains(adfStr, "\"type\":\"date\"") &&
+			strings.Contains(adfStr, "\"text\":\"Release date: 2026-03-09\"")
+	})
+
+	runCMS("pull", filePath, "--yes", "--non-interactive")
+
+	filePath = findMarkdownByPageID(t, spaceDir, pageID)
+	doc, err := fs.ReadMarkdownDocument(filePath)
+	if err != nil {
+		t.Fatalf("ReadMarkdown after pull: %v", err)
+	}
+	if !strings.Contains(doc.Body, "Release date: 2026-03-09") {
+		t.Fatalf("expected plain ISO date text after round-trip, body=\n%s", doc.Body)
 	}
 }
 
@@ -763,6 +1053,32 @@ func findPulledSpaceDir(t *testing.T, workspaceRoot string) string {
 	return ""
 }
 
+func findPulledSpaceDirBySpaceKey(t *testing.T, workspaceRoot, spaceKey string) string {
+	t.Helper()
+
+	entries, err := os.ReadDir(workspaceRoot)
+	if err != nil {
+		t.Fatalf("ReadDir(%s): %v", workspaceRoot, err)
+	}
+
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		candidate := filepath.Join(workspaceRoot, entry.Name())
+		state, err := fs.LoadState(candidate)
+		if err != nil {
+			continue
+		}
+		if strings.EqualFold(strings.TrimSpace(state.SpaceKey), strings.TrimSpace(spaceKey)) {
+			return candidate
+		}
+	}
+
+	t.Fatalf("could not find pulled space directory for %s under %s", spaceKey, workspaceRoot)
+	return ""
+}
+
 func findMarkdownByPageID(t *testing.T, spaceDir, pageID string) string {
 	t.Helper()
 
@@ -836,15 +1152,18 @@ func prepareE2EConflictTarget(t *testing.T, spaceDir string, client *confluence.
 }
 
 func createE2EScratchPage(t *testing.T, spaceDir string, client *confluence.Client, runCMS func(args ...string) string, titlePrefix string) (string, string) {
+	return createE2EScratchPageWithBody(t, spaceDir, client, runCMS, titlePrefix, "Scratch page for Confluence E2E coverage.\n")
+}
+
+func createE2EScratchPageWithBody(t *testing.T, spaceDir string, client *confluence.Client, runCMS func(args ...string) string, titlePrefix, body string) (string, string) {
 	t.Helper()
 
 	stamp := time.Now().UTC().Format("20060102T150405") + fmt.Sprintf("-%09d", time.Now().UTC().Nanosecond())
 	title := fmt.Sprintf("%s %s", titlePrefix, stamp)
-	parentDir := filepath.Dir(findFirstMarkdownFile(t, spaceDir))
-	filePath := filepath.Join(parentDir, sanitizeE2EFileStem(title)+".md")
+	filePath := filepath.Join(spaceDir, sanitizeE2EFileStem(title)+".md")
 	if err := fs.WriteMarkdownDocument(filePath, fs.MarkdownDocument{
 		Frontmatter: fs.Frontmatter{Title: title},
-		Body:        "Scratch page for Confluence E2E coverage.\n",
+		Body:        body,
 	}); err != nil {
 		t.Fatalf("WriteMarkdown scratch page: %v", err)
 	}
@@ -869,6 +1188,32 @@ func createE2EScratchPage(t *testing.T, spaceDir string, client *confluence.Clie
 	return filePath, pageID
 }
 
+func runConfJSONReport(t *testing.T, confBin, workdir string, args ...string) commandRunReport {
+	t.Helper()
+
+	cmd := exec.Command(confBin, args...)
+	cmd.Dir = workdir
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("Command conf %v failed: %v\n%s", args, err, string(out))
+	}
+
+	var report commandRunReport
+	if err := json.Unmarshal(out, &report); err != nil {
+		t.Fatalf("parse JSON report for conf %v: %v\n%s", args, err, string(out))
+	}
+	return report
+}
+
+func findReportDiagnostic(diags []commandRunReportDiagnostic, code string) *commandRunReportDiagnostic {
+	for i := range diags {
+		if strings.TrimSpace(diags[i].Code) == strings.TrimSpace(code) {
+			return &diags[i]
+		}
+	}
+	return nil
+}
+
 func sanitizeE2EFileStem(value string) string {
 	replacer := strings.NewReplacer(
 		" ", "-",
@@ -878,6 +1223,20 @@ func sanitizeE2EFileStem(value string) string {
 		".", "-",
 	)
 	return replacer.Replace(value)
+}
+
+func relativeMarkdownPath(t *testing.T, sourceDir, targetPath string) string {
+	t.Helper()
+
+	relPath, err := filepath.Rel(sourceDir, targetPath)
+	if err != nil {
+		t.Fatalf("filepath.Rel(%s, %s): %v", sourceDir, targetPath, err)
+	}
+	return filepath.ToSlash(relPath)
+}
+
+func encodeMarkdownRelPath(path string) string {
+	return strings.ReplaceAll(path, " ", "%20")
 }
 
 func waitForPageADF(t *testing.T, ctx context.Context, client *confluence.Client, pageID string, predicate func(adf []byte) bool) confluence.Page {
