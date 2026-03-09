@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/charmbracelet/huh"
+	"github.com/rgonek/confluence-markdown-sync/internal/git"
 	"github.com/rgonek/confluence-markdown-sync/internal/fs"
 )
 
@@ -52,10 +53,87 @@ func applyAndDropStash(repoRoot, stashRef, scopePath string, in io.Reader, out i
 			"your workspace is currently in a syncing state and could not restore local changes automatically. finish reconciling pending files, then run pull again",
 		)
 	}
+	if err := preserveLostTrackedStashChanges(repoRoot, stashRef, scopePath, out); err != nil {
+		return err
+	}
 	if _, err := runGit(repoRoot, "stash", "drop", stashRef); err != nil {
 		return fmt.Errorf("local changes were restored, but cleanup could not complete automatically")
 	}
 	return nil
+}
+
+func preserveLostTrackedStashChanges(repoRoot, stashRef, scopePath string, out io.Writer) error {
+	client := &git.Client{RootDir: repoRoot}
+	stashPaths, err := listStashPaths(client, stashRef, scopePath)
+	if err != nil {
+		return nil
+	}
+	untrackedSet, err := listStashUntrackedPathSet(client, stashRef, scopePath)
+	if err != nil {
+		return nil
+	}
+
+	for _, repoPath := range stashPaths {
+		if _, untracked := untrackedSet[repoPath]; untracked {
+			continue
+		}
+		if !strings.HasSuffix(strings.ToLower(repoPath), ".md") {
+			continue
+		}
+
+		stashRaw, err := runGit(repoRoot, "show", fmt.Sprintf("%s:%s", stashRef, repoPath))
+		if err != nil {
+			continue
+		}
+
+		absPath := filepath.Join(repoRoot, filepath.FromSlash(repoPath))
+		workingRaw, readErr := os.ReadFile(absPath) //nolint:gosec // repoPath is repo-relative and validated by git
+		if readErr == nil && string(workingRaw) == stashRaw {
+			continue
+		}
+		if gitPathHasWorkingTreeChanges(repoRoot, repoPath) {
+			continue
+		}
+
+		backupPath, backupErr := writeStashBackupCopy(repoRoot, stashRef, repoPath, "My Local Changes")
+		if backupErr != nil {
+			return fmt.Errorf("preserve local backup for %s: %w", repoPath, backupErr)
+		}
+		_, _ = fmt.Fprintf(out, "Saved local edits for %q as %q because automatic pull-merge could not reapply them cleanly.\n", repoPath, backupPath)
+	}
+
+	return nil
+}
+
+func writeStashBackupCopy(repoRoot, stashRef, repoPath, label string) (string, error) {
+	localRaw, err := runGit(repoRoot, "show", fmt.Sprintf("%s:%s", stashRef, repoPath))
+	if err != nil {
+		return "", err
+	}
+
+	backupRepoPath, err := makeConflictBackupPath(repoRoot, repoPath, label)
+	if err != nil {
+		return "", err
+	}
+	backupAbsPath := filepath.Join(repoRoot, filepath.FromSlash(backupRepoPath))
+	if err := os.MkdirAll(filepath.Dir(backupAbsPath), 0o750); err != nil {
+		return "", err
+	}
+	if err := os.WriteFile(backupAbsPath, []byte(localRaw), 0o600); err != nil {
+		return "", err
+	}
+	return backupRepoPath, nil
+}
+
+func gitPathHasWorkingTreeChanges(repoRoot, repoPath string) bool {
+	cmd := exec.Command("git", "diff", "--quiet", "--", repoPath) //nolint:gosec // repo path is git-controlled
+	cmd.Dir = repoRoot
+	err := cmd.Run()
+	if err == nil {
+		return false
+	}
+	var exitErr *exec.ExitError
+	return errors.As(err, &exitErr) && exitErr.ExitCode() == 1
 }
 
 func handlePullConflict(repoRoot, stashRef, scopePath string, in io.Reader, out io.Writer) error {

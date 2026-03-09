@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/rgonek/confluence-markdown-sync/internal/confluence"
@@ -115,6 +116,55 @@ func TestEnsureADFMediaCollection_EnrichesPublishedAttachmentMetadata(t *testing
 	wantJSON, _ := json.Marshal(wantObj)
 	if string(gotJSON) != string(wantJSON) {
 		t.Fatalf("got  %s\nwant %s", string(gotJSON), string(wantJSON))
+	}
+}
+
+func TestEnsureADFMediaCollection_DropsInvalidRenderIDWhenOnlyAttachmentIDIsKnown(t *testing.T) {
+	adf := `{"version":1,"type":"doc","content":[{"type":"paragraph","content":[{"type":"mediaInline","attrs":{"id":"att-1"}}]}]}`
+
+	got, err := ensureADFMediaCollection([]byte(adf), "123", map[string]publishedAttachmentRef{
+		"assets/123/manual.pdf": {
+			AttachmentID: "att-1",
+			PageID:       "123",
+			Filename:     "manual.pdf",
+			MediaType:    "file",
+		},
+	})
+	if err != nil {
+		t.Fatalf("ensureADFMediaCollection() error: %v", err)
+	}
+
+	gotStr := string(got)
+	if strings.Contains(gotStr, `"id":"att-1"`) {
+		t.Fatalf("expected render id to be removed when only attachment id is known, got %s", gotStr)
+	}
+	if !strings.Contains(gotStr, `"attachmentId":"att-1"`) {
+		t.Fatalf("expected attachmentId metadata to remain, got %s", gotStr)
+	}
+}
+
+func TestEnsureADFMediaCollection_SplitsLiteralISODateTextNodes(t *testing.T) {
+	adf := `{"version":1,"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"Release date: 2026-03-09"}]}]}`
+
+	got, err := ensureADFMediaCollection([]byte(adf), "123", nil)
+	if err != nil {
+		t.Fatalf("ensureADFMediaCollection() error: %v", err)
+	}
+
+	gotStr := string(got)
+	if strings.Contains(gotStr, `"type":"date"`) {
+		t.Fatalf("did not expect date node in post-processed ADF, got %s", gotStr)
+	}
+	for _, expected := range []string{
+		`"text":"Release date: "`,
+		`"text":"2026"`,
+		`"text":"‑"`,
+		`"text":"03"`,
+		`"text":"09"`,
+	} {
+		if !strings.Contains(gotStr, expected) {
+			t.Fatalf("expected post-processed ADF to contain %s, got %s", expected, gotStr)
+		}
 	}
 }
 

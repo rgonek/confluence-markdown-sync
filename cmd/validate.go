@@ -114,7 +114,7 @@ func runValidateCommand(cmd *cobra.Command, target config.Target) (runErr error)
 }
 
 func runValidateTargetWithContext(ctx context.Context, out io.Writer, target config.Target) error {
-	_, err := runValidateTargetWithContextReport(ctx, out, target)
+	_, err := runValidateTargetWithContextReportWithOverride(ctx, out, target, "")
 	return err
 }
 
@@ -136,18 +136,22 @@ func runPushValidation(ctx context.Context, out io.Writer, target config.Target,
 		return err
 	}
 
-	if err := runValidateTargetWithContext(ctx, out, validationTarget); err != nil {
+	if _, err := runValidateTargetWithContextReportWithOverride(ctx, out, validationTarget, spaceDir); err != nil {
 		return fmt.Errorf("%s: %w", failurePrefix, err)
 	}
 	return nil
 }
 
 func runValidateTargetWithContextReport(ctx context.Context, out io.Writer, target config.Target) (validateCommandResult, error) {
+	return runValidateTargetWithContextReportWithOverride(ctx, out, target, "")
+}
+
+func runValidateTargetWithContextReportWithOverride(ctx context.Context, out io.Writer, target config.Target, fileSpaceDirOverride string) (validateCommandResult, error) {
 	if err := ensureWorkspaceSyncReady("validate"); err != nil {
 		return validateCommandResult{}, err
 	}
 
-	targetCtx, err := resolveValidateTargetContext(target)
+	targetCtx, err := resolveValidateTargetContext(target, fileSpaceDirOverride)
 	if err != nil {
 		return validateCommandResult{}, err
 	}
@@ -248,7 +252,7 @@ func runValidateTargetWithContextReport(ctx context.Context, out io.Writer, targ
 	return result, nil
 }
 
-func resolveValidateTargetContext(target config.Target) (validateTargetContext, error) {
+func resolveValidateTargetContext(target config.Target, fileSpaceDirOverride string) (validateTargetContext, error) {
 	if target.IsFile() {
 		abs, err := filepath.Abs(target.Value)
 		if err != nil {
@@ -258,9 +262,14 @@ func resolveValidateTargetContext(target config.Target) (validateTargetContext, 
 			return validateTargetContext{}, fmt.Errorf("target file %s: %w", target.Value, err)
 		}
 
+		spaceDir := strings.TrimSpace(fileSpaceDirOverride)
+		if spaceDir == "" {
+			spaceDir = findSpaceDirFromFile(abs, "")
+		}
+
 		return validateTargetContext{
-			spaceDir: findSpaceDirFromFile(abs, ""),
-			spaceKey: resolveValidateFileSpaceKey(abs),
+			spaceDir: spaceDir,
+			spaceKey: resolveValidateFileSpaceKey(abs, spaceDir),
 			files:    []string{abs},
 		}, nil
 	}
@@ -302,8 +311,11 @@ func resolveValidateTargetContext(target config.Target) (validateTargetContext, 
 	return validateTargetContext{spaceDir: spaceDir, spaceKey: initialCtx.spaceKey, files: files}, nil
 }
 
-func resolveValidateFileSpaceKey(filePath string) string {
-	spaceDir := findSpaceDirFromFile(filePath, "")
+func resolveValidateFileSpaceKey(filePath, fallbackSpaceDir string) string {
+	spaceDir := strings.TrimSpace(fallbackSpaceDir)
+	if spaceDir == "" {
+		spaceDir = findSpaceDirFromFile(filePath, "")
+	}
 	state, err := fs.LoadState(spaceDir)
 	if err == nil {
 		if key := strings.TrimSpace(state.SpaceKey); key != "" {

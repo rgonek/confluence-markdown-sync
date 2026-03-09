@@ -268,3 +268,88 @@ func TestPull_ResolvesFileIDToAttachmentIDForDownloadedAssetPaths(t *testing.T) 
 		t.Fatalf("attachment index = %q, want att-real", got)
 	}
 }
+
+func TestPull_ResolvesFileIDOnlyMediaNodesToLocalMarkdownAssets(t *testing.T) {
+	tmpDir := t.TempDir()
+	spaceDir := filepath.Join(tmpDir, "ENG")
+	if err := os.MkdirAll(spaceDir, 0o750); err != nil {
+		t.Fatalf("mkdir space: %v", err)
+	}
+
+	adf := map[string]any{
+		"version": 1,
+		"type":    "doc",
+		"content": []any{
+			map[string]any{
+				"type": "paragraph",
+				"content": []any{
+					map[string]any{
+						"type": "mediaInline",
+						"attrs": map[string]any{
+							"id":         "file-image",
+							"collection": "contentId-1",
+							"type":       "image",
+						},
+					},
+					map[string]any{
+						"type": "text",
+						"text": " ",
+					},
+					map[string]any{
+						"type": "mediaInline",
+						"attrs": map[string]any{
+							"id":         "file-doc",
+							"collection": "contentId-1",
+							"type":       "file",
+						},
+					},
+				},
+			},
+		},
+	}
+
+	fake := &fakePullRemote{
+		space: confluence.Space{ID: "space-1", Key: "ENG"},
+		pages: []confluence.Page{{ID: "1", SpaceID: "space-1", Title: "Page 1"}},
+		pagesByID: map[string]confluence.Page{
+			"1": {ID: "1", Title: "Page 1", BodyADF: rawJSON(t, adf)},
+		},
+		attachments: map[string][]byte{
+			"att-image": []byte("png"),
+			"att-doc":   []byte("pdf"),
+		},
+		attachmentsByPage: map[string][]confluence.Attachment{
+			"1": {
+				{ID: "att-image", FileID: "file-image", PageID: "1", Filename: "diagram.png"},
+				{ID: "att-doc", FileID: "file-doc", PageID: "1", Filename: "manual.txt"},
+			},
+		},
+	}
+
+	result, err := Pull(context.Background(), fake, PullOptions{
+		SpaceKey: "ENG",
+		SpaceDir: spaceDir,
+	})
+	if err != nil {
+		t.Fatalf("Pull() unexpected error: %v", err)
+	}
+
+	pagePath := filepath.Join(spaceDir, "Page-1.md")
+	docRaw, err := os.ReadFile(pagePath) //nolint:gosec // test path is under t.TempDir
+	if err != nil {
+		t.Fatalf("read pulled markdown: %v", err)
+	}
+	docBody := string(docRaw)
+	if !strings.Contains(docBody, "assets/1/att-image-diagram.png") {
+		t.Fatalf("expected image asset link in markdown, got:\n%s", docBody)
+	}
+	if !strings.Contains(docBody, "assets/1/att-doc-manual.txt") {
+		t.Fatalf("expected file asset link in markdown, got:\n%s", docBody)
+	}
+	if got := strings.TrimSpace(result.State.AttachmentIndex["assets/1/att-image-diagram.png"]); got != "att-image" {
+		t.Fatalf("image attachment index = %q, want att-image", got)
+	}
+	if got := strings.TrimSpace(result.State.AttachmentIndex["assets/1/att-doc-manual.txt"]); got != "att-doc" {
+		t.Fatalf("file attachment index = %q, want att-doc", got)
+	}
+}

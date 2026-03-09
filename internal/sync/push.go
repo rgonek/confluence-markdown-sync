@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/rgonek/confluence-markdown-sync/internal/confluence"
 	"github.com/rgonek/confluence-markdown-sync/internal/converter"
@@ -143,7 +144,7 @@ func Push(ctx context.Context, remote PushRemote, opts PushOptions) (PushResult,
 
 		switch change.Type {
 		case PushChangeDelete:
-			commit, err := pushDeletePage(ctx, remote, opts, state, remotePageByID, relPath, &diagnostics)
+			commit, err := pushDeletePage(ctx, remote, opts, state, attachmentIDByPath, remotePageByID, relPath, &diagnostics)
 			if err != nil {
 				if !opts.DryRun {
 					cleanupPendingPrecreatedPages(ctx, remote, pendingPrecreatedPages, &diagnostics)
@@ -212,6 +213,7 @@ func pushDeletePage(
 	remote PushRemote,
 	opts PushOptions,
 	state fs.SpaceState,
+	attachmentIDByPath map[string]string,
 	remotePageByID map[string]confluence.Page,
 	relPath string,
 	diagnostics *[]PushDiagnostic,
@@ -287,7 +289,13 @@ func pushDeletePage(
 				fmt.Sprintf("deleted attachment %s during page removal", strings.TrimSpace(attachmentID)),
 			)
 		}
+		if !opts.DryRun {
+			if err := deleteLocalAssetFile(opts.SpaceDir, assetPath); err != nil {
+				return PushCommitPlan{}, fmt.Errorf("delete local attachment %s: %w", assetPath, err)
+			}
+		}
 		delete(state.AttachmentIndex, assetPath)
+		delete(attachmentIDByPath, assetPath)
 	}
 
 	delete(state.PagePathIndex, relPath)
@@ -310,6 +318,20 @@ func pushDeletePage(
 		URL:         page.WebURL,
 		StagedPaths: stagedPaths,
 	}, nil
+}
+
+func deleteLocalAssetFile(spaceDir, relPath string) error {
+	relPath = normalizeRelPath(relPath)
+	if relPath == "" {
+		return nil
+	}
+
+	absPath := filepath.Join(spaceDir, filepath.FromSlash(relPath))
+	if err := os.Remove(absPath); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	_ = removeEmptyParentDirs(filepath.Dir(absPath), filepath.Join(spaceDir, "assets"))
+	return nil
 }
 
 func pushUpsertPage(
@@ -649,6 +671,11 @@ func pushUpsertPage(
 			"ATTACHMENT_DELETED",
 			fmt.Sprintf("deleted stale attachment %s", attachmentID),
 		)
+		if !opts.DryRun {
+			if err := deleteLocalAssetFile(opts.SpaceDir, stalePath); err != nil {
+				return failWithRollback(fmt.Errorf("delete local stale attachment %s: %w", stalePath, err))
+			}
+		}
 		delete(state.AttachmentIndex, stalePath)
 		delete(attachmentIDByPath, stalePath)
 		touchedAssets = append(touchedAssets, stalePath)
@@ -780,6 +807,24 @@ func pushUpsertPage(
 	if err != nil {
 		return failWithRollback(fmt.Errorf("update page %s: %w", pageID, err))
 	}
+	if len(referencedAssetPaths) > 0 {
+		reconciledPage, reconcileErr := republishUntilMediaResolvable(
+			ctx,
+			remote,
+			space,
+			pageID,
+			updateInput,
+			updatedPage,
+			referencedAssetPaths,
+			attachmentIDByPath,
+			uploadedAttachmentsByPath,
+			opts.DryRun,
+		)
+		if reconcileErr != nil {
+			return failWithRollback(fmt.Errorf("verify published attachment media for %s: %w", relPath, reconcileErr))
+		}
+		updatedPage = reconciledPage
+	}
 	rollback.markContentRestoreRequired()
 
 	if isExistingPage {
@@ -819,4 +864,73 @@ func pushUpsertPage(
 		URL:         updatedPage.WebURL,
 		StagedPaths: stagedPaths,
 	}, nil
+}
+
+func republishUntilMediaResolvable(
+	ctx context.Context,
+	remote PushRemote,
+	space confluence.Space,
+	pageID string,
+	updateInput confluence.PageUpsertInput,
+	updatedPage confluence.Page,
+	referencedAssetPaths []string,
+	attachmentIDByPath map[string]string,
+	uploadedAttachmentsByPath map[string]confluence.Attachment,
+	dryRun bool,
+) (confluence.Page, error) {
+	if dryRun {
+		return updatedPage, nil
+	}
+
+	for attempt := 0; attempt < 5; attempt++ {
+		currentPage, err := remote.GetPage(ctx, pageID)
+		if err != nil {
+			return updatedPage, err
+		}
+		if !pageBodyHasUnknownMediaRefs(currentPage.BodyADF) {
+			return currentPage, nil
+		}
+
+		if err := contextSleep(ctx, time.Duration(attempt+1)*time.Second); err != nil {
+			return updatedPage, err
+		}
+
+		publishedAttachmentRefs, publishedMediaIDByPath, err := resolvePublishedAttachmentRefs(
+			ctx,
+			remote,
+			pageID,
+			referencedAssetPaths,
+			attachmentIDByPath,
+			uploadedAttachmentsByPath,
+		)
+		if err != nil {
+			return updatedPage, err
+		}
+
+		retryADF, err := ensureADFMediaCollection(updateInput.BodyADF, pageID, publishedAttachmentRefs)
+		if err != nil {
+			return updatedPage, err
+		}
+		if len(publishedMediaIDByPath) == 0 {
+			continue
+		}
+
+		retryInput := updateInput
+		retryInput.SpaceID = space.ID
+		retryInput.BodyADF = retryADF
+		retryInput.Version = currentPage.Version + 1
+
+		updatedPage, err = remote.UpdatePage(ctx, pageID, retryInput)
+		if err != nil {
+			return updatedPage, err
+		}
+		updateInput = retryInput
+	}
+
+	return updatedPage, nil
+}
+
+func pageBodyHasUnknownMediaRefs(adf []byte) bool {
+	body := string(adf)
+	return strings.Contains(body, "UNKNOWN_MEDIA_ID") || strings.Contains(body, "Invalid file id -")
 }

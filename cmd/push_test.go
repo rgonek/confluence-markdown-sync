@@ -652,6 +652,10 @@ func (f *cmdFakePushRemote) ListAttachments(_ context.Context, pageID string) ([
 	return nil, nil
 }
 
+func (f *cmdFakePushRemote) GetAttachment(_ context.Context, attachmentID string) (confluence.Attachment, error) {
+	return confluence.Attachment{ID: strings.TrimSpace(attachmentID)}, nil
+}
+
 func (f *cmdFakePushRemote) AddLabels(_ context.Context, pageID string, labels []string) error {
 	return nil
 }

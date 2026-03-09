@@ -159,6 +159,7 @@ func runPushInWorktree(
 					}
 					*stashRef = ""
 				}
+				backupRepoPath, backupContent := captureAutoPullMergeBackup(gitClient.RootDir, target)
 				prevDiscardLocal := flagPullDiscardLocal
 				flagPullDiscardLocal = false
 				pullReport, pullErr := runPullForPush(cmd, target)
@@ -173,6 +174,11 @@ func runPushInWorktree(
 				if pullErr != nil {
 					outcome.ConflictResolution.Status = "failed"
 					return outcome, fmt.Errorf("automatic pull-merge failed: %w", pullErr)
+				}
+				if strings.TrimSpace(backupRepoPath) != "" && len(backupContent) > 0 {
+					if writtenBackup, writeErr := writeAutoPullMergeBackup(gitClient.RootDir, backupRepoPath, backupContent); writeErr == nil && strings.TrimSpace(writtenBackup) != "" {
+						_, _ = fmt.Fprintf(out, "saved local edits from before automatic pull-merge as %q\n", writtenBackup)
+					}
 				}
 				outcome.ConflictResolution.Status = "completed"
 				retryCmd := "conf push"
@@ -291,6 +297,74 @@ func runPushInWorktree(
 	slog.Info("push_sync_result", "space_key", spaceKey, "commit_count", len(result.Commits), "diagnostics", len(result.Diagnostics))
 	outcome.Warnings = append(outcome.Warnings, warnings...)
 	return outcome, nil
+}
+
+func captureAutoPullMergeBackup(repoRoot string, target config.Target) (string, []byte) {
+	if !target.IsFile() {
+		return "", nil
+	}
+
+	absPath, err := filepath.Abs(target.Value)
+	if err != nil {
+		return "", nil
+	}
+	raw, err := os.ReadFile(absPath) //nolint:gosec // target.Value is an explicit user-selected markdown path
+	if err != nil {
+		return "", nil
+	}
+	repoPath, err := filepath.Rel(repoRoot, absPath)
+	if err != nil {
+		return "", nil
+	}
+	return filepath.ToSlash(repoPath), raw
+}
+
+func writeAutoPullMergeBackup(repoRoot, repoPath string, raw []byte) (string, error) {
+	if strings.TrimSpace(repoPath) == "" || len(raw) == 0 {
+		return "", nil
+	}
+
+	backupRepoPath, err := makeConflictBackupPath(repoRoot, repoPath, "My Local Changes")
+	if err != nil {
+		return "", err
+	}
+	backupAbsPath := filepath.Join(repoRoot, filepath.FromSlash(backupRepoPath))
+	if err := os.MkdirAll(filepath.Dir(backupAbsPath), 0o750); err != nil {
+		return "", err
+	}
+	if err := os.WriteFile(backupAbsPath, raw, 0o600); err != nil {
+		return "", err
+	}
+	return backupRepoPath, nil
+}
+
+func createAutoPullMergeBackup(repoRoot, targetFile string) (string, error) {
+	absPath, err := filepath.Abs(targetFile)
+	if err != nil {
+		return "", err
+	}
+	raw, err := os.ReadFile(absPath) //nolint:gosec // targetFile is an explicit in-repo markdown target
+	if err != nil {
+		return "", err
+	}
+
+	repoPath, err := filepath.Rel(repoRoot, absPath)
+	if err != nil {
+		return "", err
+	}
+	repoPath = filepath.ToSlash(repoPath)
+	backupRepoPath, err := makeConflictBackupPath(repoRoot, repoPath, "My Local Changes")
+	if err != nil {
+		return "", err
+	}
+	backupAbsPath := filepath.Join(repoRoot, filepath.FromSlash(backupRepoPath))
+	if err := os.MkdirAll(filepath.Dir(backupAbsPath), 0o750); err != nil {
+		return "", err
+	}
+	if err := os.WriteFile(backupAbsPath, raw, 0o600); err != nil {
+		return "", err
+	}
+	return backupRepoPath, nil
 }
 
 func resolvePushScopePath(client *git.Client, spaceDir string, target config.Target, targetCtx validateTargetContext) (string, error) {

@@ -85,11 +85,16 @@ func collectAttachmentRefs(adfJSON []byte, defaultPageID string) (map[string]att
 		attachmentID := firstString(attrs,
 			"attachmentId",
 			"attachmentID",
+		)
+		renderID := firstString(attrs,
 			"id",
 			"mediaId",
 			"fileId",
 			"fileID",
 		)
+		if attachmentID == "" {
+			attachmentID = renderID
+		}
 		if attachmentID == "" {
 			return
 		}
@@ -106,19 +111,21 @@ func collectAttachmentRefs(adfJSON []byte, defaultPageID string) (map[string]att
 		}
 
 		filename := firstString(attrs, "filename", "fileName", "name", "alt", "title")
-		if filename == "" {
-			filename = "attachment"
-		}
 
 		refKey := attachmentID
 		if isUnknownMediaID(attachmentID) {
-			refKey = fmt.Sprintf("unknown-media-%s-%d", normalizeAttachmentFilename(filename), unknownRefSeq)
+			filenameKey := normalizeAttachmentFilename(filename)
+			if filenameKey == "" {
+				filenameKey = "attachment"
+			}
+			refKey = fmt.Sprintf("unknown-media-%s-%d", filenameKey, unknownRefSeq)
 			unknownRefSeq++
 		}
 
 		out[refKey] = attachmentRef{
 			PageID:       pageID,
 			AttachmentID: attachmentID,
+			RenderID:     renderID,
 			Filename:     filename,
 		}
 	})
@@ -199,7 +206,7 @@ func resolveAttachmentRefsByRemoteMetadata(
 
 		delete(refs, key)
 		ref.AttachmentID = resolvedID
-		if strings.TrimSpace(ref.Filename) == "" {
+		if strings.TrimSpace(ref.Filename) == "" || normalizeAttachmentFilename(ref.Filename) == "attachment" {
 			ref.Filename = strings.TrimSpace(attachment.Filename)
 		}
 		refs[resolvedID] = ref

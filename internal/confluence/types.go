@@ -26,6 +26,7 @@ type Service interface {
 	GetFolder(ctx context.Context, folderID string) (Folder, error)
 	GetPage(ctx context.Context, pageID string) (Page, error)
 	ListAttachments(ctx context.Context, pageID string) ([]Attachment, error)
+	GetAttachment(ctx context.Context, attachmentID string) (Attachment, error)
 	DownloadAttachment(ctx context.Context, attachmentID string, pageID string, out io.Writer) error
 	UploadAttachment(ctx context.Context, input AttachmentUploadInput) (Attachment, error)
 

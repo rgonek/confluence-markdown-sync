@@ -92,6 +92,10 @@ func (f *fakeFolderPushRemote) ListAttachments(_ context.Context, pageID string)
 	return nil, nil
 }
 
+func (f *fakeFolderPushRemote) GetAttachment(_ context.Context, attachmentID string) (confluence.Attachment, error) {
+	return confluence.Attachment{ID: strings.TrimSpace(attachmentID)}, nil
+}
+
 func (f *fakeFolderPushRemote) UploadAttachment(_ context.Context, input confluence.AttachmentUploadInput) (confluence.Attachment, error) {
 	return confluence.Attachment{}, nil
 }
@@ -361,6 +365,18 @@ func (f *rollbackPushRemote) DeletePage(_ context.Context, pageID string, opts c
 
 func (f *rollbackPushRemote) ListAttachments(_ context.Context, pageID string) ([]confluence.Attachment, error) {
 	return append([]confluence.Attachment(nil), f.attachmentsByPage[pageID]...), nil
+}
+
+func (f *rollbackPushRemote) GetAttachment(_ context.Context, attachmentID string) (confluence.Attachment, error) {
+	attachmentID = strings.TrimSpace(attachmentID)
+	for _, attachments := range f.attachmentsByPage {
+		for _, attachment := range attachments {
+			if strings.TrimSpace(attachment.ID) == attachmentID {
+				return attachment, nil
+			}
+		}
+	}
+	return confluence.Attachment{}, confluence.ErrNotFound
 }
 
 func (f *rollbackPushRemote) UploadAttachment(_ context.Context, input confluence.AttachmentUploadInput) (confluence.Attachment, error) {

@@ -178,6 +178,13 @@ func (d *dryRunPushRemote) ListAttachments(ctx context.Context, pageID string) (
 	return d.inner.ListAttachments(ctx, pageID)
 }
 
+func (d *dryRunPushRemote) GetAttachment(ctx context.Context, attachmentID string) (confluence.Attachment, error) {
+	if strings.HasPrefix(attachmentID, "dry-run-") {
+		return confluence.Attachment{ID: attachmentID, FileID: attachmentID}, nil
+	}
+	return d.inner.GetAttachment(ctx, attachmentID)
+}
+
 func (d *dryRunPushRemote) UploadAttachment(ctx context.Context, input confluence.AttachmentUploadInput) (confluence.Attachment, error) {
 	d.printf("[DRY-RUN] UPLOAD ATTACHMENT (POST %s/wiki/rest/api/content/%s/child/attachment)\n", d.domain, input.PageID)
 	d.printf("  Filename: %s\n", input.Filename)

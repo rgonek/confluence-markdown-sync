@@ -328,7 +328,7 @@ func collectLocalStatusChanges(target config.Target, spaceDir, spaceKey string) 
 		return nil, nil, nil, fmt.Errorf("resolve sync baseline: %w", err)
 	}
 
-	targetCtx, err := resolveValidateTargetContext(target)
+	targetCtx, err := resolveValidateTargetContext(target, "")
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("resolve target context: %w", err)
 	}

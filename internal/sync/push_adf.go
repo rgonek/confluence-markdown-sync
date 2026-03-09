@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -36,6 +37,9 @@ func ensureADFMediaCollection(adfJSON []byte, pageID string, refsByPath map[stri
 	}
 
 	modified := walkAndFixMediaNodes(root, pageID, refByID)
+	var dateProtected bool
+	root, dateProtected = protectLiteralISODateText(root, false)
+	modified = modified || dateProtected
 	if !modified {
 		return adfJSON, nil
 	}
@@ -45,6 +49,118 @@ func ensureADFMediaCollection(adfJSON []byte, pageID string, refsByPath map[stri
 		return nil, fmt.Errorf("marshal ADF: %w", err)
 	}
 	return out, nil
+}
+
+var literalISODatePattern = regexp.MustCompile(`\b\d{4}-\d{2}-\d{2}\b`)
+const invisibleDateGuard = "\u2060"
+const nonBreakingDateHyphen = "\u2011"
+
+func protectLiteralISODateText(node any, inCodeBlock bool) (any, bool) {
+	switch typed := node.(type) {
+	case map[string]any:
+		nodeType, _ := typed["type"].(string)
+		nextInCodeBlock := inCodeBlock || nodeType == "codeBlock"
+
+		modified := false
+		for key, value := range typed {
+			updated, changed := protectLiteralISODateText(value, nextInCodeBlock)
+			if changed {
+				typed[key] = updated
+				modified = true
+			}
+		}
+		return typed, modified
+	case []any:
+		modified := false
+		updatedItems := make([]any, 0, len(typed))
+		for _, item := range typed {
+			if !inCodeBlock {
+				if textNode, ok := item.(map[string]any); ok && strings.TrimSpace(stringValue(textNode["type"])) == "text" {
+					textValue := stringValue(textNode["text"])
+					if replacement, changed := splitLiteralISODateTextNode(textNode, textValue); changed {
+						updatedItems = append(updatedItems, replacement...)
+						modified = true
+						continue
+					}
+				}
+			}
+
+			updated, changed := protectLiteralISODateText(item, inCodeBlock)
+			if changed {
+				modified = true
+			}
+			updatedItems = append(updatedItems, updated)
+		}
+		if modified {
+			return updatedItems, true
+		}
+		return typed, false
+	default:
+		return node, false
+	}
+}
+
+func splitLiteralISODateTextNode(node map[string]any, textValue string) ([]any, bool) {
+	matchIndexes := literalISODatePattern.FindAllStringIndex(textValue, -1)
+	if len(matchIndexes) == 0 {
+		return nil, false
+	}
+
+	parts := make([]string, 0, len(matchIndexes)*5+1)
+	last := 0
+	for _, match := range matchIndexes {
+		if match[0] > last {
+			parts = append(parts, textValue[last:match[0]])
+		}
+		parts = append(parts, splitLiteralISODateToken(textValue[match[0]:match[1]])...)
+		last = match[1]
+	}
+	if last < len(textValue) {
+		parts = append(parts, textValue[last:])
+	}
+
+	replacements := make([]any, 0, len(parts))
+	for _, part := range parts {
+		if part == "" {
+			continue
+		}
+		cloned := cloneADFMap(node)
+		cloned["text"] = part
+		replacements = append(replacements, cloned)
+	}
+	if len(replacements) <= 1 {
+		return nil, false
+	}
+	return replacements, true
+}
+
+func splitLiteralISODateToken(value string) []string {
+	parts := strings.Split(value, "-")
+	if len(parts) != 3 {
+		return []string{value}
+	}
+	return []string{parts[0], invisibleDateGuard, nonBreakingDateHyphen, invisibleDateGuard, parts[1], invisibleDateGuard, nonBreakingDateHyphen, invisibleDateGuard, parts[2]}
+}
+
+func cloneADFMap(in map[string]any) map[string]any {
+	out := make(map[string]any, len(in))
+	for key, value := range in {
+		switch typed := value.(type) {
+		case []any:
+			copied := make([]any, len(typed))
+			copy(copied, typed)
+			out[key] = copied
+		case map[string]any:
+			nested := make(map[string]any, len(typed))
+			for nestedKey, nestedValue := range typed {
+				nested[nestedKey] = nestedValue
+			}
+			out[key] = nested
+		default:
+			out[key] = value
+		}
+	}
+	return out
 }
 
 func walkAndFixMediaNodes(node any, pageID string, refByID map[string]publishedAttachmentRef) bool {
@@ -58,9 +174,16 @@ func walkAndFixMediaNodes(node any, pageID string, refByID map[string]publishedA
 				if ref.PageID != "" {
 					resolvedPageID = strings.TrimSpace(ref.PageID)
 				}
-				if ref.MediaID != "" && strings.TrimSpace(stringValue(attrs["id"])) != ref.MediaID {
-					attrs["id"] = ref.MediaID
-					modified = true
+				if ref.MediaID != "" {
+					if strings.TrimSpace(stringValue(attrs["id"])) != ref.MediaID {
+						attrs["id"] = ref.MediaID
+						modified = true
+					}
+				} else if ref.AttachmentID != "" {
+					if _, exists := attrs["id"]; exists {
+						delete(attrs, "id")
+						modified = true
+					}
 				}
 				if ref.AttachmentID != "" && strings.TrimSpace(stringValue(attrs["attachmentId"])) != ref.AttachmentID {
 					attrs["attachmentId"] = ref.AttachmentID

@@ -39,7 +39,7 @@ func TestResolveValidateTargetContext_ResolvesSanitizedSpaceDirectoryByKey(t *te
 
 	chdirRepo(t, repo)
 
-	ctx, err := resolveValidateTargetContext(config.Target{Mode: config.TargetModeSpace, Value: "TD"})
+	ctx, err := resolveValidateTargetContext(config.Target{Mode: config.TargetModeSpace, Value: "TD"}, "")
 	if err != nil {
 		t.Fatalf("resolveValidateTargetContext() error: %v", err)
 	}

@@ -174,6 +174,34 @@ func (c *Client) ListAttachments(ctx context.Context, pageID string) ([]Attachme
 	return attachments, nil
 }
 
+func (c *Client) GetAttachment(ctx context.Context, attachmentID string) (Attachment, error) {
+	attachmentID = strings.TrimSpace(attachmentID)
+	if attachmentID == "" {
+		return Attachment{}, errors.New("attachment ID is required")
+	}
+
+	req, err := c.newRequest(ctx, http.MethodGet, "/wiki/api/v2/attachments/"+url.PathEscape(attachmentID), nil, nil)
+	if err != nil {
+		return Attachment{}, err
+	}
+
+	var payload attachmentDTO
+	if err := c.do(req, &payload); err != nil {
+		if isHTTPStatus(err, http.StatusNotFound) {
+			return Attachment{}, ErrNotFound
+		}
+		return Attachment{}, err
+	}
+
+	return Attachment{
+		ID:        strings.TrimSpace(payload.ID),
+		FileID:    strings.TrimSpace(payload.FileID),
+		Filename:  firstNonEmpty(payload.Title, payload.Filename),
+		MediaType: payload.MediaType,
+		WebURL:    resolveWebURL(c.baseURL, payload.Links.Download),
+	}, nil
+}
+
 // DownloadAttachment downloads attachment bytes by attachment ID.
 func (c *Client) DownloadAttachment(ctx context.Context, attachmentID string, pageID string, out io.Writer) error {
 	id := strings.TrimSpace(attachmentID)

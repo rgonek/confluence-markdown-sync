@@ -278,6 +278,44 @@ func TestPush_UploadsLocalFileLinksAsAttachments(t *testing.T) {
 	}
 }
 
+type publishedAttachmentRefRemote struct {
+	rollbackPushRemote
+	attachments []confluence.Attachment
+}
+
+func (r *publishedAttachmentRefRemote) ListAttachments(_ context.Context, _ string) ([]confluence.Attachment, error) {
+	return append([]confluence.Attachment(nil), r.attachments...), nil
+}
+
+func TestResolvePublishedAttachmentRefs_PrefersUploadFileIDWhenListResultOmitsIt(t *testing.T) {
+	remote := &publishedAttachmentRefRemote{
+		attachments: []confluence.Attachment{
+			{ID: "att-1", PageID: "1", Filename: "manual.pdf"},
+		},
+	}
+
+	refsByPath, mediaIDByPath, err := resolvePublishedAttachmentRefs(
+		context.Background(),
+		remote,
+		"1",
+		[]string{"assets/1/manual.pdf"},
+		map[string]string{"assets/1/manual.pdf": "att-1"},
+		map[string]confluence.Attachment{
+			"assets/1/manual.pdf": {ID: "att-1", FileID: "file-1", PageID: "1", Filename: "manual.pdf"},
+		},
+	)
+	if err != nil {
+		t.Fatalf("resolvePublishedAttachmentRefs() error: %v", err)
+	}
+
+	if got := mediaIDByPath["assets/1/manual.pdf"]; got != "file-1" {
+		t.Fatalf("mediaIDByPath = %q, want file-1", got)
+	}
+	if got := refsByPath["assets/1/manual.pdf"].MediaID; got != "file-1" {
+		t.Fatalf("published media id = %q, want file-1", got)
+	}
+}
+
 func TestPush_UploadsInlineLocalFileLinksWithoutEmbeddedPlaceholder(t *testing.T) {
 	spaceDir := t.TempDir()
 	mdPath := filepath.Join(spaceDir, "root.md")
