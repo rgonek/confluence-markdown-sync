@@ -16,6 +16,14 @@ The system SHALL let operators inspect retained push recovery artifacts without 
 - WHEN the user runs `conf recover`
 - THEN the system SHALL list retained sync branches, snapshot refs, and any recorded failure metadata
 
+#### Scenario: Recover inspection includes suggested next commands
+
+- GIVEN failed push artifacts exist in the repository
+- WHEN the user runs `conf recover`
+- THEN the system SHALL show a concrete inspect command for each retained run
+- AND the system SHALL show a concrete discard command for each retained run
+- AND the system SHALL show the general `conf recover --discard-all --yes` cleanup command
+
 ### Requirement: Recover only discards safe artifacts
 
 The system SHALL prevent accidental deletion of active recovery state.

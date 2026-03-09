@@ -182,9 +182,10 @@ Highlights:
 - isolated sync branch and worktree execution,
 - per-page commit metadata with Confluence trailers,
 - recovery refs retained on failures,
+- failed pushes print concrete `recover`, branch inspection, and cleanup commands for the retained run,
 - space-scoped push, `--preflight`, and `--dry-run` validate the full target space whenever there are in-scope changes,
 - `--preflight` uses the same validation scope and strictness as a real push,
-- `--on-conflict=pull-merge` must preserve local edits via merge/conflict state/recoverable artifacts instead of silently discarding them,
+- `--on-conflict=pull-merge` restores local edits before running `pull` and preserves them via merge results, conflict markers, or retained recovery state instead of silently discarding them,
 - removing tracked Markdown pages archives the corresponding remote page and follow-up pull removes it from tracked local state,
 - archive deletes require long-task completion (`--archive-task-timeout`, `--archive-task-poll-interval`),
 - `--preflight` for a concise local push plan (change summary + validation) without remote writes.

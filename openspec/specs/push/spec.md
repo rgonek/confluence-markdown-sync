@@ -177,6 +177,15 @@ The system SHALL retain enough information to inspect and clean up failed push r
 - THEN the system SHALL retain the snapshot ref and sync branch
 - AND the system SHALL record recovery metadata under `.git/confluence-recovery/`
 
+#### Scenario: Failed push prints concrete recovery commands
+
+- GIVEN a real push fails after snapshot creation
+- WHEN the command exits with retained recovery artifacts
+- THEN the system SHALL print the retained snapshot ref and sync branch
+- AND the system SHALL print concrete next-step commands for `conf recover`
+- AND the system SHALL print a concrete branch-inspection command
+- AND the system SHALL print a concrete cleanup command for the retained recovery run
+
 #### Scenario: Successful push cleans recovery artifacts
 
 - GIVEN a real push completes successfully

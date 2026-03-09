@@ -154,16 +154,13 @@ func runPushInWorktree(
 				slog.Info("push_conflict_resolution", "strategy", OnConflictPullMerge, "action", "run_pull")
 				_, _ = fmt.Fprintf(out, "conflict detected for %s; policy is %s, attempting automatic pull-merge...\n", conflictErr.Path, onConflict)
 				if strings.TrimSpace(*stashRef) != "" {
-					if err := gitClient.StashPop(*stashRef); err != nil {
+					if err := restorePushStash(gitClient, *stashRef, spaceScopePath, nil); err != nil {
 						return outcome, fmt.Errorf("restore local workspace before automatic pull-merge: %w", err)
 					}
 					*stashRef = ""
 				}
-				// During pull-merge, automatically discard local changes for files
-				// that were deleted remotely, so pull can apply those deletions cleanly
-				// instead of warning and skipping them.
 				prevDiscardLocal := flagPullDiscardLocal
-				flagPullDiscardLocal = true
+				flagPullDiscardLocal = false
 				pullReport, pullErr := runPullForPush(cmd, target)
 				outcome.ConflictResolution = &commandRunReportConflictResolution{
 					Policy:               OnConflictPullMerge,

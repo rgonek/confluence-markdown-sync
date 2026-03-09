@@ -50,6 +50,13 @@ When remote versions are ahead:
 
 In non-interactive usage, set one explicitly.
 
+If a real `push` fails after recovery artifacts are created, the CLI prints the next commands to run for:
+
+- listing retained runs with `conf recover`,
+- inspecting the retained sync branch with `git switch sync/<SPACE_KEY>/<UTC timestamp>`,
+- diffing the retained snapshot against that branch, and
+- cleaning up a single run with `conf recover --discard <SPACE_KEY>/<UTC timestamp> --yes`.
+
 ## Pull Conflict Handling Runbook
 
 When `conf pull` restores stashed local changes and Git reports conflicts, interactive mode offers:

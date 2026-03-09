@@ -234,7 +234,14 @@ func TestWorkflow_PushAutoPullMerge(t *testing.T) {
 	if doc.Frontmatter.Version != remotePage.Version+1 {
 		t.Fatalf("Local version should be updated after auto pull-merge: got %d, want %d", doc.Frontmatter.Version, remotePage.Version+1)
 	}
-	// Note: body might have conflict markers or be merged depending on git
+	raw, readErr := os.ReadFile(simplePath)
+	if readErr != nil {
+		t.Fatalf("ReadFile after auto pull-merge: %v", readErr)
+	}
+	bodyText := string(raw)
+	if !strings.Contains(bodyText, "Local change for auto pull-merge test") && !strings.Contains(bodyText, "<<<<<<<") {
+		t.Fatalf("Local edit should survive auto pull-merge via merged content or conflict markers, got:\n%s", bodyText)
+	}
 }
 
 func TestWorkflow_AgenticFullCycle(t *testing.T) {
