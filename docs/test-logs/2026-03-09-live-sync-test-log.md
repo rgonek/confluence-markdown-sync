@@ -1,5 +1,7 @@
 # Live Sync Test Log
 
+This document is the historical evidence from the 2026-03-09 live sandbox verification run. The maintained operator procedure now lives in `docs/automation.md` under the live sandbox release checklist, and the documented baseline warning allowlist is enforced by the live E2E suite.
+
 - Date: 2026-03-09
 - Repository: `D:\Dev\confluence-markdown-sync`
 - Operator: Codex
@@ -298,6 +300,13 @@ Run these plans in order. Each plan is scoped so a fresh session can implement i
 1. Keep sandbox seed content warning-free, or maintain an explicit allowlist of known baseline warnings so regressions stay visible.
 2. Gate production-readiness on passing live-sandbox E2E coverage for the critical write-path scenarios below.
 3. Promote the live test log into a repeatable release checklist so manual verification and automated verification stay aligned.
+
+### Extracted baseline allowlist carried forward into automation
+
+1. `TD2`: page `17727489` with `UNKNOWN_MEDIA_ID_UNRESOLVED`.
+2. `TD2`: `Technical-Documentation/Live-Workflow-Test-2026-03-05/Live-Workflow-Test-2026-03-05.md` unresolved fallback link to `pageId=17530900#Task-list`.
+3. `TD2`: `Technical-Documentation/Live-Workflow-Test-2026-03-05/Checklist-and-Diagrams.md` unresolved media fallback containing `UNKNOWN_MEDIA_ID`.
+4. `SD2`: `Software-Development/Release-Sandbox-2026-03-05.md` unresolved fallback link to `pageId=17334539`.
 
 ## E2E Automation Plan
 

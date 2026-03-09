@@ -298,6 +298,8 @@ Push-specific rules:
 - `--yes` auto-approves safety prompts but does not choose a push conflict strategy.
 - `--non-interactive` must fail fast when a required decision is missing.
 - Safety confirmation is required when an operation affects more than 10 Markdown files or includes delete operations.
+- Repository release verification is run through `make release-check`, which layers `fmt-check`, `lint`, non-E2E tests, and the explicit live sandbox E2E suite.
+- The live sandbox gate checks two operator-facing invariants in addition to the write-path scenarios: the documented baseline diagnostic allowlist stays stable, and end-of-run cleanup parity leaves both `git status` and `conf status` clean.
 
 ## Git And Audit Model
 

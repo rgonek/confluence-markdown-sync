@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -25,6 +26,37 @@ type e2eConfig struct {
 	APIToken          string
 	PrimarySpaceKey   string
 	SecondarySpaceKey string
+}
+
+type e2eExpectedDiagnostic struct {
+	Path            string
+	Code            string
+	MessageContains string
+}
+
+var sandboxBaselineDiagnosticAllowlist = map[string][]e2eExpectedDiagnostic{
+	"TD2": {
+		{
+			Path: "17727489",
+			Code: "UNKNOWN_MEDIA_ID_UNRESOLVED",
+		},
+		{
+			Path:            "Technical-Documentation/Live-Workflow-Test-2026-03-05/Live-Workflow-Test-2026-03-05.md",
+			Code:            "unresolved_reference",
+			MessageContains: "pageId=17530900#Task-list",
+		},
+		{
+			Path:            "Technical-Documentation/Live-Workflow-Test-2026-03-05/Checklist-and-Diagrams.md",
+			MessageContains: "UNKNOWN_MEDIA_ID",
+		},
+	},
+	"SD2": {
+		{
+			Path:            "Software-Development/Release-Sandbox-2026-03-05.md",
+			Code:            "unresolved_reference",
+			MessageContains: "pageId=17334539",
+		},
+	},
 }
 
 func TestWorkflow_ConflictResolution(t *testing.T) {
@@ -294,6 +326,39 @@ func TestWorkflow_AgenticFullCycle(t *testing.T) {
 	runCMS("push", simplePath, "--on-conflict=cancel", "--yes", "--non-interactive")
 
 	fmt.Printf("Agentic full cycle succeeded\n")
+}
+
+func TestWorkflow_SandboxBaselineDiagnosticsAllowlist(t *testing.T) {
+	e2eCfg := requireE2EConfig(t)
+
+	rootDir := projectRootFromWD(t)
+	confBin := confBinaryForOS(rootDir)
+
+	tmpDir, err := os.MkdirTemp("", "conf-e2e-baseline-*")
+	if err != nil {
+		t.Fatalf("MkdirTemp: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	runCMS := func(args ...string) string {
+		cmd := exec.Command(confBin, args...)
+		cmd.Dir = tmpDir
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("Command conf %v failed: %v\n%s", args, err, string(out))
+		}
+		return string(out)
+	}
+
+	runCMS("init")
+
+	for _, spaceKey := range []string{e2eCfg.PrimarySpaceKey, e2eCfg.SecondarySpaceKey} {
+		report := runConfJSONReport(t, confBin, tmpDir, "pull", spaceKey, "--yes", "--non-interactive", "--skip-missing-assets", "--force", "--report-json")
+		if !report.Success {
+			t.Fatalf("baseline pull report for %s should be successful: %+v", spaceKey, report)
+		}
+		assertBaselineDiagnosticsAllowlisted(t, spaceKey, report.Diagnostics)
+	}
 }
 
 func TestWorkflow_CrossSpaceLinkPreservation(t *testing.T) {
@@ -926,6 +991,174 @@ func TestWorkflow_PageDeleteArchivesRemotely(t *testing.T) {
 	}
 }
 
+func TestWorkflow_EndToEndCleanupParity(t *testing.T) {
+	e2eCfg := requireE2EConfig(t)
+
+	ctx := context.Background()
+	cfg, err := config.Load("")
+	if err != nil {
+		t.Fatalf("Load config: %v", err)
+	}
+
+	client, err := confluence.NewClient(confluence.ClientConfig{
+		BaseURL:  cfg.Domain,
+		Email:    cfg.Email,
+		APIToken: cfg.APIToken,
+	})
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+
+	rootDir := projectRootFromWD(t)
+	confBin := confBinaryForOS(rootDir)
+
+	tmpDir, err := os.MkdirTemp("", "conf-e2e-cleanup-*")
+	if err != nil {
+		t.Fatalf("MkdirTemp: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	runCmd := func(name string, args ...string) string {
+		t.Helper()
+		cmd := exec.Command(name, args...)
+		cmd.Dir = tmpDir
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("Command %s %v failed: %v\n%s", name, args, err, string(out))
+		}
+		return string(out)
+	}
+
+	runCMS := func(args ...string) string {
+		return runCmd(confBin, args...)
+	}
+
+	runCMS("init")
+	runCMS("pull", e2eCfg.PrimarySpaceKey, "--yes", "--non-interactive")
+	runCMS("pull", e2eCfg.SecondarySpaceKey, "--yes", "--non-interactive")
+
+	primaryDir := findPulledSpaceDirBySpaceKey(t, tmpDir, e2eCfg.PrimarySpaceKey)
+	secondaryDir := findPulledSpaceDirBySpaceKey(t, tmpDir, e2eCfg.SecondarySpaceKey)
+
+	secondaryTargetPath, secondaryPageID := createE2EScratchPageWithBody(t, secondaryDir, client, runCMS, "Cleanup Parity Cross Space", "Cross-space cleanup target.\n")
+
+	stamp := time.Now().UTC().Format("20060102T150405") + fmt.Sprintf("-%09d", time.Now().UTC().Nanosecond())
+	parentTitle := "Cleanup Parity Parent " + stamp
+	parentStem := sanitizeE2EFileStem(parentTitle)
+	parentDir := filepath.Join(primaryDir, parentStem)
+	parentPath := filepath.Join(parentDir, parentStem+".md")
+	childTitle := "Cleanup Parity Child " + stamp
+	childStem := sanitizeE2EFileStem(childTitle)
+	childPath := filepath.Join(parentDir, childStem+".md")
+	attachmentSourcePath := filepath.Join(parentDir, "cleanup-note-"+stamp+".txt")
+
+	if err := os.MkdirAll(parentDir, 0o750); err != nil {
+		t.Fatalf("MkdirAll parent dir: %v", err)
+	}
+	if err := os.WriteFile(attachmentSourcePath, []byte("cleanup parity attachment\n"), 0o600); err != nil {
+		t.Fatalf("WriteFile attachment: %v", err)
+	}
+	if err := fs.WriteMarkdownDocument(parentPath, fs.MarkdownDocument{
+		Frontmatter: fs.Frontmatter{Title: parentTitle},
+		Body:        "Parent page for cleanup parity verification.\n",
+	}); err != nil {
+		t.Fatalf("WriteMarkdown parent: %v", err)
+	}
+
+	crossSpaceRel := encodeMarkdownRelPath(relativeMarkdownPath(t, filepath.Dir(childPath), secondaryTargetPath))
+	attachmentRel := encodeMarkdownRelPath(relativeMarkdownPath(t, filepath.Dir(childPath), attachmentSourcePath))
+	if err := fs.WriteMarkdownDocument(childPath, fs.MarkdownDocument{
+		Frontmatter: fs.Frontmatter{Title: childTitle},
+		Body: fmt.Sprintf(
+			"[Cross Space](%s)\n\n[Attachment](%s)\n",
+			crossSpaceRel,
+			attachmentRel,
+		),
+	}); err != nil {
+		t.Fatalf("WriteMarkdown child: %v", err)
+	}
+
+	runCMS("push", e2eCfg.PrimarySpaceKey, "--on-conflict=cancel", "--yes", "--non-interactive")
+
+	parentDoc, err := fs.ReadMarkdownDocument(parentPath)
+	if err != nil {
+		t.Fatalf("ReadMarkdown parent after push: %v", err)
+	}
+	parentPageID := strings.TrimSpace(parentDoc.Frontmatter.ID)
+	if parentPageID == "" {
+		t.Fatal("expected cleanup parity parent page id after push")
+	}
+
+	childDoc, err := fs.ReadMarkdownDocument(childPath)
+	if err != nil {
+		t.Fatalf("ReadMarkdown child after push: %v", err)
+	}
+	childPageID := strings.TrimSpace(childDoc.Frontmatter.ID)
+	if childPageID == "" {
+		t.Fatal("expected cleanup parity child page id after push")
+	}
+
+	attachments := waitForPageAttachments(t, ctx, client, childPageID, func(got []confluence.Attachment) bool {
+		return len(got) == 1
+	})
+	if len(attachments) != 1 {
+		t.Fatalf("expected one attachment on cleanup parity child page, got %+v", attachments)
+	}
+
+	state, err := fs.LoadState(primaryDir)
+	if err != nil {
+		t.Fatalf("LoadState primary: %v", err)
+	}
+
+	var normalizedAttachmentPath string
+	for relPath, attachmentID := range state.AttachmentIndex {
+		if strings.TrimSpace(attachmentID) == strings.TrimSpace(attachments[0].ID) {
+			normalizedAttachmentPath = relPath
+			break
+		}
+	}
+	if strings.TrimSpace(normalizedAttachmentPath) == "" {
+		t.Fatalf("expected attachment %s in local state, state=%+v", attachments[0].ID, state.AttachmentIndex)
+	}
+
+	if err := os.Remove(childPath); err != nil {
+		t.Fatalf("remove child markdown: %v", err)
+	}
+	if err := os.Remove(parentPath); err != nil {
+		t.Fatalf("remove parent markdown: %v", err)
+	}
+	runCMS("push", e2eCfg.PrimarySpaceKey, "--on-conflict=cancel", "--yes", "--non-interactive")
+
+	waitForArchivedPageInSpace(t, ctx, client, e2eCfg.PrimarySpaceKey, parentPageID)
+	waitForArchivedPageInSpace(t, ctx, client, e2eCfg.PrimarySpaceKey, childPageID)
+
+	if err := os.Remove(secondaryTargetPath); err != nil {
+		t.Fatalf("remove secondary target markdown: %v", err)
+	}
+	runCMS("push", e2eCfg.SecondarySpaceKey, "--on-conflict=cancel", "--yes", "--non-interactive")
+	waitForArchivedPageInSpace(t, ctx, client, e2eCfg.SecondarySpaceKey, secondaryPageID)
+
+	runCMS("pull", e2eCfg.PrimarySpaceKey, "--force", "--yes", "--non-interactive")
+	runCMS("pull", e2eCfg.SecondarySpaceKey, "--force", "--yes", "--non-interactive")
+
+	assertGitWorkspaceClean(t, tmpDir)
+	assertStatusOutputClean(t, runCMS("status", e2eCfg.PrimarySpaceKey))
+	assertStatusOutputClean(t, runCMS("status", e2eCfg.SecondarySpaceKey))
+
+	if _, err := os.Stat(parentPath); !os.IsNotExist(err) {
+		t.Fatalf("expected deleted parent markdown to stay absent after cleanup, stat=%v", err)
+	}
+	if _, err := os.Stat(childPath); !os.IsNotExist(err) {
+		t.Fatalf("expected deleted child markdown to stay absent after cleanup, stat=%v", err)
+	}
+	if _, err := os.Stat(filepath.Join(primaryDir, filepath.FromSlash(normalizedAttachmentPath))); !os.IsNotExist(err) {
+		t.Fatalf("expected deleted child attachment asset to stay absent after cleanup, stat=%v", err)
+	}
+	if _, err := os.Stat(secondaryTargetPath); !os.IsNotExist(err) {
+		t.Fatalf("expected deleted cross-space target markdown to stay absent after cleanup, stat=%v", err)
+	}
+}
+
 func TestWorkflow_PushDryRunNonMutating(t *testing.T) {
 	e2eCfg := requireE2EConfig(t)
 	spaceKey := e2eCfg.PrimarySpaceKey
@@ -1069,6 +1302,114 @@ func requireE2EConfig(t *testing.T) e2eConfig {
 		APIToken:          required["CONF_E2E_API_TOKEN"],
 		PrimarySpaceKey:   required["CONF_E2E_PRIMARY_SPACE_KEY"],
 		SecondarySpaceKey: required["CONF_E2E_SECONDARY_SPACE_KEY"],
+	}
+}
+
+func assertBaselineDiagnosticsAllowlisted(t *testing.T, spaceKey string, got []commandRunReportDiagnostic) {
+	t.Helper()
+
+	allowlist := sandboxBaselineDiagnosticAllowlist[strings.ToUpper(strings.TrimSpace(spaceKey))]
+	unexpected := make([]string, 0)
+	for _, diag := range got {
+		if baselineDiagnosticAllowed(diag, allowlist) {
+			continue
+		}
+		unexpected = append(unexpected, formatE2EDiagnostic(diag))
+	}
+
+	if len(unexpected) > 0 {
+		sort.Strings(unexpected)
+		t.Fatalf(
+			"unexpected baseline diagnostics for %s:\n%s\n\nDocument or remove them before treating the sandbox as release-ready.\nAllowed baseline entries:\n%s",
+			spaceKey,
+			strings.Join(unexpected, "\n"),
+			formatExpectedDiagnostics(allowlist),
+		)
+	}
+}
+
+func baselineDiagnosticAllowed(diag commandRunReportDiagnostic, allowlist []e2eExpectedDiagnostic) bool {
+	for _, expected := range allowlist {
+		if expected.matches(diag) {
+			return true
+		}
+	}
+	return false
+}
+
+func (d e2eExpectedDiagnostic) matches(diag commandRunReportDiagnostic) bool {
+	if strings.TrimSpace(d.Path) != "" && strings.TrimSpace(diag.Path) != strings.TrimSpace(d.Path) {
+		return false
+	}
+	if strings.TrimSpace(d.Code) != "" && strings.TrimSpace(diag.Code) != strings.TrimSpace(d.Code) {
+		return false
+	}
+	if strings.TrimSpace(d.MessageContains) != "" && !strings.Contains(diag.Message, d.MessageContains) {
+		return false
+	}
+	return true
+}
+
+func formatExpectedDiagnostics(diags []e2eExpectedDiagnostic) string {
+	if len(diags) == 0 {
+		return "  (none)"
+	}
+	lines := make([]string, 0, len(diags))
+	for _, diag := range diags {
+		parts := make([]string, 0, 3)
+		if strings.TrimSpace(diag.Path) != "" {
+			parts = append(parts, "path="+diag.Path)
+		}
+		if strings.TrimSpace(diag.Code) != "" {
+			parts = append(parts, "code="+diag.Code)
+		}
+		if strings.TrimSpace(diag.MessageContains) != "" {
+			parts = append(parts, "message~="+diag.MessageContains)
+		}
+		lines = append(lines, "  - "+strings.Join(parts, ", "))
+	}
+	return strings.Join(lines, "\n")
+}
+
+func formatE2EDiagnostic(diag commandRunReportDiagnostic) string {
+	return fmt.Sprintf(
+		"  - path=%q code=%q category=%q action_required=%t message=%q",
+		diag.Path,
+		diag.Code,
+		diag.Category,
+		diag.ActionRequired,
+		diag.Message,
+	)
+}
+
+func assertGitWorkspaceClean(t *testing.T, workdir string) {
+	t.Helper()
+
+	cmd := exec.Command("git", "status", "--short")
+	cmd.Dir = workdir
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git status --short failed: %v\n%s", err, string(out))
+	}
+	if strings.TrimSpace(string(out)) != "" {
+		t.Fatalf("expected clean git workspace, got:\n%s", string(out))
+	}
+}
+
+func assertStatusOutputClean(t *testing.T, output string) {
+	t.Helper()
+
+	if strings.Count(output, "added (0)") != 2 || strings.Count(output, "modified (0)") != 2 || strings.Count(output, "deleted (0)") != 2 {
+		t.Fatalf("expected clean conf status output, got:\n%s", output)
+	}
+	if strings.Contains(output, "Planned path moves") {
+		t.Fatalf("expected no planned path moves in clean conf status output, got:\n%s", output)
+	}
+	if strings.Contains(output, "Conflict ahead") {
+		t.Fatalf("expected no conflict-ahead section in clean conf status output, got:\n%s", output)
+	}
+	if !strings.Contains(output, "Version drift: no remote-ahead tracked pages") {
+		t.Fatalf("expected zero version drift in conf status output, got:\n%s", output)
 	}
 }
 

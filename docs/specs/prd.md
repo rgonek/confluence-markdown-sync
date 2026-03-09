@@ -140,6 +140,7 @@ Users recover from failed sync runs or local state drift with:
 - Safety confirmation is required for destructive or large operations unless explicitly auto-approved.
 - `push --dry-run` and `push --preflight` must provide safe pre-write inspection paths.
 - Commands that emit structured reports must support machine-readable JSON.
+- Production release readiness is gated operationally by the default repo checks plus the explicit live-sandbox E2E suite, including baseline-warning review and cleanup-parity verification.
 
 ## Acceptance Criteria
 
