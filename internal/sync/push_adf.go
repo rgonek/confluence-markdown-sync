@@ -277,7 +277,7 @@ func syncPageMetadata(ctx context.Context, remote PushRemote, pageID string, doc
 					}
 				}
 			} else {
-				stateInput, ok := resolvePushContentStateInput(targetStatus, pageID, catalog)
+				stateInput, ok := resolvePushContentStateUpdateInput(targetStatus, pageID, catalog)
 				if !ok {
 					return fmt.Errorf("resolve content status %q", targetStatus)
 				}

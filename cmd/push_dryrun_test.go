@@ -3,6 +3,7 @@ package cmd
 import (
 	"bytes"
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -21,7 +22,10 @@ type preflightCapabilityFakePushRemote struct {
 	folderErr        error
 }
 
-func (f *preflightCapabilityFakePushRemote) GetContentStatus(_ context.Context, _ string, _ string) (string, error) {
+func (f *preflightCapabilityFakePushRemote) GetContentStatus(_ context.Context, pageID string, _ string) (string, error) {
+	if strings.TrimSpace(pageID) == "" {
+		return "", errors.New("page ID is required")
+	}
 	if f.contentStatusErr != nil {
 		return "", f.contentStatusErr
 	}
@@ -313,6 +317,59 @@ func TestRunPush_PreflightShowsPlanWithoutRemoteWrites(t *testing.T) {
 	}
 	if !strings.Contains(text, "Planned attachment mutations:") || !strings.Contains(text, "upload assets/1/new.png") || !strings.Contains(text, "delete assets/1/old.png") {
 		t.Fatalf("preflight output missing planned attachment mutations:\n%s", text)
+	}
+}
+
+func TestRunPush_PreflightUsesExistingRemotePageForContentStatusProbe(t *testing.T) {
+	runParallelCommandTest(t)
+
+	repo := t.TempDir()
+	spaceDir := preparePushRepoWithBaseline(t, repo)
+
+	writeMarkdown(t, filepath.Join(spaceDir, "new-page.md"), fs.MarkdownDocument{
+		Frontmatter: fs.Frontmatter{
+			Title:  "New page",
+			Status: "Ready to review",
+		},
+		Body: "new content\n",
+	})
+	runGitForTest(t, repo, "add", ".")
+	runGitForTest(t, repo, "commit", "-m", "local change")
+
+	previousPreflight := flagPushPreflight
+	flagPushPreflight = true
+	t.Cleanup(func() { flagPushPreflight = previousPreflight })
+
+	oldPushFactory := newPushRemote
+	oldPullFactory := newPullRemote
+	newPushRemote = func(_ *config.Config) (syncflow.PushRemote, error) {
+		return &preflightCapabilityFakePushRemote{
+			cmdFakePushRemote: newCmdFakePushRemote(1),
+			contentStatusErr:  &confluence.APIError{StatusCode: 404, Message: "missing"},
+		}, nil
+	}
+	newPullRemote = func(_ *config.Config) (syncflow.PullRemote, error) {
+		return newCmdFakePushRemote(1), nil
+	}
+	t.Cleanup(func() {
+		newPushRemote = oldPushFactory
+		newPullRemote = oldPullFactory
+	})
+
+	setupEnv(t)
+	chdirRepo(t, spaceDir)
+
+	cmd := &cobra.Command{}
+	out := &bytes.Buffer{}
+	cmd.SetOut(out)
+
+	if err := runPush(cmd, config.Target{Mode: config.TargetModeSpace, Value: ""}, "", false); err != nil {
+		t.Fatalf("runPush() preflight unexpected error: %v", err)
+	}
+
+	text := out.String()
+	if !strings.Contains(text, "content-status metadata sync disabled for this push") {
+		t.Fatalf("preflight output missing degraded-mode detail for new-page probe:\n%s", text)
 	}
 }
 

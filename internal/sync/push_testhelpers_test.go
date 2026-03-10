@@ -148,49 +148,52 @@ func (f *fakeFolderPushRemote) MovePage(_ context.Context, pageID string, target
 
 // rollbackPushRemote is a configurable fake used for rollback and integration tests.
 type rollbackPushRemote struct {
-	space                    confluence.Space
-	pages                    []confluence.Page
-	pagesByID                map[string]confluence.Page
-	contentStatuses          map[string]string
-	labelsByPage             map[string][]string
-	folders                  []confluence.Folder
-	attachmentsByPage        map[string][]confluence.Attachment
-	nextPageID               int
-	nextAttachmentID         int
-	createPageCalls          int
-	createFolderCalls        int
-	updatePageCalls          int
-	uploadAttachmentCalls    int
-	archiveTaskCalls         []string
-	deletePageCalls          []string
-	deletePageOpts           []confluence.PageDeleteOptions
-	deleteAttachmentCalls    []string
-	getContentStatusCalls    []string
-	setContentStatusCalls    []string
-	setContentStatusArgs     []contentStatusCall
-	deleteContentStatusCalls []string
-	deleteContentStatusArgs  []contentStatusCall
-	addLabelsCalls           []string
-	removeLabelCalls         []string
-	archiveTaskStatus        confluence.ArchiveTaskStatus
-	archivePagesErr          error
-	archiveTaskWaitErr       error
-	listFoldersErr           error
-	getContentStatusErr      error
-	failUpdate               bool
-	failCreatePageErr        error
-	failAddLabels            bool
-	failSetContentStatus     bool
-	failDeleteContentStatus  bool
-	contentStatusVersionBump bool
-	rejectParentID           string
-	rejectParentErr          error
-	updateInputsByPageID     map[string]confluence.PageUpsertInput
-	updateCallInputs         []confluence.PageUpsertInput
-	contentStates            []confluence.ContentState
-	spaceContentStates       []confluence.ContentState
-	availableStatesByPage    map[string][]confluence.ContentState
-	waitForArchiveTaskHook   func(*rollbackPushRemote, string)
+	space                     confluence.Space
+	pages                     []confluence.Page
+	pagesByID                 map[string]confluence.Page
+	contentStatuses           map[string]string
+	labelsByPage              map[string][]string
+	folders                   []confluence.Folder
+	attachmentsByPage         map[string][]confluence.Attachment
+	nextPageID                int
+	nextAttachmentID          int
+	createPageCalls           int
+	createFolderCalls         int
+	updatePageCalls           int
+	uploadAttachmentCalls     int
+	archiveTaskCalls          []string
+	deletePageCalls           []string
+	deletePageOpts            []confluence.PageDeleteOptions
+	deleteAttachmentCalls     []string
+	getContentStatusCalls     []string
+	setContentStatusCalls     []string
+	setContentStatusArgs      []contentStatusCall
+	deleteContentStatusCalls  []string
+	deleteContentStatusArgs   []contentStatusCall
+	addLabelsCalls            []string
+	removeLabelCalls          []string
+	archiveTaskStatus         confluence.ArchiveTaskStatus
+	archivePagesErr           error
+	archiveTaskWaitErr        error
+	listFoldersErr            error
+	getContentStatusErr       error
+	failUpdate                bool
+	failCreatePageErr         error
+	failAddLabels             bool
+	failSetContentStatus      bool
+	failDeleteContentStatus   bool
+	contentStatusVersionBump  bool
+	rejectParentID            string
+	rejectParentErr           error
+	updateInputsByPageID      map[string]confluence.PageUpsertInput
+	updateCallInputs          []confluence.PageUpsertInput
+	contentStates             []confluence.ContentState
+	spaceContentStates        []confluence.ContentState
+	availableStatesByPage     map[string][]confluence.ContentState
+	waitForArchiveTaskHook    func(*rollbackPushRemote, string)
+	listContentStatesErr      error
+	listSpaceContentStatesErr error
+	getAvailableStatesErr     error
 }
 
 func newRollbackPushRemote() *rollbackPushRemote {
@@ -225,10 +228,16 @@ func (f *rollbackPushRemote) ListPages(_ context.Context, _ confluence.PageListO
 }
 
 func (f *rollbackPushRemote) ListContentStates(_ context.Context) ([]confluence.ContentState, error) {
+	if f.listContentStatesErr != nil {
+		return nil, f.listContentStatesErr
+	}
 	return append([]confluence.ContentState(nil), f.contentStates...), nil
 }
 
 func (f *rollbackPushRemote) ListSpaceContentStates(_ context.Context, _ string) ([]confluence.ContentState, error) {
+	if f.listSpaceContentStatesErr != nil {
+		return nil, f.listSpaceContentStatesErr
+	}
 	if len(f.spaceContentStates) == 0 {
 		return append([]confluence.ContentState(nil), f.contentStates...), nil
 	}
@@ -236,6 +245,9 @@ func (f *rollbackPushRemote) ListSpaceContentStates(_ context.Context, _ string)
 }
 
 func (f *rollbackPushRemote) GetAvailableContentStates(_ context.Context, pageID string) ([]confluence.ContentState, error) {
+	if f.getAvailableStatesErr != nil {
+		return nil, f.getAvailableStatesErr
+	}
 	if states, ok := f.availableStatesByPage[strings.TrimSpace(pageID)]; ok {
 		return append([]confluence.ContentState(nil), states...), nil
 	}

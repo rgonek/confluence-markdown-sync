@@ -21,9 +21,10 @@ func buildPushContentStateCatalog(
 	pageIDByPath PageIndex,
 ) (pushContentStateCatalog, error) {
 	catalog := pushContentStateCatalog{
-		space:   map[string]confluence.ContentState{},
-		global:  map[string]confluence.ContentState{},
-		perPage: map[string]map[string]confluence.ContentState{},
+		space:            map[string]confluence.ContentState{},
+		global:           map[string]confluence.ContentState{},
+		perPage:          map[string]map[string]confluence.ContentState{},
+		perPageAvailable: map[string]bool{},
 	}
 
 	if !pushChangesNeedContentStatus(spaceDir, changes) {
@@ -31,6 +32,7 @@ func buildPushContentStateCatalog(
 	}
 
 	if states, err := remote.ListContentStates(ctx); err == nil {
+		catalog.globalAvailable = true
 		for _, state := range states {
 			catalog.global[strings.ToLower(strings.TrimSpace(state.Name))] = state
 		}
@@ -39,6 +41,7 @@ func buildPushContentStateCatalog(
 	}
 
 	if states, err := remote.ListSpaceContentStates(ctx, spaceKey); err == nil {
+		catalog.spaceAvailable = true
 		for _, state := range states {
 			catalog.space[strings.ToLower(strings.TrimSpace(state.Name))] = state
 		}
@@ -77,6 +80,7 @@ func buildPushContentStateCatalog(
 			}
 			return pushContentStateCatalog{}, fmt.Errorf("list available content states for page %s: %w", pageID, err)
 		}
+		catalog.perPageAvailable[pageID] = true
 		stateMap := map[string]confluence.ContentState{}
 		for _, state := range states {
 			stateMap[strings.ToLower(strings.TrimSpace(state.Name))] = state
@@ -111,6 +115,9 @@ func validatePushContentStatuses(spaceKey string, spaceDir string, changes []Pus
 			pageID = strings.TrimSpace(pageIDByPath[relPath])
 		}
 		if _, ok := resolvePushContentStateInput(statusName, pageID, catalog); ok {
+			continue
+		}
+		if !catalog.hasUsableStatusCatalog(pageID) {
 			continue
 		}
 
@@ -150,6 +157,28 @@ func resolvePushContentStateInput(statusName, pageID string, catalog pushContent
 		return state, true
 	}
 	return confluence.ContentState{}, false
+}
+
+func resolvePushContentStateUpdateInput(statusName, pageID string, catalog pushContentStateCatalog) (confluence.ContentState, bool) {
+	stateName := strings.TrimSpace(statusName)
+	if stateName == "" {
+		return confluence.ContentState{}, false
+	}
+	if state, ok := resolvePushContentStateInput(stateName, pageID, catalog); ok {
+		return state, true
+	}
+	if !catalog.hasUsableStatusCatalog(pageID) {
+		return confluence.ContentState{Name: stateName}, true
+	}
+	return confluence.ContentState{}, false
+}
+
+func (c pushContentStateCatalog) hasUsableStatusCatalog(pageID string) bool {
+	pageID = strings.TrimSpace(pageID)
+	if pageID != "" && c.perPageAvailable[pageID] {
+		return true
+	}
+	return c.spaceAvailable || c.globalAvailable
 }
 
 func pushChangesNeedContentStatus(spaceDir string, changes []PushFileChange) bool {

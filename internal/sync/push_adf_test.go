@@ -301,3 +301,25 @@ func TestSyncPageMetadata_DisablesContentStatusModeOnCompatibilityError(t *testi
 		t.Fatalf("delete content status args = %d, want 0", len(remote.deleteContentStatusArgs))
 	}
 }
+
+func TestSyncPageMetadata_UsesNameOnlyFallbackWhenCatalogUnavailable(t *testing.T) {
+	remote := newRollbackPushRemote()
+
+	doc := fs.MarkdownDocument{
+		Frontmatter: fs.Frontmatter{
+			State:  "current",
+			Status: "Unlisted Status",
+		},
+	}
+
+	if err := syncPageMetadata(context.Background(), remote, "new-page-1", doc, false, testTenantCapabilityCache(tenantContentStatusModeEnabled), pushContentStateCatalog{}, nil); err != nil {
+		t.Fatalf("syncPageMetadata() error: %v", err)
+	}
+
+	if len(remote.setContentStatusArgs) != 1 {
+		t.Fatalf("set content status args = %d, want 1", len(remote.setContentStatusArgs))
+	}
+	if got := remote.setContentStatusArgs[0]; got.StatusName != "Unlisted Status" || got.PageStatus != "current" {
+		t.Fatalf("unexpected content status call: %+v", got)
+	}
+}

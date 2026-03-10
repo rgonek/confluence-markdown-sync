@@ -351,6 +351,59 @@ func TestPush_NewPageContentStatusPreflightFailsBeforeRemoteMutation(t *testing.
 	}
 }
 
+func TestPush_NewPageContentStatusFallsBackWhenCatalogEndpointsUnsupported(t *testing.T) {
+	spaceDir := t.TempDir()
+	mdPath := filepath.Join(spaceDir, "new.md")
+	if err := fs.WriteMarkdownDocument(mdPath, fs.MarkdownDocument{
+		Frontmatter: fs.Frontmatter{
+			Title:  "New",
+			Status: "Unlisted Status",
+		},
+		Body: "content\n",
+	}); err != nil {
+		t.Fatalf("write markdown: %v", err)
+	}
+
+	compatErr := &confluence.APIError{
+		StatusCode: 501,
+		Method:     "GET",
+		URL:        "/wiki/rest/api/content-states",
+		Message:    "Not Implemented",
+	}
+
+	remote := newRollbackPushRemote()
+	remote.listContentStatesErr = compatErr
+	remote.listSpaceContentStatesErr = compatErr
+	remote.getAvailableStatesErr = compatErr
+
+	result, err := Push(context.Background(), remote, PushOptions{
+		SpaceKey:       "ENG",
+		SpaceDir:       spaceDir,
+		Domain:         "https://example.atlassian.net",
+		State:          fs.SpaceState{SpaceKey: "ENG"},
+		ConflictPolicy: PushConflictPolicyCancel,
+		Changes: []PushFileChange{{
+			Type: PushChangeAdd,
+			Path: "new.md",
+		}},
+	})
+	if err != nil {
+		t.Fatalf("Push() unexpected error: %v", err)
+	}
+	if remote.createPageCalls != 1 {
+		t.Fatalf("create page calls = %d, want 1", remote.createPageCalls)
+	}
+	if len(remote.setContentStatusArgs) != 1 {
+		t.Fatalf("set content status args = %d, want 1", len(remote.setContentStatusArgs))
+	}
+	if got := remote.setContentStatusArgs[0].StatusName; got != "Unlisted Status" {
+		t.Fatalf("status name = %q, want %q", got, "Unlisted Status")
+	}
+	if result.State.PagePathIndex["new.md"] == "" {
+		t.Fatalf("expected pushed page to be tracked, got state %+v", result.State.PagePathIndex)
+	}
+}
+
 func TestPush_NewPageDuplicateTitleErrorIncludesNonCurrentCollision(t *testing.T) {
 	spaceDir := t.TempDir()
 	mdPath := filepath.Join(spaceDir, "new.md")

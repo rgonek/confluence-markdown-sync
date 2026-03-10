@@ -121,9 +121,12 @@ type pushMetadataSnapshot struct {
 }
 
 type pushContentStateCatalog struct {
-	space   map[string]confluence.ContentState
-	global  map[string]confluence.ContentState
-	perPage map[string]map[string]confluence.ContentState
+	space            map[string]confluence.ContentState
+	global           map[string]confluence.ContentState
+	perPage          map[string]map[string]confluence.ContentState
+	spaceAvailable   bool
+	globalAvailable  bool
+	perPageAvailable map[string]bool
 }
 
 type pushContentSnapshot struct {

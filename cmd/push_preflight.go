@@ -89,8 +89,10 @@ func buildPushPreflightContext(ctx context.Context, spaceKey, spaceDir string, s
 	defer closeRemoteIfPossible(remote)
 
 	concerns := make([]string, 0, 2)
+	remotePageByID := map[string]confluence.Page{}
+	remotePages := make([]confluence.Page, 0)
+	space, spaceErr := remote.GetSpace(ctx, spaceKey)
 	if preflightChangesNeedFolderHierarchy(syncChanges) {
-		space, spaceErr := remote.GetSpace(ctx, spaceKey)
 		if spaceErr == nil {
 			_, folderErr := remote.ListFolders(ctx, confluence.FolderListOptions{
 				SpaceID: space.ID,
@@ -102,12 +104,6 @@ func buildPushPreflightContext(ctx context.Context, spaceKey, spaceDir string, s
 		}
 	}
 
-	if _, probeErr := remote.GetContentStatus(ctx, "", ""); isPreflightCapabilityProbeError(probeErr) {
-		concerns = append(concerns, "content-status metadata sync disabled for this push")
-	}
-
-	remotePageByID := map[string]confluence.Page{}
-	space, spaceErr := remote.GetSpace(ctx, spaceKey)
 	if spaceErr == nil {
 		listResult, listErr := remote.ListPages(ctx, confluence.PageListOptions{
 			SpaceID:  space.ID,
@@ -116,9 +112,15 @@ func buildPushPreflightContext(ctx context.Context, spaceKey, spaceDir string, s
 			Limit:    100,
 		})
 		if listErr == nil {
+			remotePages = append(remotePages, listResult.Pages...)
 			for _, page := range listResult.Pages {
 				remotePageByID[strings.TrimSpace(page.ID)] = page
 			}
+		}
+	}
+	if pageID, pageStatus, ok := preflightContentStatusProbeTarget(spaceDir, syncChanges, remotePages); ok {
+		if _, probeErr := remote.GetContentStatus(ctx, pageID, pageStatus); isPreflightCapabilityProbeError(probeErr) {
+			concerns = append(concerns, "content-status metadata sync disabled for this push")
 		}
 	}
 
@@ -140,6 +142,52 @@ func printPushPreflightConcerns(out io.Writer, concerns []string) {
 	for _, concern := range concerns {
 		_, _ = fmt.Fprintf(out, "  %s\n", concern)
 	}
+}
+
+func preflightContentStatusProbeTarget(spaceDir string, syncChanges []syncflow.PushFileChange, remotePages []confluence.Page) (string, string, bool) {
+	needsContentStatusSync := false
+	for _, change := range syncChanges {
+		if change.Type != syncflow.PushChangeAdd && change.Type != syncflow.PushChangeModify {
+			continue
+		}
+		relPath := strings.TrimSpace(change.Path)
+		if relPath == "" {
+			continue
+		}
+
+		frontmatter, err := fs.ReadFrontmatter(filepath.Join(spaceDir, filepath.FromSlash(relPath)))
+		if err != nil {
+			continue
+		}
+
+		pageID := strings.TrimSpace(frontmatter.ID)
+		if pageID == "" && strings.TrimSpace(frontmatter.Status) == "" {
+			continue
+		}
+		needsContentStatusSync = true
+		if pageID != "" {
+			return pageID, normalizePreflightPageLifecycleState(frontmatter.State), true
+		}
+	}
+	if !needsContentStatusSync {
+		return "", "", false
+	}
+	for _, page := range remotePages {
+		pageID := strings.TrimSpace(page.ID)
+		if pageID == "" {
+			continue
+		}
+		return pageID, normalizePreflightPageLifecycleState(page.Status), true
+	}
+	return "", "", false
+}
+
+func normalizePreflightPageLifecycleState(state string) string {
+	normalized := strings.TrimSpace(strings.ToLower(state))
+	if normalized == "" {
+		return "current"
+	}
+	return normalized
 }
 
 func printPushPreflightPageMutations(

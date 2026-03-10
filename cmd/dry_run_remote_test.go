@@ -75,3 +75,42 @@ func TestDryRunRemote(t *testing.T) {
 		t.Error("Close failed")
 	}
 }
+
+func TestDryRunRemote_CreatePageReturnsUniqueSyntheticIDs(t *testing.T) {
+	ctx := context.Background()
+	remote := &dryRunPushRemote{out: new(bytes.Buffer), inner: &dummyPushRemote{}}
+
+	first, err := remote.CreatePage(ctx, confluence.PageUpsertInput{SpaceID: "Space", Title: "One"})
+	if err != nil {
+		t.Fatalf("CreatePage() first error: %v", err)
+	}
+	second, err := remote.CreatePage(ctx, confluence.PageUpsertInput{SpaceID: "Space", Title: "Two"})
+	if err != nil {
+		t.Fatalf("CreatePage() second error: %v", err)
+	}
+
+	if first.ID == second.ID {
+		t.Fatalf("expected unique synthetic page IDs, got %q", first.ID)
+	}
+	if first.WebURL == second.WebURL {
+		t.Fatalf("expected unique synthetic page URLs, got %q", first.WebURL)
+	}
+}
+
+func TestDryRunRemote_CreateFolderReturnsUniqueSyntheticIDs(t *testing.T) {
+	ctx := context.Background()
+	remote := &dryRunPushRemote{out: new(bytes.Buffer), inner: &dummyPushRemote{}}
+
+	first, err := remote.CreateFolder(ctx, confluence.FolderCreateInput{SpaceID: "Space", Title: "One"})
+	if err != nil {
+		t.Fatalf("CreateFolder() first error: %v", err)
+	}
+	second, err := remote.CreateFolder(ctx, confluence.FolderCreateInput{SpaceID: "Space", Title: "Two"})
+	if err != nil {
+		t.Fatalf("CreateFolder() second error: %v", err)
+	}
+
+	if first.ID == second.ID {
+		t.Fatalf("expected unique synthetic folder IDs, got %q", first.ID)
+	}
+}
