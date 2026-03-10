@@ -52,7 +52,7 @@ func acquireWorkspaceLock(command string) (*workspaceLock, error) {
 		return nil, fmt.Errorf("encode workspace lock: %w", err)
 	}
 
-	file, err := os.OpenFile(lockPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	file, err := os.OpenFile(lockPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600) //nolint:gosec // lock path is fixed under the repository .git dir
 	if err != nil {
 		if errors.Is(err, os.ErrExist) {
 			meta, _ := readWorkspaceLock(lockPath)
@@ -75,7 +75,9 @@ func acquireWorkspaceLock(command string) (*workspaceLock, error) {
 		}
 		return nil, fmt.Errorf("create workspace lock: %w", err)
 	}
-	defer file.Close()
+	defer func() {
+		_ = file.Close()
+	}()
 	if _, err := file.Write(raw); err != nil {
 		_ = os.Remove(lockPath)
 		return nil, fmt.Errorf("write workspace lock: %w", err)

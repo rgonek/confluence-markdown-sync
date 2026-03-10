@@ -493,7 +493,7 @@ func appendDoctorWorkspaceLockIssue(report *DoctorReport) {
 		return
 	}
 
-	message := "repository sync lock is present"
+	var message string
 	repairable := false
 	severity := "warning"
 	age := workspaceLockAge(meta)

@@ -351,35 +351,6 @@ func writeAutoPullMergeBackup(repoRoot, repoPath string, raw []byte) (string, er
 	return backupRepoPath, nil
 }
 
-func createAutoPullMergeBackup(repoRoot, targetFile string) (string, error) {
-	absPath, err := filepath.Abs(targetFile)
-	if err != nil {
-		return "", err
-	}
-	raw, err := os.ReadFile(absPath) //nolint:gosec // targetFile is an explicit in-repo markdown target
-	if err != nil {
-		return "", err
-	}
-
-	repoPath, err := filepath.Rel(repoRoot, absPath)
-	if err != nil {
-		return "", err
-	}
-	repoPath = filepath.ToSlash(repoPath)
-	backupRepoPath, err := makeConflictBackupPath(repoRoot, repoPath, "My Local Changes")
-	if err != nil {
-		return "", err
-	}
-	backupAbsPath := filepath.Join(repoRoot, filepath.FromSlash(backupRepoPath))
-	if err := os.MkdirAll(filepath.Dir(backupAbsPath), 0o750); err != nil {
-		return "", err
-	}
-	if err := os.WriteFile(backupAbsPath, raw, 0o600); err != nil {
-		return "", err
-	}
-	return backupRepoPath, nil
-}
-
 func resolvePushScopePath(client *git.Client, spaceDir string, target config.Target, targetCtx validateTargetContext) (string, error) {
 	_ = client
 	if target.IsFile() {
