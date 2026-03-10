@@ -42,6 +42,16 @@ var sandboxBaselineDiagnosticAllowlist = map[string][]e2eExpectedDiagnostic{
 			Code: "UNKNOWN_MEDIA_ID_UNRESOLVED",
 		},
 		{
+			Path:            "Technical-Documentation/Live-Workflow-Test-2026-03-05/Endpoint-Notes.md",
+			Code:            "unresolved_reference",
+			MessageContains: "pageId=17727489#Task-list",
+		},
+		{
+			Path:            "Technical-Documentation/Live-Workflow-Test-2026-03-05/Live-Workflow-Test-2026-03-05.md",
+			Code:            "unresolved_reference",
+			MessageContains: "pageId=17727489",
+		},
+		{
 			Path:            "Technical-Documentation/Live-Workflow-Test-2026-03-05/Live-Workflow-Test-2026-03-05.md",
 			Code:            "unresolved_reference",
 			MessageContains: "pageId=17530900#Task-list",

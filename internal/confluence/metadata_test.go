@@ -19,7 +19,7 @@ func TestClient_ContentStatus(t *testing.T) {
 	})
 	mux.HandleFunc("/wiki/rest/api/space/ENG/state", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		if _, err := io.WriteString(w, `{"results":[{"id":80,"name":"Ready to review","color":"FFAB00"}]}`); err != nil {
+		if _, err := io.WriteString(w, `[{"id":80,"name":"Ready to review","color":"FFAB00"}]`); err != nil {
 			t.Fatalf("write response: %v", err)
 		}
 	})

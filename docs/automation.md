@@ -200,6 +200,8 @@ Current documented baseline allowlist for the maintained release sandbox:
 | Space | Expected diagnostic match | Reason |
 |------|----------------------------|--------|
 | `TD2` | `path=17727489`, `code=UNKNOWN_MEDIA_ID_UNRESOLVED` | Existing seed page still contains unresolved media identities; pull skips stale-attachment pruning for safety. |
+| `TD2` | `path=Technical-Documentation/Live-Workflow-Test-2026-03-05/Endpoint-Notes.md`, `code=unresolved_reference`, message contains `pageId=17727489#Task-list` | Seed content now includes another unresolved same-space task-list anchor reference. |
+| `TD2` | `path=Technical-Documentation/Live-Workflow-Test-2026-03-05/Live-Workflow-Test-2026-03-05.md`, `code=unresolved_reference`, message contains `pageId=17727489` | Seed content now includes another unresolved same-space page reference. |
 | `TD2` | `path=Technical-Documentation/Live-Workflow-Test-2026-03-05/Live-Workflow-Test-2026-03-05.md`, `code=unresolved_reference`, message contains `pageId=17530900#Task-list` | Seed content still links to an unresolved remote target. |
 | `TD2` | `path=Technical-Documentation/Live-Workflow-Test-2026-03-05/Checklist-and-Diagrams.md`, message contains `UNKNOWN_MEDIA_ID` | Seed content still contains unresolved media fallback output. |
 | `SD2` | `path=Software-Development/Release-Sandbox-2026-03-05.md`, `code=unresolved_reference`, message contains `pageId=17334539` | Seed content still links to an unresolved remote target. |

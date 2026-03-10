@@ -2,6 +2,7 @@ package confluence
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -32,14 +33,11 @@ func (c *Client) ListContentStates(ctx context.Context) ([]ContentState, error) 
 		return nil, fmt.Errorf("create list content states request: %w", err)
 	}
 
-	var payload struct {
-		ContentStates []contentStateDTO `json:"contentStates"`
-		Results       []contentStateDTO `json:"results"`
-	}
+	var payload json.RawMessage
 	if err := c.do(req, &payload); err != nil {
 		return nil, fmt.Errorf("execute list content states request: %w", err)
 	}
-	return normalizeContentStates(payload.ContentStates, payload.Results), nil
+	return decodeContentStateListPayload(payload)
 }
 
 func (c *Client) ListSpaceContentStates(ctx context.Context, spaceKey string) ([]ContentState, error) {
@@ -53,14 +51,11 @@ func (c *Client) ListSpaceContentStates(ctx context.Context, spaceKey string) ([
 		return nil, fmt.Errorf("create list space content states request: %w", err)
 	}
 
-	var payload struct {
-		Results       []contentStateDTO `json:"results"`
-		ContentStates []contentStateDTO `json:"contentStates"`
-	}
+	var payload json.RawMessage
 	if err := c.do(req, &payload); err != nil {
 		return nil, fmt.Errorf("execute list space content states request: %w", err)
 	}
-	return normalizeContentStates(payload.ContentStates, payload.Results), nil
+	return decodeContentStateListPayload(payload)
 }
 
 func (c *Client) GetAvailableContentStates(ctx context.Context, pageID string) ([]ContentState, error) {
@@ -74,17 +69,14 @@ func (c *Client) GetAvailableContentStates(ctx context.Context, pageID string) (
 		return nil, fmt.Errorf("create available content states request: %w", err)
 	}
 
-	var payload struct {
-		ContentStates []contentStateDTO `json:"contentStates"`
-		Results       []contentStateDTO `json:"results"`
-	}
+	var payload json.RawMessage
 	if err := c.do(req, &payload); err != nil {
 		if isHTTPStatus(err, http.StatusNotFound) {
 			return nil, ErrNotFound
 		}
 		return nil, fmt.Errorf("execute available content states request: %w", err)
 	}
-	return normalizeContentStates(payload.ContentStates, payload.Results), nil
+	return decodeContentStateListPayload(payload)
 }
 
 // GetContentStatus fetches the visual UI content status (lozenge) for a page via v1 API.
@@ -255,6 +247,26 @@ func normalizeContentStates(stateGroups ...[]contentStateDTO) []ContentState {
 		}
 	}
 	return out
+}
+
+func decodeContentStateListPayload(payload json.RawMessage) ([]ContentState, error) {
+	if len(payload) == 0 {
+		return nil, nil
+	}
+
+	var bare []contentStateDTO
+	if err := json.Unmarshal(payload, &bare); err == nil {
+		return normalizeContentStates(bare), nil
+	}
+
+	var wrapped struct {
+		ContentStates []contentStateDTO `json:"contentStates"`
+		Results       []contentStateDTO `json:"results"`
+	}
+	if err := json.Unmarshal(payload, &wrapped); err != nil {
+		return nil, fmt.Errorf("decode content states payload: %w", err)
+	}
+	return normalizeContentStates(wrapped.ContentStates, wrapped.Results), nil
 }
 
 // GetLabels fetches all labels for a given page via v1 API.
