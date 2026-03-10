@@ -9,7 +9,7 @@ when a dependency is unavailable.
 | Feature | Support Level | Tenant Dependency | Degraded Fallback |
 |---------|--------------|-------------------|-------------------|
 | Page sync (pull/push) | Full | None | — |
-| Page hierarchy (folders) | Full | Folder API | Page-based hierarchy when folder API returns any API error (`FOLDER_COMPATIBILITY_MODE` / `FOLDER_LOOKUP_UNAVAILABLE`), with diagnostics distinguishing unsupported capability from upstream endpoint failure |
+| Page hierarchy (folders) | Full | Folder API | Page-based hierarchy when folder API returns any API error (`FOLDER_COMPATIBILITY_MODE` / `FOLDER_LOOKUP_UNAVAILABLE`), with diagnostics, summaries, and JSON reports distinguishing unsupported capability from upstream endpoint failure |
 | Content status (lozenges) | Full | Content Status API | Status sync disabled when API returns 404/405/501 (`CONTENT_STATUS_COMPATIBILITY_MODE`) |
 | Labels | Full | None | — |
 | Attachments (images/files) | Full | None | — |
@@ -52,7 +52,9 @@ endpoint failed upstream").
 run and emits `CONTENT_STATUS_COMPATIBILITY_MODE`.
 
 The page body and all other metadata continue to sync normally. Only the
-`status` lozenge value is skipped.
+`status` lozenge value is skipped. On supported tenants, push now resolves the
+requested status against the tenant’s available content states before any page
+create/update mutation so invalid status writes fail early.
 
 ### Mermaid (`MERMAID_PRESERVED_AS_CODEBLOCK`)
 
@@ -106,4 +108,6 @@ reports which compatibility modes are active. When the pending push needs
 folder hierarchy writes, preflight surfaces whether fallback is caused by an
 unsupported tenant capability or by an upstream folder endpoint failure. It
 also probes content-status compatibility ahead of time so operators can decide
-whether to proceed.
+whether to proceed. The final push summary and JSON report surface the active
+fallback mode as well, so degraded folder behavior is still visible after the
+run completes.

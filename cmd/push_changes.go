@@ -662,6 +662,7 @@ func printPushSyncSummary(out io.Writer, commits []syncflow.PushCommitPlan, diag
 	attachmentUploaded := 0
 	attachmentPreserved := 0
 	attachmentSkipped := 0
+	compatibilityNotes := make([]string, 0, 2)
 	for _, diag := range diagnostics {
 		switch diag.Code {
 		case "ATTACHMENT_CREATED":
@@ -675,6 +676,9 @@ func printPushSyncSummary(out io.Writer, commits []syncflow.PushCommitPlan, diag
 			if strings.HasPrefix(diag.Code, "ATTACHMENT_") && strings.Contains(diag.Code, "SKIPPED") {
 				attachmentSkipped++
 			}
+			if diag.Code == "FOLDER_COMPATIBILITY_MODE" {
+				compatibilityNotes = append(compatibilityNotes, strings.TrimSpace(diag.Message))
+			}
 		}
 	}
 
@@ -685,6 +689,9 @@ func printPushSyncSummary(out io.Writer, commits []syncflow.PushCommitPlan, diag
 	}
 	if len(diagnostics) > 0 {
 		_, _ = fmt.Fprintf(out, "  diagnostics: %d\n", len(diagnostics))
+	}
+	for _, note := range sortedUniqueStrings(compatibilityNotes) {
+		_, _ = fmt.Fprintf(out, "  compatibility: %s\n", note)
 	}
 }
 

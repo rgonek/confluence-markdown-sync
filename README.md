@@ -71,6 +71,7 @@ conf push ENG --on-conflict=cancel
 - Extension support: PlantUML is the only first-class rendered extension handler; Mermaid is preserved as code, and raw `adf:extension` / unknown macro handling is best-effort and should be sandbox-validated before relying on it
 - Cross-space links are preserved as readable remote links rather than rewritten to local Markdown paths
 - Removing tracked Markdown pages archives the corresponding remote page; follow-up pull removes the archived page from tracked local state
+- `pull` and `push` are serialized per repository with a workspace lock, so concurrent mutating runs fail fast with a clear lock message
 - `push` failures retain recovery refs and print exact `conf recover`, `git switch`, and cleanup commands for the retained run
 - Status scope: `conf status` reports Markdown page drift only; use `git status` for local asset changes or `conf diff` for attachment-aware remote inspection. There is no attachment-aware `conf status` mode yet
 - Label rules: labels are trimmed, lowercased, deduplicated, and sorted; empty labels and labels containing whitespace are rejected

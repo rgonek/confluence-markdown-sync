@@ -178,7 +178,7 @@ func TestSyncPageMetadata_EquivalentLabelSetsDoNotChurn(t *testing.T) {
 		},
 	}
 
-	if err := syncPageMetadata(context.Background(), remote, "1", doc, true, testTenantCapabilityCache(tenantContentStatusModeEnabled), nil); err != nil {
+	if err := syncPageMetadata(context.Background(), remote, "1", doc, true, testTenantCapabilityCache(tenantContentStatusModeEnabled), pushContentStateCatalog{}, nil); err != nil {
 		t.Fatalf("syncPageMetadata() error: %v", err)
 	}
 
@@ -200,7 +200,7 @@ func TestSyncPageMetadata_SetsContentStatusOnlyWhenPresent(t *testing.T) {
 		},
 	}
 
-	if err := syncPageMetadata(context.Background(), remote, "1", doc, true, testTenantCapabilityCache(tenantContentStatusModeEnabled), nil); err != nil {
+	if err := syncPageMetadata(context.Background(), remote, "1", doc, true, testTenantCapabilityCache(tenantContentStatusModeEnabled), pushContentStateCatalog{global: map[string]confluence.ContentState{"ready to review": {ID: 80, Name: "Ready to review", Color: "FFAB00"}}}, nil); err != nil {
 		t.Fatalf("syncPageMetadata() error: %v", err)
 	}
 
@@ -225,7 +225,7 @@ func TestSyncPageMetadata_ClearsContentStatusWhenExistingPageStatusRemoved(t *te
 		},
 	}
 
-	if err := syncPageMetadata(context.Background(), remote, "1", doc, true, testTenantCapabilityCache(tenantContentStatusModeEnabled), nil); err != nil {
+	if err := syncPageMetadata(context.Background(), remote, "1", doc, true, testTenantCapabilityCache(tenantContentStatusModeEnabled), pushContentStateCatalog{}, nil); err != nil {
 		t.Fatalf("syncPageMetadata() error: %v", err)
 	}
 
@@ -255,7 +255,7 @@ func TestSyncPageMetadata_SkipsContentStatusForNewPageWhenStatusMissing(t *testi
 		},
 	}
 
-	if err := syncPageMetadata(context.Background(), remote, "", doc, false, testTenantCapabilityCache(tenantContentStatusModeEnabled), nil); err != nil {
+	if err := syncPageMetadata(context.Background(), remote, "", doc, false, testTenantCapabilityCache(tenantContentStatusModeEnabled), pushContentStateCatalog{}, nil); err != nil {
 		t.Fatalf("syncPageMetadata() error: %v", err)
 	}
 
@@ -284,7 +284,7 @@ func TestSyncPageMetadata_DisablesContentStatusModeOnCompatibilityError(t *testi
 	cache.pushContentStatusMode.resolved = false
 	var diagnostics []PushDiagnostic
 
-	if err := syncPageMetadata(context.Background(), remote, "new-page-1", doc, false, cache, &diagnostics); err != nil {
+	if err := syncPageMetadata(context.Background(), remote, "new-page-1", doc, false, cache, pushContentStateCatalog{}, &diagnostics); err != nil {
 		t.Fatalf("syncPageMetadata() error: %v", err)
 	}
 

@@ -624,6 +624,18 @@ func (f *cmdFakePushRemote) ListPages(_ context.Context, _ confluence.PageListOp
 	return confluence.PageListResult{Pages: f.pages}, nil
 }
 
+func (f *cmdFakePushRemote) ListContentStates(_ context.Context) ([]confluence.ContentState, error) {
+	return []confluence.ContentState{{ID: 80, Name: "Ready to review", Color: "FFAB00"}}, nil
+}
+
+func (f *cmdFakePushRemote) ListSpaceContentStates(_ context.Context, _ string) ([]confluence.ContentState, error) {
+	return []confluence.ContentState{{ID: 80, Name: "Ready to review", Color: "FFAB00"}}, nil
+}
+
+func (f *cmdFakePushRemote) GetAvailableContentStates(_ context.Context, _ string) ([]confluence.ContentState, error) {
+	return []confluence.ContentState{{ID: 80, Name: "Ready to review", Color: "FFAB00"}}, nil
+}
+
 func (f *cmdFakePushRemote) GetPage(_ context.Context, pageID string) (confluence.Page, error) {
 	page, ok := f.pagesByID[pageID]
 	if !ok {
@@ -636,7 +648,7 @@ func (f *cmdFakePushRemote) GetContentStatus(_ context.Context, pageID string, _
 	return "", nil
 }
 
-func (f *cmdFakePushRemote) SetContentStatus(_ context.Context, pageID string, _ string, statusName string) error {
+func (f *cmdFakePushRemote) SetContentStatus(_ context.Context, pageID string, _ string, status confluence.ContentState) error {
 	return nil
 }
 

@@ -131,7 +131,7 @@ func restorePageMetadataSnapshot(ctx context.Context, remote PushRemote, pageID 
 						result.ContentStatusRestored = true
 					}
 				} else {
-					if err := remote.SetContentStatus(ctx, pageID, pageStatus, targetStatus); err != nil {
+					if err := remote.SetContentStatus(ctx, pageID, pageStatus, confluence.ContentState{Name: targetStatus}); err != nil {
 						if !isCompatibilityProbeError(err) {
 							return metadataRestoreResult{}, fmt.Errorf("set content status: %w", err)
 						}

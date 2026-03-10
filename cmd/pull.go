@@ -197,6 +197,15 @@ func runPullWithReport(cmd *cobra.Command, target config.Target, emitJSONReport 
 	if err != nil {
 		return report, err
 	}
+	lock, err := acquireWorkspaceLock("pull")
+	if err != nil {
+		return report, err
+	}
+	defer func() {
+		if releaseErr := lock.Release(); runErr == nil && releaseErr != nil {
+			runErr = releaseErr
+		}
+	}()
 	scopePath, err := gitScopePath(repoRoot, pullCtx.spaceDir)
 	if err != nil {
 		return report, err

@@ -178,17 +178,20 @@ Publishes local Markdown changes to Confluence.
 Highlights:
 
 - always runs `validate` first,
+- preflights frontmatter `status` values before any remote page mutation so invalid or unavailable content-status writes fail early,
 - strict conversion before remote writes,
 - isolated sync branch and worktree execution,
+- repository-scoped workspace lock prevents concurrent `pull`/`push` runs in the same repo,
 - per-page commit metadata with Confluence trailers,
 - recovery refs retained on failures,
 - failed pushes print concrete `recover`, branch inspection, and cleanup commands for the retained run,
 - space-scoped push, `--preflight`, and `--dry-run` validate the full target space whenever there are in-scope changes,
 - `--preflight` uses the same validation scope and strictness as a real push,
 - `--on-conflict=pull-merge` restores local edits before running `pull` and preserves them via merge results, conflict markers, or retained recovery state instead of silently discarding them,
+- when `--on-conflict=pull-merge` stops after a conflict-preserving pull, the CLI prints explicit next steps to resolve files, `git add` them, and rerun push,
 - removing tracked Markdown pages archives the corresponding remote page and follow-up pull removes it from tracked local state,
 - tracked page removals are previewed and summarized as remote archive operations rather than hard deletes,
-- remote archive operations require long-task completion (`--archive-task-timeout`, `--archive-task-poll-interval`),
+- remote archive operations require long-task completion (`--archive-task-timeout`, `--archive-task-poll-interval`), and timeout handling now performs a follow-up verification read so the CLI can distinguish "still running remotely" from a confirmed archive,
 - `--preflight` for a concise local push plan (change summary + validation) without remote writes.
 
 ### `conf search QUERY`
@@ -317,4 +320,6 @@ conf push ENG --on-conflict=cancel
 
 - Validation errors on unresolved links/assets: run `conf validate [TARGET]` and fix broken paths or metadata.
 - Conflict errors on push: choose `--on-conflict=pull-merge|force|cancel` based on your policy.
+- `another sync command is already mutating this repository`: wait for the active `pull`/`push` to finish, or inspect `.git/confluence-sync.lock.json` if you suspect a stale lock.
+- `ATTACHMENT_PATH_NORMALIZED`: the first push may relocate referenced local assets into `assets/<page-id>/...`; that rename is expected and stable after the next pull.
 - No-op output: there were no in-scope changes to sync.

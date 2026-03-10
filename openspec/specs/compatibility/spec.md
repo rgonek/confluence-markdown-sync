@@ -30,6 +30,13 @@ The system SHALL degrade safely when the Confluence Folder API is unavailable.
 - WHEN the system emits compatibility diagnostics
 - THEN the diagnostics SHALL identify whether the cause was unsupported capability or an upstream endpoint failure
 
+#### Scenario: Push summary and structured reports surface active folder fallback
+
+- GIVEN push runs in folder compatibility fallback mode
+- WHEN the command prints its final summary or emits a structured JSON report
+- THEN the active fallback mode SHALL be visible in the summary/report output
+- AND the output SHALL preserve the distinction between unsupported capability and upstream endpoint failure
+
 ### Requirement: Content status API fallback
 
 The system SHALL keep syncing page content even when the tenant does not support content-status operations.

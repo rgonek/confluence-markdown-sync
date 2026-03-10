@@ -16,9 +16,12 @@ const pushPageBatchSize = 100
 type PushRemote interface {
 	GetSpace(ctx context.Context, spaceKey string) (confluence.Space, error)
 	ListPages(ctx context.Context, opts confluence.PageListOptions) (confluence.PageListResult, error)
+	ListContentStates(ctx context.Context) ([]confluence.ContentState, error)
+	ListSpaceContentStates(ctx context.Context, spaceKey string) ([]confluence.ContentState, error)
+	GetAvailableContentStates(ctx context.Context, pageID string) ([]confluence.ContentState, error)
 	GetPage(ctx context.Context, pageID string) (confluence.Page, error)
 	GetContentStatus(ctx context.Context, pageID string, pageStatus string) (string, error)
-	SetContentStatus(ctx context.Context, pageID string, pageStatus string, statusName string) error
+	SetContentStatus(ctx context.Context, pageID string, pageStatus string, state confluence.ContentState) error
 	DeleteContentStatus(ctx context.Context, pageID string, pageStatus string) error
 	GetLabels(ctx context.Context, pageID string) ([]string, error)
 	AddLabels(ctx context.Context, pageID string, labels []string) error
@@ -81,6 +84,7 @@ type PushOptions struct {
 	folderListTracker   *folderListFallbackTracker
 	folderMode          tenantFolderMode
 	contentStatusMode   tenantContentStatusMode
+	contentStateCatalog pushContentStateCatalog
 }
 
 // PushCommitPlan describes local paths and metadata for one push commit.
@@ -114,6 +118,12 @@ type pushMetadataSnapshot struct {
 	PageStatus         string
 	TrackContentStatus bool
 	Labels             []string
+}
+
+type pushContentStateCatalog struct {
+	space   map[string]confluence.ContentState
+	global  map[string]confluence.ContentState
+	perPage map[string]map[string]confluence.ContentState
 }
 
 type pushContentSnapshot struct {

@@ -678,6 +678,105 @@ func TestWorkflow_MermaidWarningAndRoundTrip(t *testing.T) {
 	}
 }
 
+func TestWorkflow_ContentStatusRoundTrip(t *testing.T) {
+	e2eCfg := requireE2EConfig(t)
+	spaceKey := e2eCfg.PrimarySpaceKey
+
+	ctx := context.Background()
+	cfg, err := config.Load("")
+	if err != nil {
+		t.Fatalf("Load config: %v", err)
+	}
+
+	client, err := confluence.NewClient(confluence.ClientConfig{
+		BaseURL:  cfg.Domain,
+		Email:    cfg.Email,
+		APIToken: cfg.APIToken,
+	})
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+
+	spaceStates, err := client.ListSpaceContentStates(ctx, spaceKey)
+	if err != nil {
+		t.Skipf("content status API unavailable for tenant: %v", err)
+	}
+	if !contentStateNamesInclude(spaceStates, "Ready to review", "In progress") {
+		t.Skipf("space %s does not expose required content states for this E2E", spaceKey)
+	}
+
+	rootDir := projectRootFromWD(t)
+	confBin := confBinaryForOS(rootDir)
+
+	tmpDir, err := os.MkdirTemp("", "conf-e2e-content-status-*")
+	if err != nil {
+		t.Fatalf("MkdirTemp: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	runCMS := func(args ...string) string {
+		cmd := exec.Command(confBin, args...)
+		cmd.Dir = tmpDir
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("Command conf %v failed: %v\n%s", args, err, string(out))
+		}
+		return string(out)
+	}
+
+	runCMS("init")
+	runCMS("pull", spaceKey, "--yes", "--non-interactive")
+
+	spaceDir := findPulledSpaceDirBySpaceKey(t, tmpDir, spaceKey)
+	stamp := time.Now().UTC().Format("20060102T150405")
+	filePath := filepath.Join(spaceDir, "Content-Status-E2E-"+stamp+".md")
+	if err := fs.WriteMarkdownDocument(filePath, fs.MarkdownDocument{
+		Frontmatter: fs.Frontmatter{
+			Title:  "Content Status E2E " + stamp,
+			Status: "Ready to review",
+		},
+		Body: "content status e2e body\n",
+	}); err != nil {
+		t.Fatalf("WriteMarkdown: %v", err)
+	}
+
+	runCMS("push", filePath, "--on-conflict=cancel", "--yes", "--non-interactive")
+
+	doc, err := fs.ReadMarkdownDocument(filePath)
+	if err != nil {
+		t.Fatalf("ReadMarkdown after create push: %v", err)
+	}
+	pageID := strings.TrimSpace(doc.Frontmatter.ID)
+	if pageID == "" {
+		t.Fatal("expected created page id after push")
+	}
+	t.Cleanup(func() {
+		if err := client.DeletePage(context.Background(), pageID, confluence.PageDeleteOptions{}); err != nil && err != confluence.ErrNotFound {
+			t.Logf("cleanup delete scratch page %s: %v", pageID, err)
+		}
+	})
+
+	waitForPageContentStatus(t, ctx, client, pageID, "current", "Ready to review")
+
+	doc.Frontmatter.Status = "In progress"
+	if err := fs.WriteMarkdownDocument(filePath, doc); err != nil {
+		t.Fatalf("WriteMarkdown update status: %v", err)
+	}
+	runCMS("push", filePath, "--on-conflict=cancel", "--yes", "--non-interactive")
+	waitForPageContentStatus(t, ctx, client, pageID, "current", "In progress")
+
+	doc, err = fs.ReadMarkdownDocument(filePath)
+	if err != nil {
+		t.Fatalf("ReadMarkdown after status update: %v", err)
+	}
+	doc.Frontmatter.Status = ""
+	if err := fs.WriteMarkdownDocument(filePath, doc); err != nil {
+		t.Fatalf("WriteMarkdown clear status: %v", err)
+	}
+	runCMS("push", filePath, "--on-conflict=cancel", "--yes", "--non-interactive")
+	waitForPageContentStatus(t, ctx, client, pageID, "current", "")
+}
+
 func TestWorkflow_PlainISODateTextStability(t *testing.T) {
 	e2eCfg := requireE2EConfig(t)
 	spaceKey := e2eCfg.PrimarySpaceKey
@@ -1636,6 +1735,17 @@ func runConfJSONReport(t *testing.T, confBin, workdir string, args ...string) co
 	return report
 }
 
+func contentStateNamesInclude(spaceStates []confluence.ContentState, expected ...string) bool {
+	needles := map[string]struct{}{}
+	for _, value := range expected {
+		needles[strings.ToLower(strings.TrimSpace(value))] = struct{}{}
+	}
+	for _, state := range spaceStates {
+		delete(needles, strings.ToLower(strings.TrimSpace(state.Name)))
+	}
+	return len(needles) == 0
+}
+
 func findReportDiagnostic(diags []commandRunReportDiagnostic, code string) *commandRunReportDiagnostic {
 	for i := range diags {
 		if strings.TrimSpace(diags[i].Code) == strings.TrimSpace(code) {
@@ -1668,6 +1778,22 @@ func relativeMarkdownPath(t *testing.T, sourceDir, targetPath string) string {
 
 func encodeMarkdownRelPath(path string) string {
 	return strings.ReplaceAll(path, " ", "%20")
+}
+
+func waitForPageContentStatus(t *testing.T, ctx context.Context, client *confluence.Client, pageID, pageStatus, expected string) {
+	t.Helper()
+
+	deadline := time.Now().Add(45 * time.Second)
+	for {
+		status, err := client.GetContentStatus(ctx, pageID, pageStatus)
+		if err == nil && strings.TrimSpace(status) == strings.TrimSpace(expected) {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("page %s content status did not reach %q before timeout; last status=%q err=%v", pageID, expected, status, err)
+		}
+		time.Sleep(2 * time.Second)
+	}
 }
 
 func waitForPageADF(t *testing.T, ctx context.Context, client *confluence.Client, pageID string, predicate func(adf []byte) bool) confluence.Page {

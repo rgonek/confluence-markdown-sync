@@ -173,6 +173,7 @@ func runPushInWorktree(
 				flagPullDiscardLocal = prevDiscardLocal
 				if pullErr != nil {
 					outcome.ConflictResolution.Status = "failed"
+					printAutoPullMergeNextSteps(out, target)
 					return outcome, fmt.Errorf("automatic pull-merge failed: %w", pullErr)
 				}
 				if strings.TrimSpace(backupRepoPath) != "" && len(backupContent) > 0 {
@@ -186,6 +187,7 @@ func runPushInWorktree(
 					retryCmd = fmt.Sprintf("conf push %q", target.Value)
 				}
 				_, _ = fmt.Fprintf(out, "automatic pull-merge completed. If there were no content conflicts, rerun `%s` to resume the push.\n", retryCmd)
+				printAutoPullMergeNextSteps(out, target)
 				return outcome, nil
 			}
 			return outcome, formatPushConflictError(conflictErr)
@@ -297,6 +299,17 @@ func runPushInWorktree(
 	slog.Info("push_sync_result", "space_key", spaceKey, "commit_count", len(result.Commits), "diagnostics", len(result.Diagnostics))
 	outcome.Warnings = append(outcome.Warnings, warnings...)
 	return outcome, nil
+}
+
+func printAutoPullMergeNextSteps(out io.Writer, target config.Target) {
+	_, _ = fmt.Fprintln(out, "Next steps:")
+	_, _ = fmt.Fprintln(out, "  1. Review any conflict markers or preserved backup files.")
+	_, _ = fmt.Fprintln(out, "  2. Resolve the affected markdown files and run `git add <file>` for each resolved file.")
+	if target.IsFile() {
+		_, _ = fmt.Fprintf(out, "  3. Rerun `conf push %q --on-conflict=cancel` once the file is resolved.\n", target.Value)
+		return
+	}
+	_, _ = fmt.Fprintln(out, "  3. Rerun `conf push <SPACE_KEY> --on-conflict=cancel` once the files are resolved.")
 }
 
 func captureAutoPullMergeBackup(repoRoot string, target config.Target) (string, []byte) {

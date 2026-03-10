@@ -29,6 +29,18 @@ func (d *dryRunPushRemote) ListPages(ctx context.Context, opts confluence.PageLi
 	return d.inner.ListPages(ctx, opts)
 }
 
+func (d *dryRunPushRemote) ListContentStates(ctx context.Context) ([]confluence.ContentState, error) {
+	return d.inner.ListContentStates(ctx)
+}
+
+func (d *dryRunPushRemote) ListSpaceContentStates(ctx context.Context, spaceKey string) ([]confluence.ContentState, error) {
+	return d.inner.ListSpaceContentStates(ctx, spaceKey)
+}
+
+func (d *dryRunPushRemote) GetAvailableContentStates(ctx context.Context, pageID string) ([]confluence.ContentState, error) {
+	return d.inner.GetAvailableContentStates(ctx, pageID)
+}
+
 func (d *dryRunPushRemote) GetPage(ctx context.Context, pageID string) (confluence.Page, error) {
 	return d.inner.GetPage(ctx, pageID)
 }
@@ -40,9 +52,9 @@ func (d *dryRunPushRemote) GetContentStatus(ctx context.Context, pageID string, 
 	return d.inner.GetContentStatus(ctx, pageID, pageStatus)
 }
 
-func (d *dryRunPushRemote) SetContentStatus(ctx context.Context, pageID string, pageStatus string, statusName string) error {
+func (d *dryRunPushRemote) SetContentStatus(ctx context.Context, pageID string, pageStatus string, state confluence.ContentState) error {
 	d.printf("[DRY-RUN] SET CONTENT STATUS (PUT %s/wiki/rest/api/content/%s/state?status=%s)\n", d.domain, pageID, pageStatus)
-	d.printf("  Name: %s\n\n", statusName)
+	d.printf("  Name: %s\n\n", state.Name)
 	return nil
 }
 

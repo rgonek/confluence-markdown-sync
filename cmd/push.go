@@ -177,6 +177,15 @@ func runPush(cmd *cobra.Command, target config.Target, onConflict string, dryRun
 	if err != nil {
 		return err
 	}
+	lock, err := acquireWorkspaceLock("push")
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if releaseErr := lock.Release(); runErr == nil && releaseErr != nil {
+			runErr = releaseErr
+		}
+	}()
 	currentBranch, err := gitClient.CurrentBranch()
 	if err != nil {
 		return err

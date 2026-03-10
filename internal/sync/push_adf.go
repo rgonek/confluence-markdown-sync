@@ -52,6 +52,7 @@ func ensureADFMediaCollection(adfJSON []byte, pageID string, refsByPath map[stri
 }
 
 var literalISODatePattern = regexp.MustCompile(`\b\d{4}-\d{2}-\d{2}\b`)
+
 const invisibleDateGuard = "\u2060"
 const nonBreakingDateHyphen = "\u2011"
 
@@ -251,7 +252,7 @@ func lookupPublishedAttachmentRef(attrs map[string]any, refByID map[string]publi
 	return publishedAttachmentRef{}
 }
 
-func syncPageMetadata(ctx context.Context, remote PushRemote, pageID string, doc fs.MarkdownDocument, existingPage bool, capabilities *tenantCapabilityCache, diagnostics *[]PushDiagnostic) error {
+func syncPageMetadata(ctx context.Context, remote PushRemote, pageID string, doc fs.MarkdownDocument, existingPage bool, capabilities *tenantCapabilityCache, catalog pushContentStateCatalog, diagnostics *[]PushDiagnostic) error {
 	// 1. Sync Content Status
 	targetStatus := strings.TrimSpace(doc.Frontmatter.Status)
 	pageStatus := normalizePageLifecycleState(doc.Frontmatter.State)
@@ -276,7 +277,11 @@ func syncPageMetadata(ctx context.Context, remote PushRemote, pageID string, doc
 					}
 				}
 			} else {
-				if err := remote.SetContentStatus(ctx, pageID, pageStatus, targetStatus); err != nil {
+				stateInput, ok := resolvePushContentStateInput(targetStatus, pageID, catalog)
+				if !ok {
+					return fmt.Errorf("resolve content status %q", targetStatus)
+				}
+				if err := remote.SetContentStatus(ctx, pageID, pageStatus, stateInput); err != nil {
 					if !isCompatibilityProbeError(err) {
 						return fmt.Errorf("set content status: %w", err)
 					}

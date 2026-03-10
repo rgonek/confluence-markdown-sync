@@ -11,6 +11,24 @@ import (
 
 func TestClient_ContentStatus(t *testing.T) {
 	mux := http.NewServeMux()
+	mux.HandleFunc("/wiki/rest/api/content-states", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if _, err := io.WriteString(w, `{"contentStates":[{"id":80,"name":"Ready to review","color":"ffab00"}]}`); err != nil {
+			t.Fatalf("write response: %v", err)
+		}
+	})
+	mux.HandleFunc("/wiki/rest/api/space/ENG/state", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if _, err := io.WriteString(w, `{"results":[{"id":80,"name":"Ready to review","color":"FFAB00"}]}`); err != nil {
+			t.Fatalf("write response: %v", err)
+		}
+	})
+	mux.HandleFunc("/wiki/rest/api/content/123/state/available", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if _, err := io.WriteString(w, `{"contentStates":[{"id":80,"name":"Ready to review","color":"ffab00"}]}`); err != nil {
+			t.Fatalf("write response: %v", err)
+		}
+	})
 	mux.HandleFunc("/wiki/rest/api/content/123/state", func(w http.ResponseWriter, r *http.Request) {
 		if got := r.URL.Query().Get("status"); got != "current" {
 			t.Fatalf("status query = %q, want current", got)
@@ -26,12 +44,14 @@ func TestClient_ContentStatus(t *testing.T) {
 			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 				t.Fatalf("decode request body: %v", err)
 			}
-			contentState, hasContentState := body["contentState"]
-			if hasContentState {
-				t.Fatalf("contentState payload = %#v; expected top-level name payload", contentState)
-			}
 			if got := body["name"]; got != "Ready to review" {
 				t.Fatalf("name payload = %v, want Ready to review", got)
+			}
+			if got := body["id"]; got != float64(80) {
+				t.Fatalf("id payload = %v, want 80", got)
+			}
+			if got := body["color"]; got != "FFAB00" {
+				t.Fatalf("color payload = %v, want FFAB00", got)
 			}
 			w.Header().Set("Content-Type", "application/json")
 			if _, err := io.WriteString(w, `{"name":"Ready to review","color":"yellow","id":80}`); err != nil {
@@ -68,9 +88,25 @@ func TestClient_ContentStatus(t *testing.T) {
 	}
 
 	// Test Set
-	err = client.SetContentStatus(ctx, "123", "current", "Ready to review")
+	err = client.SetContentStatus(ctx, "123", "current", ContentState{Name: "Ready to review"})
 	if err != nil {
 		t.Fatalf("SetContentStatus() failed: %v", err)
+	}
+
+	states, err := client.ListContentStates(ctx)
+	if err != nil {
+		t.Fatalf("ListContentStates() failed: %v", err)
+	}
+	if len(states) != 1 || states[0].ID != 80 || states[0].Color != "FFAB00" {
+		t.Fatalf("ListContentStates() = %+v, want id/color normalized", states)
+	}
+
+	spaceStates, err := client.ListSpaceContentStates(ctx, "ENG")
+	if err != nil {
+		t.Fatalf("ListSpaceContentStates() failed: %v", err)
+	}
+	if len(spaceStates) != 1 || spaceStates[0].Name != "Ready to review" {
+		t.Fatalf("ListSpaceContentStates() = %+v", spaceStates)
 	}
 
 	// Test Delete

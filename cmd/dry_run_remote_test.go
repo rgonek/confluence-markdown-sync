@@ -27,7 +27,7 @@ func TestDryRunRemote(t *testing.T) {
 		t.Error("GetPage failed")
 	}
 
-	if err := remote.SetContentStatus(ctx, "123", "current", "Ready"); err != nil {
+	if err := remote.SetContentStatus(ctx, "123", "current", confluence.ContentState{Name: "Ready"}); err != nil {
 		t.Error("SetContentStatus failed")
 	}
 

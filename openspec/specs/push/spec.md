@@ -74,6 +74,14 @@ The system SHALL make remote-ahead conflict handling explicit.
 - THEN the system SHALL run pull for the target scope
 - AND the system SHALL stop so the user can review and rerun push
 
+#### Scenario: Pull-merge prints concrete non-interactive recovery guidance
+
+- GIVEN push detects a remote-ahead conflict
+- AND the policy is `pull-merge`
+- WHEN the automatic pull stops with unresolved file conflicts or preserved local edits
+- THEN the system SHALL state that the local edits were preserved
+- AND the system SHALL print explicit next steps to resolve files, stage them, and rerun push
+
 #### Scenario: Pull-merge never silently discards local edits
 
 - GIVEN push detects a remote-ahead conflict
@@ -100,6 +108,14 @@ The system SHALL publish Markdown to Confluence using strict conversion and expl
 - WHEN push applies the deletion
 - THEN the system SHALL archive the corresponding remote page
 - AND the archived page SHALL be treated as removed from tracked local state after reconciliation
+
+#### Scenario: Archive timeout is verified before classifying the delete as failed
+
+- GIVEN a push archives a tracked remote page
+- AND Confluence long-task polling times out or returns an inconclusive in-progress result
+- WHEN push evaluates the delete outcome
+- THEN the system SHALL perform a follow-up verification read before classifying the operation as failed
+- AND the operator diagnostics SHALL distinguish "still running remotely" from a definite failure
 
 #### Scenario: Removing tracked attachments deletes remote attachments
 
@@ -135,6 +151,12 @@ The system SHALL provide safe non-write inspection modes for push.
 - GIVEN a space-scoped push has one or more in-scope Markdown changes
 - WHEN the system performs preflight, dry-run, or real push validation
 - THEN the system SHALL validate the full target space with the same strict profile before any remote write
+
+#### Scenario: Content-status metadata is preflighted before write-path mutation
+
+- GIVEN a push target contains frontmatter `status`
+- WHEN push completes preflight for remote metadata writes
+- THEN the system SHALL resolve or reject the target content-status value before creating or mutating remote page content
 
 #### Scenario: Dry-run simulates remote work without mutation
 

@@ -108,6 +108,15 @@ func Push(ctx context.Context, remote PushRemote, opts PushOptions) (PushResult,
 	if err := seedPendingPageIDsForPushChanges(opts.SpaceDir, changes, pageIDByPath); err != nil {
 		return PushResult{}, fmt.Errorf("seed pending page ids: %w", err)
 	}
+	if opts.contentStatusMode != tenantContentStatusModeDisabled {
+		opts.contentStateCatalog, err = buildPushContentStateCatalog(ctx, remote, opts.SpaceKey, opts.SpaceDir, changes, pageIDByPath)
+		if err != nil {
+			return PushResult{State: state, Diagnostics: diagnostics}, err
+		}
+		if err := validatePushContentStatuses(opts.SpaceKey, opts.SpaceDir, changes, pageIDByPath, opts.contentStateCatalog); err != nil {
+			return PushResult{State: state, Diagnostics: diagnostics}, err
+		}
+	}
 	if err := runPushUpsertPreflight(ctx, opts, changes, pageIDByPath, attachmentIDByPath); err != nil {
 		return PushResult{}, err
 	}
@@ -260,17 +269,33 @@ func pushDeletePage(
 				PollInterval: opts.ArchivePollInterval,
 			})
 			if waitErr != nil {
-				code := "ARCHIVE_TASK_FAILED"
-				if errors.Is(waitErr, confluence.ErrArchiveTaskTimeout) {
-					code = "ARCHIVE_TASK_TIMEOUT"
-				}
+				verifiedArchived, verificationDetail := verifyArchivedAfterArchiveWaitFailure(ctx, remote, pageID)
+				if verifiedArchived {
+					appendPushDiagnostic(
+						diagnostics,
+						relPath,
+						"ARCHIVE_CONFIRMED_AFTER_WAIT_FAILURE",
+						fmt.Sprintf("archive task %s reported %v, but follow-up verification confirmed page %s is no longer current (%s)", taskID, waitErr, pageID, verificationDetail),
+					)
+				} else {
+					code := "ARCHIVE_TASK_FAILED"
+					if errors.Is(waitErr, confluence.ErrArchiveTaskTimeout) {
+						code = "ARCHIVE_TASK_TIMEOUT"
+						if verificationDetail != "" {
+							code = "ARCHIVE_TASK_STILL_RUNNING"
+						}
+					}
 
-				message := fmt.Sprintf("archive task %s did not complete for page %s: %v", taskID, pageID, waitErr)
-				if strings.TrimSpace(status.RawStatus) != "" {
-					message = fmt.Sprintf("archive task %s did not complete for page %s (status=%s): %v", taskID, pageID, status.RawStatus, waitErr)
+					message := fmt.Sprintf("archive task %s did not complete for page %s: %v", taskID, pageID, waitErr)
+					if strings.TrimSpace(status.RawStatus) != "" {
+						message = fmt.Sprintf("archive task %s did not complete for page %s (status=%s): %v", taskID, pageID, status.RawStatus, waitErr)
+					}
+					if verificationDetail != "" {
+						message = fmt.Sprintf("%s; verification=%s; consider rerunning with --archive-task-timeout=%s if Confluence is slow", message, verificationDetail, normalizedArchiveTimeoutForDiagnostic(opts.ArchiveTimeout))
+					}
+					appendPushDiagnostic(diagnostics, relPath, code, message)
+					return PushCommitPlan{}, fmt.Errorf("wait for archive task %s for page %s: %w", taskID, pageID, waitErr)
 				}
-				appendPushDiagnostic(diagnostics, relPath, code, message)
-				return PushCommitPlan{}, fmt.Errorf("wait for archive task %s for page %s: %w", taskID, pageID, waitErr)
 			}
 		}
 	}
@@ -318,6 +343,34 @@ func pushDeletePage(
 		URL:         page.WebURL,
 		StagedPaths: stagedPaths,
 	}, nil
+}
+
+func verifyArchivedAfterArchiveWaitFailure(ctx context.Context, remote PushRemote, pageID string) (bool, string) {
+	page, err := remote.GetPage(ctx, pageID)
+	switch {
+	case err == nil:
+		status := normalizePageLifecycleState(page.Status)
+		if status == "archived" {
+			return true, "page status is archived"
+		}
+		if status == "current" || status == "draft" {
+			return false, fmt.Sprintf("page still resolves as %s", status)
+		}
+		return false, fmt.Sprintf("page still resolves with status %q", page.Status)
+	case errors.Is(err, confluence.ErrArchived):
+		return true, "GetPage reports archived"
+	case errors.Is(err, confluence.ErrNotFound):
+		return true, "GetPage no longer finds the page"
+	default:
+		return false, fmt.Sprintf("verification read failed: %v", err)
+	}
+}
+
+func normalizedArchiveTimeoutForDiagnostic(timeout time.Duration) time.Duration {
+	if timeout <= 0 {
+		return confluence.DefaultArchiveTaskTimeout
+	}
+	return timeout
 }
 
 func deleteLocalAssetFile(spaceDir, relPath string) error {
@@ -509,7 +562,7 @@ func pushUpsertPage(
 				diagnostics,
 				move.To,
 				"ATTACHMENT_PATH_NORMALIZED",
-				fmt.Sprintf("moved %s to %s and updated markdown reference", move.From, move.To),
+				fmt.Sprintf("moved %s to %s and updated the markdown reference; this first-push asset relocation is expected and stable after pull", move.From, move.To),
 			)
 		}
 	}
@@ -835,7 +888,7 @@ func pushUpsertPage(
 		rollback.trackMetadataSnapshot(pageID, snapshot)
 	}
 
-	if err := syncPageMetadata(ctx, remote, pageID, doc, isExistingPage, capabilities, diagnostics); err != nil {
+	if err := syncPageMetadata(ctx, remote, pageID, doc, isExistingPage, capabilities, opts.contentStateCatalog, diagnostics); err != nil {
 		return failWithRollback(fmt.Errorf("sync metadata for %s: %w", relPath, err))
 	}
 	rollback.clearMetadataSnapshot()

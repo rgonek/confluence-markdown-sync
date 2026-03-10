@@ -97,3 +97,14 @@ The system SHALL work without requiring a Git remote.
 - WHEN the user runs `pull`, `validate`, `diff`, `push`, `status`, `doctor`, or `recover`
 - THEN the system SHALL rely on local Git state only
 - AND the system SHALL not require `git fetch`, `git pull`, or `git push`
+
+### Requirement: Mutating workspace commands are serialized per repository
+
+The system SHALL prevent concurrent mutating sync commands from operating on the same local repository at the same time.
+
+#### Scenario: Second mutating command fails fast while a sync lock is held
+
+- GIVEN another `pull` or `push` command is already mutating the same repository
+- WHEN a second `pull` or `push` command starts
+- THEN the system SHALL fail fast with a clear lock/conflict error
+- AND the system SHALL not proceed far enough to trigger incidental Git index or filesystem corruption errors

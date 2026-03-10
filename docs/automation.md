@@ -14,6 +14,8 @@ Supported on `pull` and `push`:
   - disables prompts,
   - fails fast when a decision is required and not provided.
 
+`pull` and `push` also take a repository-scoped workspace lock. If another sync is already mutating the same repo, the second command fails fast with a lock message instead of continuing into incidental Git/index failures.
+
 Additional pull flag:
 
 - `--skip-missing-assets` (`-s`)
@@ -49,6 +51,12 @@ When remote versions are ahead:
 - `cancel`: stop without remote writes.
 
 In non-interactive usage, set one explicitly.
+
+If `pull-merge` stops after preserving local edits, the CLI now prints the expected recovery sequence explicitly:
+
+1. Resolve the affected files or review preserved backup files.
+2. `git add` each resolved file.
+3. Rerun `conf push ... --on-conflict=cancel`.
 
 If a real `push` fails after recovery artifacts are created, the CLI prints the next commands to run for:
 
@@ -91,14 +99,18 @@ Rollback outcomes are surfaced as diagnostics in command output:
 Archive/page-removal safety diagnostics:
 
 - `ARCHIVE_TASK_TIMEOUT`
+- `ARCHIVE_TASK_STILL_RUNNING`
 - `ARCHIVE_TASK_FAILED`
+- `ARCHIVE_CONFIRMED_AFTER_WAIT_FAILURE`
 
 If any `*_FAILED` code appears, treat the run as partial and inspect the referenced page before retrying.
+If `ARCHIVE_TASK_STILL_RUNNING` appears, Confluence did not finish within the current timeout and the verification read still saw the page as current; inspect the page remotely and consider increasing `--archive-task-timeout`.
 
 Asset drift note:
 
 - `conf status` remains page-only.
 - Use `git status` for local asset changes and `conf diff` when automation needs attachment-aware remote inspection.
+- The first push for locally sourced assets may emit `ATTACHMENT_PATH_NORMALIZED` because `conf` relocates files into the managed `assets/<page-id>/...` hierarchy. That rename is expected and stable after the next pull.
 
 ## Dry-Run Behavior (`push --dry-run`)
 

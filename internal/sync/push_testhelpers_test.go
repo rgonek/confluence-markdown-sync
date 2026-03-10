@@ -37,6 +37,18 @@ func (f *fakeFolderPushRemote) ListPages(_ context.Context, _ confluence.PageLis
 	return confluence.PageListResult{Pages: f.pages}, nil
 }
 
+func (f *fakeFolderPushRemote) ListContentStates(_ context.Context) ([]confluence.ContentState, error) {
+	return nil, nil
+}
+
+func (f *fakeFolderPushRemote) ListSpaceContentStates(_ context.Context, _ string) ([]confluence.ContentState, error) {
+	return nil, nil
+}
+
+func (f *fakeFolderPushRemote) GetAvailableContentStates(_ context.Context, _ string) ([]confluence.ContentState, error) {
+	return nil, nil
+}
+
 func (f *fakeFolderPushRemote) GetPage(_ context.Context, pageID string) (confluence.Page, error) {
 	if page, ok := f.pagesByID[pageID]; ok {
 		return page, nil
@@ -48,7 +60,7 @@ func (f *fakeFolderPushRemote) GetContentStatus(_ context.Context, pageID string
 	return "", nil
 }
 
-func (f *fakeFolderPushRemote) SetContentStatus(_ context.Context, pageID string, _ string, statusName string) error {
+func (f *fakeFolderPushRemote) SetContentStatus(_ context.Context, pageID string, _ string, status confluence.ContentState) error {
 	return nil
 }
 
@@ -166,6 +178,7 @@ type rollbackPushRemote struct {
 	listFoldersErr           error
 	getContentStatusErr      error
 	failUpdate               bool
+	failCreatePageErr        error
 	failAddLabels            bool
 	failSetContentStatus     bool
 	failDeleteContentStatus  bool
@@ -173,18 +186,29 @@ type rollbackPushRemote struct {
 	rejectParentErr          error
 	updateInputsByPageID     map[string]confluence.PageUpsertInput
 	updateCallInputs         []confluence.PageUpsertInput
+	contentStates            []confluence.ContentState
+	spaceContentStates       []confluence.ContentState
+	availableStatesByPage    map[string][]confluence.ContentState
+	waitForArchiveTaskHook   func(*rollbackPushRemote, string)
 }
 
 func newRollbackPushRemote() *rollbackPushRemote {
 	return &rollbackPushRemote{
-		space:                confluence.Space{ID: "space-1", Key: "ENG", Name: "Engineering"},
-		pagesByID:            map[string]confluence.Page{},
-		contentStatuses:      map[string]string{},
-		labelsByPage:         map[string][]string{},
-		attachmentsByPage:    map[string][]confluence.Attachment{},
-		updateInputsByPageID: map[string]confluence.PageUpsertInput{},
-		nextPageID:           1,
-		nextAttachmentID:     1,
+		space:                 confluence.Space{ID: "space-1", Key: "ENG", Name: "Engineering"},
+		pagesByID:             map[string]confluence.Page{},
+		contentStatuses:       map[string]string{},
+		labelsByPage:          map[string][]string{},
+		attachmentsByPage:     map[string][]confluence.Attachment{},
+		updateInputsByPageID:  map[string]confluence.PageUpsertInput{},
+		availableStatesByPage: map[string][]confluence.ContentState{},
+		nextPageID:            1,
+		nextAttachmentID:      1,
+		contentStates: []confluence.ContentState{
+			{ID: 80, Name: "Ready to review", Color: "FFAB00"},
+			{ID: 81, Name: "In progress", Color: "0052CC"},
+			{ID: 82, Name: "Ready", Color: "36B37E"},
+			{ID: 83, Name: "In review", Color: "6554C0"},
+		},
 		archiveTaskStatus: confluence.ArchiveTaskStatus{
 			State: confluence.ArchiveTaskStateSucceeded,
 		},
@@ -197,6 +221,24 @@ func (f *rollbackPushRemote) GetSpace(_ context.Context, spaceKey string) (confl
 
 func (f *rollbackPushRemote) ListPages(_ context.Context, _ confluence.PageListOptions) (confluence.PageListResult, error) {
 	return confluence.PageListResult{Pages: append([]confluence.Page(nil), f.pages...)}, nil
+}
+
+func (f *rollbackPushRemote) ListContentStates(_ context.Context) ([]confluence.ContentState, error) {
+	return append([]confluence.ContentState(nil), f.contentStates...), nil
+}
+
+func (f *rollbackPushRemote) ListSpaceContentStates(_ context.Context, _ string) ([]confluence.ContentState, error) {
+	if len(f.spaceContentStates) == 0 {
+		return append([]confluence.ContentState(nil), f.contentStates...), nil
+	}
+	return append([]confluence.ContentState(nil), f.spaceContentStates...), nil
+}
+
+func (f *rollbackPushRemote) GetAvailableContentStates(_ context.Context, pageID string) ([]confluence.ContentState, error) {
+	if states, ok := f.availableStatesByPage[strings.TrimSpace(pageID)]; ok {
+		return append([]confluence.ContentState(nil), states...), nil
+	}
+	return append([]confluence.ContentState(nil), f.contentStates...), nil
 }
 
 func (f *rollbackPushRemote) GetPage(_ context.Context, pageID string) (confluence.Page, error) {
@@ -215,12 +257,13 @@ func (f *rollbackPushRemote) GetContentStatus(_ context.Context, pageID string, 
 	return f.contentStatuses[pageID], nil
 }
 
-func (f *rollbackPushRemote) SetContentStatus(_ context.Context, pageID string, pageStatus string, statusName string) error {
+func (f *rollbackPushRemote) SetContentStatus(_ context.Context, pageID string, pageStatus string, status confluence.ContentState) error {
 	f.setContentStatusCalls = append(f.setContentStatusCalls, pageID)
+	statusName := strings.TrimSpace(status.Name)
 	f.setContentStatusArgs = append(f.setContentStatusArgs, contentStatusCall{
 		PageID:     pageID,
 		PageStatus: strings.TrimSpace(pageStatus),
-		StatusName: strings.TrimSpace(statusName),
+		StatusName: statusName,
 	})
 	if f.failSetContentStatus {
 		return errors.New("simulated set content status failure")
@@ -271,6 +314,9 @@ func (f *rollbackPushRemote) RemoveLabel(_ context.Context, pageID string, label
 
 func (f *rollbackPushRemote) CreatePage(_ context.Context, input confluence.PageUpsertInput) (confluence.Page, error) {
 	f.createPageCalls++
+	if f.failCreatePageErr != nil {
+		return confluence.Page{}, f.failCreatePageErr
+	}
 	id := fmt.Sprintf("new-page-%d", f.nextPageID)
 	f.nextPageID++
 	page := confluence.Page{
@@ -330,6 +376,9 @@ func (f *rollbackPushRemote) ArchivePages(_ context.Context, _ []string) (conflu
 
 func (f *rollbackPushRemote) WaitForArchiveTask(_ context.Context, taskID string, _ confluence.ArchiveTaskWaitOptions) (confluence.ArchiveTaskStatus, error) {
 	f.archiveTaskCalls = append(f.archiveTaskCalls, taskID)
+	if f.waitForArchiveTaskHook != nil {
+		f.waitForArchiveTaskHook(f, taskID)
+	}
 	if f.archiveTaskWaitErr != nil {
 		status := f.archiveTaskStatus
 		if strings.TrimSpace(status.TaskID) == "" {

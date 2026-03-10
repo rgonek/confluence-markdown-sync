@@ -11,8 +11,8 @@ import (
 	"time"
 
 	"github.com/charmbracelet/huh"
-	"github.com/rgonek/confluence-markdown-sync/internal/git"
 	"github.com/rgonek/confluence-markdown-sync/internal/fs"
+	"github.com/rgonek/confluence-markdown-sync/internal/git"
 )
 
 func stashScopeIfDirty(repoRoot, scopePath, spaceKey string, ts time.Time) (string, error) {

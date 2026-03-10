@@ -565,23 +565,24 @@ func precreatePendingPushPages(
 			BodyADF:      []byte(`{"version":1,"type":"doc","content":[]}`),
 		})
 		if err != nil {
-			// If page with this title already exists, try to find it and use its ID
-			if strings.Contains(err.Error(), "400") && (strings.Contains(strings.ToLower(err.Error()), "title already exists") || strings.Contains(strings.ToLower(err.Error()), "already exists with the same title")) {
-				// Use specific title filter for efficiency and reliability
-				pages, listErr := remote.ListPages(ctx, confluence.PageListOptions{
-					SpaceID: space.ID,
-					Title:   title,
-					Status:  "current",
-				})
-				if listErr == nil {
-					for _, p := range pages.Pages {
-						if strings.EqualFold(strings.TrimSpace(p.Title), strings.TrimSpace(title)) {
-							created = p
-							err = nil
-							break
-						}
-					}
+			if isDuplicateTitleCreateError(err) {
+				conflictPage, conflictStatuses, resolved := findRemoteTitleCollision(ctx, remote, space.ID, title)
+				if resolved {
+					return nil, fmt.Errorf(
+						"create placeholder page for %s: remote page title collision for %q (id=%s status=%s title=%q); rename the new file or reconcile the conflicting remote page first",
+						relPath,
+						title,
+						conflictPage.ID,
+						conflictPage.Status,
+						conflictPage.Title,
+					)
 				}
+				return nil, fmt.Errorf(
+					"create placeholder page for %s: remote page title collision for %q, but the conflicting page was not discoverable through current/draft/archived title lookups (checked: %s); inspect the space for hidden or permission-restricted pages before retrying",
+					relPath,
+					title,
+					strings.Join(conflictStatuses, ", "),
+				)
 			}
 			if err != nil {
 				return nil, fmt.Errorf("create placeholder page for %s: %w", relPath, err)
@@ -598,6 +599,34 @@ func precreatePendingPushPages(
 	}
 
 	return precreated, nil
+}
+
+func isDuplicateTitleCreateError(err error) bool {
+	if err == nil {
+		return false
+	}
+	lower := strings.ToLower(err.Error())
+	return strings.Contains(lower, "title already exists") || strings.Contains(lower, "already exists with the same title") || strings.Contains(lower, "a page with this title already exists")
+}
+
+func findRemoteTitleCollision(ctx context.Context, remote PushRemote, spaceID, title string) (confluence.Page, []string, bool) {
+	statuses := []string{"current", "draft", "archived"}
+	for _, status := range statuses {
+		pages, err := remote.ListPages(ctx, confluence.PageListOptions{
+			SpaceID: spaceID,
+			Title:   title,
+			Status:  status,
+		})
+		if err != nil {
+			continue
+		}
+		for _, page := range pages.Pages {
+			if strings.EqualFold(strings.TrimSpace(page.Title), strings.TrimSpace(title)) {
+				return page, statuses, true
+			}
+		}
+	}
+	return confluence.Page{}, statuses, false
 }
 
 func cleanupPendingPrecreatedPages(
