@@ -891,6 +891,13 @@ func pushUpsertPage(
 	if err := syncPageMetadata(ctx, remote, pageID, doc, isExistingPage, capabilities, opts.contentStateCatalog, diagnostics); err != nil {
 		return failWithRollback(fmt.Errorf("sync metadata for %s: %w", relPath, err))
 	}
+	if !opts.DryRun {
+		refreshedPage, err := remote.GetPage(ctx, pageID)
+		if err != nil {
+			return failWithRollback(fmt.Errorf("refresh page %s after metadata sync: %w", pageID, err))
+		}
+		updatedPage = refreshedPage
+	}
 	rollback.clearMetadataSnapshot()
 
 	doc.Frontmatter.Title = title

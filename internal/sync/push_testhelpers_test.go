@@ -182,6 +182,7 @@ type rollbackPushRemote struct {
 	failAddLabels            bool
 	failSetContentStatus     bool
 	failDeleteContentStatus  bool
+	contentStatusVersionBump bool
 	rejectParentID           string
 	rejectParentErr          error
 	updateInputsByPageID     map[string]confluence.PageUpsertInput
@@ -269,6 +270,9 @@ func (f *rollbackPushRemote) SetContentStatus(_ context.Context, pageID string, 
 		return errors.New("simulated set content status failure")
 	}
 	f.contentStatuses[pageID] = strings.TrimSpace(statusName)
+	if f.contentStatusVersionBump {
+		f.bumpPageVersion(pageID)
+	}
 	return nil
 }
 
@@ -282,6 +286,9 @@ func (f *rollbackPushRemote) DeleteContentStatus(_ context.Context, pageID strin
 		return errors.New("simulated delete content status failure")
 	}
 	f.contentStatuses[pageID] = ""
+	if f.contentStatusVersionBump {
+		f.bumpPageVersion(pageID)
+	}
 	return nil
 }
 
@@ -473,4 +480,18 @@ func (f *rollbackPushRemote) DeleteFolder(_ context.Context, _ string) error {
 
 func (f *rollbackPushRemote) MovePage(_ context.Context, pageID string, targetID string) error {
 	return nil
+}
+
+func (f *rollbackPushRemote) bumpPageVersion(pageID string) {
+	page, ok := f.pagesByID[strings.TrimSpace(pageID)]
+	if !ok {
+		return
+	}
+	page.Version++
+	f.pagesByID[pageID] = page
+	for i := range f.pages {
+		if strings.TrimSpace(f.pages[i].ID) == strings.TrimSpace(pageID) {
+			f.pages[i] = page
+		}
+	}
 }

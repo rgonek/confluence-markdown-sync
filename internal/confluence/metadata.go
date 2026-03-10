@@ -130,18 +130,13 @@ func (c *Client) SetContentStatus(ctx context.Context, pageID string, pageStatus
 	if statusName == "" {
 		return errors.New("status name is required")
 	}
-	if state.ID <= 0 || normalizeContentStateColor(state.Color) == "" {
-		if available, err := c.GetAvailableContentStates(ctx, id); err == nil {
-			for _, candidate := range available {
-				if strings.EqualFold(strings.TrimSpace(candidate.Name), statusName) {
-					if state.ID <= 0 {
-						state.ID = candidate.ID
-					}
-					if normalizeContentStateColor(state.Color) == "" {
-						state.Color = candidate.Color
-					}
-					break
-				}
+	if available, err := c.GetAvailableContentStates(ctx, id); err == nil {
+		for _, candidate := range available {
+			if strings.EqualFold(strings.TrimSpace(candidate.Name), statusName) {
+				state.ID = candidate.ID
+				state.Name = candidate.Name
+				state.Color = candidate.Color
+				break
 			}
 		}
 	}
@@ -150,13 +145,10 @@ func (c *Client) SetContentStatus(ctx context.Context, pageID string, pageStatus
 	query.Set("status", normalizeContentStatePageStatus(pageStatus))
 
 	payload := map[string]any{
-		"name": statusName,
+		"name": strings.TrimSpace(state.Name),
 	}
 	if state.ID > 0 {
 		payload["id"] = state.ID
-	}
-	if color := normalizeContentStateColor(state.Color); color != "" {
-		payload["color"] = color
 	}
 
 	req, err := c.newRequest(
@@ -222,11 +214,12 @@ func normalizeContentStatePageStatus(pageStatus string) string {
 }
 
 func normalizeContentStateColor(value string) string {
-	value = strings.TrimSpace(strings.TrimPrefix(value, "#"))
-	if !contentStateColorPattern.MatchString(value) {
+	value = strings.TrimSpace(value)
+	trimmed := strings.TrimPrefix(value, "#")
+	if !contentStateColorPattern.MatchString(trimmed) {
 		return ""
 	}
-	return strings.ToUpper(value)
+	return "#" + trimmed
 }
 
 func normalizeContentStates(stateGroups ...[]contentStateDTO) []ContentState {
@@ -260,13 +253,15 @@ func decodeContentStateListPayload(payload json.RawMessage) ([]ContentState, err
 	}
 
 	var wrapped struct {
-		ContentStates []contentStateDTO `json:"contentStates"`
-		Results       []contentStateDTO `json:"results"`
+		ContentStates       []contentStateDTO `json:"contentStates"`
+		Results             []contentStateDTO `json:"results"`
+		SpaceContentStates  []contentStateDTO `json:"spaceContentStates"`
+		CustomContentStates []contentStateDTO `json:"customContentStates"`
 	}
 	if err := json.Unmarshal(payload, &wrapped); err != nil {
 		return nil, fmt.Errorf("decode content states payload: %w", err)
 	}
-	return normalizeContentStates(wrapped.ContentStates, wrapped.Results), nil
+	return normalizeContentStates(wrapped.ContentStates, wrapped.Results, wrapped.SpaceContentStates, wrapped.CustomContentStates), nil
 }
 
 // GetLabels fetches all labels for a given page via v1 API.

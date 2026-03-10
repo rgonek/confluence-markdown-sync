@@ -13,6 +13,7 @@ import (
 	"runtime"
 	"sort"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -711,9 +712,11 @@ func TestWorkflow_ContentStatusRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Skipf("content status API unavailable for tenant: %v", err)
 	}
-	if !contentStateNamesInclude(spaceStates, "Ready to review", "In progress") {
-		t.Skipf("space %s does not expose required content states for this E2E", spaceKey)
+	initialStatus, updateStatus, ok := selectContentStatusSequence(spaceStates)
+	if !ok {
+		t.Skipf("space %s does not expose at least two usable content states for this E2E", spaceKey)
 	}
+	t.Logf("using content statuses: initial=%q update=%q", initialStatus, updateStatus)
 
 	rootDir := projectRootFromWD(t)
 	confBin := confBinaryForOS(rootDir)
@@ -743,7 +746,7 @@ func TestWorkflow_ContentStatusRoundTrip(t *testing.T) {
 	if err := fs.WriteMarkdownDocument(filePath, fs.MarkdownDocument{
 		Frontmatter: fs.Frontmatter{
 			Title:  "Content Status E2E " + stamp,
-			Status: "Ready to review",
+			Status: initialStatus,
 		},
 		Body: "content status e2e body\n",
 	}); err != nil {
@@ -766,14 +769,14 @@ func TestWorkflow_ContentStatusRoundTrip(t *testing.T) {
 		}
 	})
 
-	waitForPageContentStatus(t, ctx, client, pageID, "current", "Ready to review")
+	waitForPageContentStatus(t, ctx, client, pageID, "current", initialStatus)
 
-	doc.Frontmatter.Status = "In progress"
+	doc.Frontmatter.Status = updateStatus
 	if err := fs.WriteMarkdownDocument(filePath, doc); err != nil {
 		t.Fatalf("WriteMarkdown update status: %v", err)
 	}
 	runCMS("push", filePath, "--on-conflict=cancel", "--yes", "--non-interactive")
-	waitForPageContentStatus(t, ctx, client, pageID, "current", "In progress")
+	waitForPageContentStatus(t, ctx, client, pageID, "current", updateStatus)
 
 	doc, err = fs.ReadMarkdownDocument(filePath)
 	if err != nil {
@@ -1554,10 +1557,29 @@ func projectRootFromWD(t *testing.T) string {
 }
 
 func confBinaryForOS(rootDir string) string {
+	buildConfBinaryForE2E(rootDir)
+	return confBinaryPath(rootDir)
+}
+
+func confBinaryPath(rootDir string) string {
 	if runtime.GOOS == "windows" {
 		return filepath.Join(rootDir, "conf.exe")
 	}
 	return filepath.Join(rootDir, "conf")
+}
+
+func buildConfBinaryForE2E(rootDir string) {
+	e2eBinaryBuildOnce.Do(func() {
+		cmd := exec.Command("go", "build", "-o", confBinaryPath(rootDir), "./cmd/conf")
+		cmd.Dir = rootDir
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			e2eBinaryBuildErr = fmt.Errorf("build conf binary: %w\n%s", err, string(out))
+		}
+	})
+	if e2eBinaryBuildErr != nil {
+		panic(e2eBinaryBuildErr)
+	}
 }
 
 func findPulledSpaceDir(t *testing.T, workspaceRoot string) string {
@@ -1755,6 +1777,56 @@ func contentStateNamesInclude(spaceStates []confluence.ContentState, expected ..
 	}
 	return len(needles) == 0
 }
+
+func selectContentStatusSequence(spaceStates []confluence.ContentState) (string, string, bool) {
+	preferredInitial := []string{"ready for review", "ready to review", "verified", "rough draft"}
+	preferredUpdate := []string{"in progress", "verified", "ready for review", "ready to review"}
+
+	stateNames := make([]string, 0, len(spaceStates))
+	stateSet := map[string]string{}
+	for _, state := range spaceStates {
+		name := strings.TrimSpace(state.Name)
+		if name == "" {
+			continue
+		}
+		key := strings.ToLower(name)
+		if _, exists := stateSet[key]; exists {
+			continue
+		}
+		stateSet[key] = name
+		stateNames = append(stateNames, name)
+	}
+
+	pick := func(candidates []string, exclude string) string {
+		excludeKey := strings.ToLower(strings.TrimSpace(exclude))
+		for _, candidate := range candidates {
+			if actual, ok := stateSet[candidate]; ok && candidate != excludeKey {
+				return actual
+			}
+		}
+		for _, actual := range stateNames {
+			if strings.ToLower(strings.TrimSpace(actual)) != excludeKey {
+				return actual
+			}
+		}
+		return ""
+	}
+
+	initial := pick(preferredInitial, "")
+	if initial == "" {
+		return "", "", false
+	}
+	update := pick(preferredUpdate, initial)
+	if update == "" || strings.EqualFold(initial, update) {
+		return "", "", false
+	}
+	return initial, update, true
+}
+
+var (
+	e2eBinaryBuildOnce sync.Once
+	e2eBinaryBuildErr  error
+)
 
 func findReportDiagnostic(diags []commandRunReportDiagnostic, code string) *commandRunReportDiagnostic {
 	for i := range diags {

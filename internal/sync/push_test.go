@@ -373,3 +373,58 @@ func TestPush_ExistingPageCanSetAndClearContentStatus(t *testing.T) {
 		t.Fatalf("content status after clear = %q, want empty", got)
 	}
 }
+
+func TestPush_RefreshesLocalVersionAfterContentStatusMutation(t *testing.T) {
+	spaceDir := t.TempDir()
+	mdPath := filepath.Join(spaceDir, "root.md")
+
+	if err := fs.WriteMarkdownDocument(mdPath, fs.MarkdownDocument{
+		Frontmatter: fs.Frontmatter{
+			Title:   "Root",
+			ID:      "1",
+			Version: 1,
+			Status:  "In progress",
+		},
+		Body: "content\n",
+	}); err != nil {
+		t.Fatalf("write markdown: %v", err)
+	}
+
+	remote := newRollbackPushRemote()
+	remote.contentStatusVersionBump = true
+	remote.pagesByID["1"] = confluence.Page{
+		ID:      "1",
+		SpaceID: "space-1",
+		Title:   "Root",
+		Status:  "current",
+		Version: 1,
+		BodyADF: []byte(`{"version":1,"type":"doc","content":[]}`),
+	}
+	remote.pages = append(remote.pages, remote.pagesByID["1"])
+
+	result, err := Push(context.Background(), remote, PushOptions{
+		SpaceKey:       "ENG",
+		SpaceDir:       spaceDir,
+		Domain:         "https://example.atlassian.net",
+		State:          fs.SpaceState{SpaceKey: "ENG", PagePathIndex: map[string]string{"root.md": "1"}},
+		ConflictPolicy: PushConflictPolicyCancel,
+		Changes:        []PushFileChange{{Type: PushChangeModify, Path: "root.md"}},
+	})
+	if err != nil {
+		t.Fatalf("Push() unexpected error: %v", err)
+	}
+
+	doc, err := fs.ReadMarkdownDocument(mdPath)
+	if err != nil {
+		t.Fatalf("ReadMarkdownDocument() failed: %v", err)
+	}
+	if doc.Frontmatter.Version != 3 {
+		t.Fatalf("local version = %d, want 3", doc.Frontmatter.Version)
+	}
+	if result.Commits[0].Version != 3 {
+		t.Fatalf("commit version = %d, want 3", result.Commits[0].Version)
+	}
+	if remote.pagesByID["1"].Version != 3 {
+		t.Fatalf("remote version = %d, want 3", remote.pagesByID["1"].Version)
+	}
+}

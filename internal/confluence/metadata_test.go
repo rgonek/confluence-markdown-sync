@@ -25,7 +25,7 @@ func TestClient_ContentStatus(t *testing.T) {
 	})
 	mux.HandleFunc("/wiki/rest/api/content/123/state/available", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		if _, err := io.WriteString(w, `{"contentStates":[{"id":80,"name":"Ready to review","color":"ffab00"}]}`); err != nil {
+		if _, err := io.WriteString(w, `{"spaceContentStates":[{"id":23396382,"name":"Ready to review","color":"ffab00"}],"customContentStates":[]}`); err != nil {
 			t.Fatalf("write response: %v", err)
 		}
 	})
@@ -47,11 +47,11 @@ func TestClient_ContentStatus(t *testing.T) {
 			if got := body["name"]; got != "Ready to review" {
 				t.Fatalf("name payload = %v, want Ready to review", got)
 			}
-			if got := body["id"]; got != float64(80) {
-				t.Fatalf("id payload = %v, want 80", got)
+			if got := body["id"]; got != float64(23396382) {
+				t.Fatalf("id payload = %v, want 23396382", got)
 			}
-			if got := body["color"]; got != "FFAB00" {
-				t.Fatalf("color payload = %v, want FFAB00", got)
+			if _, exists := body["color"]; exists {
+				t.Fatalf("color payload should be omitted, got %v", body["color"])
 			}
 			w.Header().Set("Content-Type", "application/json")
 			if _, err := io.WriteString(w, `{"name":"Ready to review","color":"yellow","id":80}`); err != nil {
@@ -97,7 +97,7 @@ func TestClient_ContentStatus(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListContentStates() failed: %v", err)
 	}
-	if len(states) != 1 || states[0].ID != 80 || states[0].Color != "FFAB00" {
+	if len(states) != 1 || states[0].ID != 80 || states[0].Color != "#ffab00" {
 		t.Fatalf("ListContentStates() = %+v, want id/color normalized", states)
 	}
 
