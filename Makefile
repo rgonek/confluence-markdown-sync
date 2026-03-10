@@ -40,9 +40,10 @@ fmt:
 fmt-check:
 	$(GO) run ./tools/gofmtcheck
 
-## lint: run static checks
+## lint: run the same static checks used in CI
 lint:
 	$(GO) vet ./...
+	golangci-lint run
 
 ## clean: remove build artifacts
 clean:

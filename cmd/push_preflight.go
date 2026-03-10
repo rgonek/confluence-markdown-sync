@@ -292,19 +292,6 @@ func isPreflightCapabilityProbeError(err error) bool {
 	}
 }
 
-func preflightChangesNeedFolderHierarchy(changes []syncflow.PushFileChange) bool {
-	for _, change := range changes {
-		if change.Type == syncflow.PushChangeDelete {
-			continue
-		}
-		dirPath := strings.TrimSpace(filepath.ToSlash(filepath.Dir(filepath.FromSlash(change.Path))))
-		if dirPath != "" && dirPath != "." {
-			return true
-		}
-	}
-	return false
-}
-
 func preflightAttachmentMutations(spaceDir string, syncChanges []syncflow.PushFileChange, state fs.SpaceState) (uploads, deletes []string) {
 	plannedUploadKeys := map[string]struct{}{}
 

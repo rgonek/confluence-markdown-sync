@@ -1,12 +1,9 @@
 package sync
 
 import (
-	"context"
 	"log/slog"
 	"strings"
 	"sync"
-
-	"github.com/rgonek/confluence-markdown-sync/internal/confluence"
 )
 
 type folderListFallbackTracker struct {
@@ -71,18 +68,4 @@ func (t *folderListFallbackTracker) Report(scope string, err error) {
 			"repeat_count", state.count-1,
 		)
 	}
-}
-
-func listAllPushFoldersWithTracking(
-	ctx context.Context,
-	remote PushRemote,
-	opts confluence.FolderListOptions,
-	tracker *folderListFallbackTracker,
-	scope string,
-) ([]confluence.Folder, error) {
-	folders, err := listAllPushFolders(ctx, remote, opts)
-	if err != nil {
-		tracker.Report(scope, err)
-	}
-	return folders, err
 }

@@ -10,31 +10,6 @@ import (
 	syncflow "github.com/rgonek/confluence-markdown-sync/internal/sync"
 )
 
-func restoreUntrackedFromStashParent(client *git.Client, stashRef, scopePath string) error {
-	stashRef = strings.TrimSpace(stashRef)
-	if stashRef == "" {
-		return nil
-	}
-
-	untrackedRef := stashRef + "^3"
-	if _, err := client.Run("rev-parse", "--verify", "--quiet", untrackedRef); err != nil {
-		return nil
-	}
-	untrackedPaths, err := client.Run("ls-tree", "-r", "--name-only", untrackedRef, "--", scopePath)
-	if err != nil || strings.TrimSpace(untrackedPaths) == "" {
-		return nil
-	}
-
-	if _, err := client.Run("checkout", untrackedRef, "--", scopePath); err != nil {
-		return fmt.Errorf("restore untracked files from stash: %w", err)
-	}
-	if _, err := client.Run("reset", "--", scopePath); err != nil {
-		return fmt.Errorf("unstage restored untracked files: %w", err)
-	}
-
-	return nil
-}
-
 func materializeSnapshotInWorktree(client *git.Client, snapshotRef, scopePath string) error {
 	snapshotRef = strings.TrimSpace(snapshotRef)
 	if snapshotRef == "" {

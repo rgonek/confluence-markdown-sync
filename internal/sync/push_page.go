@@ -325,31 +325,3 @@ func listAllPushPages(ctx context.Context, remote PushRemote, opts confluence.Pa
 	}
 	return result, nil
 }
-
-func listAllPushFolders(ctx context.Context, remote PushRemote, opts confluence.FolderListOptions) ([]confluence.Folder, error) {
-	// Try with title filter first if provided
-	if opts.Title != "" {
-		res, err := remote.ListFolders(ctx, opts)
-		if err == nil {
-			return res.Folders, nil
-		}
-		// Fallback to full list if title filter failed
-		opts.Title = ""
-	}
-
-	result := []confluence.Folder{}
-	cursor := opts.Cursor
-	for {
-		opts.Cursor = cursor
-		folderResult, err := remote.ListFolders(ctx, opts)
-		if err != nil {
-			return nil, err
-		}
-		result = append(result, folderResult.Folders...)
-		if strings.TrimSpace(folderResult.NextCursor) == "" || folderResult.NextCursor == cursor {
-			break
-		}
-		cursor = folderResult.NextCursor
-	}
-	return result, nil
-}
