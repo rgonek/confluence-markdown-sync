@@ -87,6 +87,14 @@ The system SHALL rewrite same-space references to local Markdown and asset paths
 - THEN the system SHALL preserve a usable remote URL or reference in Markdown
 - AND the system SHALL emit a preserved cross-space diagnostic instead of a generic unresolved-reference failure
 
+#### Scenario: Absolute Confluence page URL outside local resolution scope is preserved as a note
+
+- GIVEN pull encounters an absolute Confluence page URL with a page ID
+- AND the target cannot be rewritten to a local same-space Markdown path
+- WHEN pull converts the source page
+- THEN the system SHALL preserve the absolute URL in Markdown
+- AND the system SHALL emit a preserved-link diagnostic instead of `unresolved_reference`
+
 ### Requirement: Delete reconciliation
 
 The system SHALL hard-delete tracked local files and assets removed remotely.

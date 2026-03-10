@@ -44,6 +44,14 @@ The system SHALL isolate real push execution from the active user workspace.
 - AND the system SHALL create a sync branch `sync/<space>/<timestamp>`
 - AND the system SHALL create a temporary worktree for the sync run
 
+#### Scenario: Snapshot materialization tolerates long Windows workspace paths
+
+- GIVEN `conf push` captured in-scope tracked and untracked workspace state in a snapshot ref
+- AND the target workspace contains long nested Markdown or attachment paths on Windows
+- WHEN push materializes the snapshot into the isolated worktree
+- THEN the system SHALL restore the snapshot without relying on a Git path that replays untracked files through a failing long-path stash apply
+- AND the system SHALL fail only if the snapshot cannot be restored through the long-path-safe restore path
+
 #### Scenario: No-op push creates no recovery artifacts
 
 - GIVEN push detects no in-scope Markdown changes

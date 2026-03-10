@@ -241,6 +241,63 @@ func TestRunPush_DoesNotWarnForSyncedUntrackedFilesInStash(t *testing.T) {
 	}
 }
 
+func TestRunPush_SucceedsWithLongNestedUntrackedPaths(t *testing.T) {
+	runParallelCommandTest(t)
+
+	repo := t.TempDir()
+	spaceDir := preparePushRepoWithBaseline(t, repo)
+
+	longDir := filepath.Join(
+		spaceDir,
+		"deeply-nested-long-path-segment-for-live-sync-regression",
+		"another-long-path-segment-for-windows-snapshot-restore",
+	)
+	if err := os.MkdirAll(longDir, 0o750); err != nil {
+		t.Fatalf("mkdir long dir: %v", err)
+	}
+
+	longPagePath := filepath.Join(longDir, "new-long-path-page-for-snapshot-restore-regression.md")
+	writeMarkdown(t, longPagePath, fs.MarkdownDocument{
+		Frontmatter: fs.Frontmatter{
+			Title: "New Long Path Page For Snapshot Restore Regression",
+		},
+		Body: "Long path page content\n",
+	})
+
+	fake := newCmdFakePushRemote(1)
+	oldPushFactory := newPushRemote
+	oldPullFactory := newPullRemote
+	newPushRemote = func(_ *config.Config) (syncflow.PushRemote, error) { return fake, nil }
+	newPullRemote = func(_ *config.Config) (syncflow.PullRemote, error) { return fake, nil }
+	t.Cleanup(func() {
+		newPushRemote = oldPushFactory
+		newPullRemote = oldPullFactory
+	})
+
+	setupEnv(t)
+	chdirRepo(t, spaceDir)
+
+	cmd := &cobra.Command{}
+	out := &bytes.Buffer{}
+	cmd.SetOut(out)
+
+	if err := runPush(cmd, config.Target{Mode: config.TargetModeSpace, Value: ""}, OnConflictCancel, false); err != nil {
+		t.Fatalf("runPush() failed for long nested path: %v", err)
+	}
+
+	if strings.Contains(out.String(), "materialize snapshot in worktree") {
+		t.Fatalf("expected long nested path push to avoid snapshot materialization failure, got:\n%s", out.String())
+	}
+
+	doc, err := fs.ReadMarkdownDocument(longPagePath)
+	if err != nil {
+		t.Fatalf("read long path markdown: %v", err)
+	}
+	if strings.TrimSpace(doc.Frontmatter.ID) == "" {
+		t.Fatalf("expected pushed long path page to have assigned ID")
+	}
+}
+
 func TestRunPush_FileTargetRestoresUnsyncedScopedTrackedChangesFromStash(t *testing.T) {
 	runParallelCommandTest(t)
 

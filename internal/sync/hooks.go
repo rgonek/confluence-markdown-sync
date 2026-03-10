@@ -71,7 +71,8 @@ func NewForwardLinkHookWithGlobalIndex(
 				}
 			}
 
-			if shouldPreserveAbsoluteCrossSpaceLink(pageID, in, currentSpaceDir, currentSpaceKey, globalIndex) {
+			if shouldPreserveAbsoluteCrossSpaceLink(pageID, in, currentSpaceDir, currentSpaceKey, globalIndex) ||
+				shouldPreserveAbsoluteConfluencePageLink(pageID, in, currentSpaceKey) {
 				href := preservedCrossSpaceHref(in)
 				if href != "" {
 					if onNotice != nil {
@@ -127,6 +128,27 @@ func shouldPreserveAbsoluteCrossSpaceLink(
 		return true
 	}
 	return !isSubpathOrSame(currentSpaceDir, candidatePath)
+}
+
+func shouldPreserveAbsoluteConfluencePageLink(pageID string, in adfconv.LinkRenderInput, currentSpaceKey string) bool {
+	if strings.TrimSpace(pageID) == "" {
+		return false
+	}
+	if strings.TrimSpace(in.Meta.SpaceKey) != "" && strings.EqualFold(strings.TrimSpace(in.Meta.SpaceKey), currentSpaceKey) {
+		return false
+	}
+	href := strings.TrimSpace(in.Href)
+	if href == "" {
+		return false
+	}
+	u, err := url.Parse(href)
+	if err != nil || !u.IsAbs() {
+		return false
+	}
+	if extracted := ExtractPageID(href); extracted == "" {
+		return false
+	}
+	return true
 }
 
 func extractConfluenceURLSpaceKey(href string) string {

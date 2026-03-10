@@ -145,6 +145,43 @@ func TestForwardLinkHook_PreservesAbsoluteCrossSpaceLinkWithSpaceQualifiedURL(t 
 	}
 }
 
+func TestForwardLinkHook_PreservesAbsoluteConfluencePageURLWithoutGlobalIndex(t *testing.T) {
+	sourcePath, _ := filepath.Abs("myspace/index.md")
+
+	notices := make([]ForwardLinkNotice, 0, 1)
+	hook := NewForwardLinkHookWithGlobalIndex(
+		sourcePath,
+		filepath.Dir(sourcePath),
+		PageIndex{"index.md": "1"},
+		nil,
+		"MYSPACE",
+		func(notice ForwardLinkNotice) {
+			notices = append(notices, notice)
+		},
+	)
+
+	out, err := hook(context.Background(), adfconv.LinkRenderInput{
+		Href:  "https://example.atlassian.net/wiki/pages/viewpage.action?pageId=77",
+		Title: "Remote Page",
+		Meta: adfconv.LinkMetadata{
+			PageID: "77",
+			Anchor: "section-a",
+		},
+	})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	if !out.Handled {
+		t.Fatal("Expected Handled=true")
+	}
+	if got, want := out.Href, "https://example.atlassian.net/wiki/pages/viewpage.action?pageId=77#section-a"; got != want {
+		t.Fatalf("Href = %q, want %q", got, want)
+	}
+	if len(notices) != 1 || notices[0].Code != "CROSS_SPACE_LINK_PRESERVED" {
+		t.Fatalf("expected preserved-link notice, got %+v", notices)
+	}
+}
+
 func TestForwardMediaHook(t *testing.T) {
 	sourcePath, _ := filepath.Abs("myspace/index.md")
 	targetPath, _ := filepath.Abs("myspace/assets/image.png")

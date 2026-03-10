@@ -43,11 +43,8 @@ func runPushInWorktree(
 	}
 
 	if strings.TrimSpace(*stashRef) != "" {
-		if err := wtClient.StashApply(snapshotRefName); err != nil {
+		if err := materializeSnapshotInWorktree(wtClient, snapshotRefName, spaceScopePath); err != nil {
 			return outcome, fmt.Errorf("materialize snapshot in worktree: %w", err)
-		}
-		if err := restoreUntrackedFromStashParent(wtClient, snapshotRefName, spaceScopePath); err != nil {
-			return outcome, err
 		}
 	}
 	if err := os.MkdirAll(wtSpaceDir, 0o750); err != nil {

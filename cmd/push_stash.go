@@ -35,6 +35,48 @@ func restoreUntrackedFromStashParent(client *git.Client, stashRef, scopePath str
 	return nil
 }
 
+func materializeSnapshotInWorktree(client *git.Client, snapshotRef, scopePath string) error {
+	snapshotRef = strings.TrimSpace(snapshotRef)
+	if snapshotRef == "" {
+		return nil
+	}
+
+	stashPaths, err := listStashPaths(client, snapshotRef, scopePath)
+	if err != nil {
+		return fmt.Errorf("list snapshot paths: %w", err)
+	}
+	if len(stashPaths) == 0 {
+		return nil
+	}
+
+	untrackedSet, err := listStashUntrackedPathSet(client, snapshotRef, scopePath)
+	if err != nil {
+		return fmt.Errorf("identify snapshot untracked paths: %w", err)
+	}
+
+	trackedPaths := make([]string, 0, len(stashPaths))
+	untrackedPaths := make([]string, 0, len(stashPaths))
+	for _, path := range stashPaths {
+		if _, isUntracked := untrackedSet[path]; isUntracked {
+			untrackedPaths = append(untrackedPaths, path)
+			continue
+		}
+		trackedPaths = append(trackedPaths, path)
+	}
+
+	sort.Strings(trackedPaths)
+	sort.Strings(untrackedPaths)
+
+	if err := restoreTrackedPathsFromStash(client, snapshotRef, trackedPaths); err != nil {
+		return fmt.Errorf("restore tracked snapshot paths: %w", err)
+	}
+	if err := restoreUntrackedPathsFromStashParent(client, snapshotRef, untrackedPaths); err != nil {
+		return fmt.Errorf("restore untracked snapshot paths: %w", err)
+	}
+
+	return nil
+}
+
 func restorePushStash(
 	client *git.Client,
 	stashRef string,
