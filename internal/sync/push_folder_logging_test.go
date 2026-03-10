@@ -28,10 +28,10 @@ func TestFolderListFallbackTracker_SuppressesRepeatedWarnings(t *testing.T) {
 	tracker.Report("Parent/Grandchild", err)
 
 	got := logs.String()
-	if strings.Count(got, "folder_list_unavailable_falling_back_to_pages") != 1 {
+	if strings.Count(got, "folder_api_unavailable_falling_back_to_pages") != 1 {
 		t.Fatalf("expected one warning log, got:\n%s", got)
 	}
-	if strings.Count(got, "folder_list_unavailable_repeats_suppressed") != 1 {
+	if strings.Count(got, "folder_api_unavailable_repeats_suppressed") != 1 {
 		t.Fatalf("expected one suppression log, got:\n%s", got)
 	}
 	if strings.Contains(got, "repeat_count=2") {

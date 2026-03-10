@@ -607,9 +607,9 @@ func TestPush_FolderCapabilityFallbackUsesPageHierarchyMode(t *testing.T) {
 	}
 
 	remote := newRollbackPushRemote()
-	remote.listFoldersErr = &confluence.APIError{
+	remote.createFolderErr = &confluence.APIError{
 		StatusCode: 500,
-		Method:     "GET",
+		Method:     "POST",
 		URL:        "/wiki/api/v2/folders",
 		Message:    "Internal Server Error",
 	}
@@ -626,8 +626,8 @@ func TestPush_FolderCapabilityFallbackUsesPageHierarchyMode(t *testing.T) {
 		t.Fatalf("Push() unexpected error: %v", err)
 	}
 
-	if remote.createFolderCalls != 0 {
-		t.Fatalf("create folder calls = %d, want 0 after compatibility mode selection", remote.createFolderCalls)
+	if remote.createFolderCalls != 1 {
+		t.Fatalf("create folder calls = %d, want 1 attempted native folder creation before fallback", remote.createFolderCalls)
 	}
 	if remote.createPageCalls < 2 {
 		t.Fatalf("create page calls = %d, want at least 2 for parent compatibility page + child", remote.createPageCalls)
@@ -656,9 +656,9 @@ func TestPush_FolderCapabilityFallbackDistinguishesUnsupportedTenantCapability(t
 	}
 
 	remote := newRollbackPushRemote()
-	remote.listFoldersErr = &confluence.APIError{
+	remote.createFolderErr = &confluence.APIError{
 		StatusCode: 501,
-		Method:     "GET",
+		Method:     "POST",
 		URL:        "/wiki/api/v2/folders",
 		Message:    "Not Implemented",
 	}

@@ -92,18 +92,6 @@ func buildPushPreflightContext(ctx context.Context, spaceKey, spaceDir string, s
 	remotePageByID := map[string]confluence.Page{}
 	remotePages := make([]confluence.Page, 0)
 	space, spaceErr := remote.GetSpace(ctx, spaceKey)
-	if preflightChangesNeedFolderHierarchy(syncChanges) {
-		if spaceErr == nil {
-			_, folderErr := remote.ListFolders(ctx, confluence.FolderListOptions{
-				SpaceID: space.ID,
-				Limit:   1,
-			})
-			if shouldIgnorePreflightFolderHierarchyError(folderErr) {
-				concerns = append(concerns, preflightFolderCapabilityConcern(folderErr))
-			}
-		}
-	}
-
 	if spaceErr == nil {
 		listResult, listErr := remote.ListPages(ctx, confluence.PageListOptions{
 			SpaceID:  space.ID,
@@ -302,24 +290,6 @@ func isPreflightCapabilityProbeError(err error) bool {
 	default:
 		return false
 	}
-}
-
-func shouldIgnorePreflightFolderHierarchyError(err error) bool {
-	if err == nil {
-		return false
-	}
-	if errors.Is(err, confluence.ErrNotFound) {
-		return true
-	}
-	var apiErr *confluence.APIError
-	return errors.As(err, &apiErr)
-}
-
-func preflightFolderCapabilityConcern(err error) string {
-	if isPreflightCapabilityProbeError(err) || errors.Is(err, confluence.ErrNotFound) {
-		return "folder hierarchy writes will use page-based compatibility mode because the tenant does not support the folder API"
-	}
-	return "folder hierarchy writes will use page-based compatibility mode because the folder API endpoint failed upstream"
 }
 
 func preflightChangesNeedFolderHierarchy(changes []syncflow.PushFileChange) bool {

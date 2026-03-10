@@ -36,6 +36,7 @@ func Push(ctx context.Context, remote PushRemote, opts PushOptions) (PushResult,
 	opts.folderListTracker = newFolderListFallbackTracker()
 	capabilities := newTenantCapabilityCache()
 	diagnostics := make([]PushDiagnostic, 0)
+	opts.folderMode = tenantFolderModeNative
 
 	space, err := remote.GetSpace(ctx, opts.SpaceKey)
 	if err != nil {
@@ -52,17 +53,6 @@ func Push(ctx context.Context, remote PushRemote, opts PushOptions) (PushResult,
 		return PushResult{}, fmt.Errorf("list pages: %w", err)
 	}
 
-	// Try to list folders, but don't fail the whole push if it's broken (Confluence bug)
-	remoteFolders, folderListErr := listAllPushFoldersWithTracking(ctx, remote, confluence.FolderListOptions{
-		SpaceID: space.ID,
-	}, opts.folderListTracker, "space-scan")
-	folderMode, folderModeDiags := capabilities.detectPushFolderMode(opts.Changes, folderListErr)
-	diagnostics = append(diagnostics, folderModeDiags...)
-	opts.folderMode = folderMode
-	if folderListErr != nil {
-		remoteFolders = nil
-	}
-
 	pages, err = recoverMissingPages(ctx, remote, space.ID, state.PagePathIndex, pages)
 	if err != nil {
 		return PushResult{}, fmt.Errorf("recover missing pages: %w", err)
@@ -71,12 +61,6 @@ func Push(ctx context.Context, remote PushRemote, opts PushOptions) (PushResult,
 	remotePageByID := make(map[string]confluence.Page, len(pages))
 	for _, page := range pages {
 		remotePageByID[page.ID] = page
-	}
-
-	// Also index folders by title for hierarchy reconciliation
-	remoteFolderByTitle := make(map[string]confluence.Folder)
-	for _, f := range remoteFolders {
-		remoteFolderByTitle[strings.ToLower(strings.TrimSpace(f.Title))] = f
 	}
 
 	pageIDByPath, err := BuildPageIndex(spaceDir)
@@ -120,7 +104,7 @@ func Push(ctx context.Context, remote PushRemote, opts PushOptions) (PushResult,
 		ctx,
 		remote,
 		space,
-		opts,
+		&opts,
 		state,
 		changes,
 		pageIDByPath,
@@ -165,7 +149,7 @@ func Push(ctx context.Context, remote PushRemote, opts PushOptions) (PushResult,
 				ctx,
 				remote,
 				space,
-				opts,
+				&opts,
 				capabilities,
 				state,
 				policy,

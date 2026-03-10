@@ -189,7 +189,7 @@ func pushUpsertPage(
 	ctx context.Context,
 	remote PushRemote,
 	space confluence.Space,
-	opts PushOptions,
+	opts *PushOptions,
 	capabilities *tenantCapabilityCache,
 	state fs.SpaceState,
 	policy PushConflictPolicy,
@@ -409,7 +409,7 @@ func pushUpsertPage(
 			doc.Frontmatter.Version = precreatedPage.Version
 		} else {
 			if dirPath != "" && dirPath != "." {
-				folderIDByPath, err = ensureFolderHierarchy(ctx, remote, space.ID, dirPath, relPath, opts, pageIDByPath, folderIDByPath, diagnostics)
+			folderIDByPath, err = ensureFolderHierarchy(ctx, remote, space.ID, dirPath, relPath, opts, pageIDByPath, folderIDByPath, diagnostics)
 				if err != nil {
 					return failWithRollback(fmt.Errorf("ensure folder hierarchy for %s: %w", relPath, err))
 				}

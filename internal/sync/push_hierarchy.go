@@ -56,7 +56,7 @@ func ensureFolderHierarchy(
 	remote PushRemote,
 	spaceID, dirPath string,
 	currentRelPath string,
-	opts PushOptions,
+	opts *PushOptions,
 	pageIDByPath PageIndex,
 	folderIDByPath map[string]string,
 	diagnostics *[]PushDiagnostic,
@@ -95,7 +95,7 @@ func ensureFolderHierarchy(
 
 		if existingID, ok := folderIDByPath[currentPath]; ok && strings.TrimSpace(existingID) != "" {
 			parentID = strings.TrimSpace(existingID)
-			if opts.folderMode == tenantFolderModePageFallback {
+			if opts != nil && opts.folderMode == tenantFolderModePageFallback {
 				parentType = "page"
 			} else {
 				parentType = "folder"
@@ -103,7 +103,7 @@ func ensureFolderHierarchy(
 			continue
 		}
 
-		if opts.folderMode == tenantFolderModePageFallback {
+		if opts != nil && opts.folderMode == tenantFolderModePageFallback {
 			pageCreated, pageErr := remote.CreatePage(ctx, confluence.PageUpsertInput{
 				SpaceID:      spaceID,
 				ParentPageID: parentID,
@@ -126,17 +126,6 @@ func ensureFolderHierarchy(
 			continue
 		}
 
-		// Check if folder already exists remotely by title
-		if f, ok := opts.RemoteFolderByTitle[strings.ToLower(strings.TrimSpace(seg))]; ok {
-			createdID := strings.TrimSpace(f.ID)
-			if createdID != "" {
-				folderIDByPath[currentPath] = createdID
-				parentID = createdID
-				parentType = "folder"
-				continue
-			}
-		}
-
 		createInput := confluence.FolderCreateInput{
 			SpaceID: spaceID,
 			Title:   seg,
@@ -148,62 +137,15 @@ func ensureFolderHierarchy(
 
 		created, err := remote.CreateFolder(ctx, createInput)
 		if err != nil {
-			slog.Info("folder_creation_failed", "path", currentPath, "error", err.Error())
-
-			foundExisting := false
-			// 1. Try to find it in pre-fetched folders
-			if f, ok := opts.RemoteFolderByTitle[strings.ToLower(strings.TrimSpace(seg))]; ok {
-				created = f
-				err = nil
-				foundExisting = true
-			}
-
-			// 2. If not found and it's a conflict, try robust listing
-			if !foundExisting && strings.Contains(err.Error(), "400") && (strings.Contains(strings.ToLower(err.Error()), "folder exists with the same title") || strings.Contains(strings.ToLower(err.Error()), "already exists with the same title")) {
-				folders, listErr := listAllPushFoldersWithTracking(ctx, remote, confluence.FolderListOptions{
-					SpaceID: spaceID,
-					Title:   seg,
-				}, opts.folderListTracker, currentPath)
-				if listErr == nil {
-					for _, f := range folders {
-						if strings.EqualFold(strings.TrimSpace(f.Title), strings.TrimSpace(seg)) {
-							created = f
-							err = nil
-							foundExisting = true
-							break
-						}
+			if shouldIgnoreFolderHierarchyError(err) {
+				if opts != nil {
+					opts.folderMode = tenantFolderModePageFallback
+					if opts.folderListTracker != nil {
+						opts.folderListTracker.Report(currentPath, err)
 					}
 				}
-			}
-
-			// 3. Fallback: if it's still failing, check if it exists as a PAGE
-			if !foundExisting {
-				pages, listErr := remote.ListPages(ctx, confluence.PageListOptions{
-					SpaceID: spaceID,
-					Title:   seg,
-					Status:  "current",
-				})
-				if listErr == nil {
-					for _, p := range pages.Pages {
-						if strings.EqualFold(strings.TrimSpace(p.Title), strings.TrimSpace(seg)) {
-							created = confluence.Folder{
-								ID:         p.ID,
-								SpaceID:    p.SpaceID,
-								Title:      p.Title,
-								ParentID:   p.ParentPageID,
-								ParentType: p.ParentType,
-							}
-							err = nil
-							foundExisting = true
-							break
-						}
-					}
-				}
-			}
-
-			// 4. Radical fallback: if it's STILL failing, create it as a PAGE
-			if !foundExisting {
-				slog.Warn("folder_api_broken_falling_back_to_page", "path", currentPath)
+				appendPushFolderCompatibilityDiagnosticOnce(diagnostics, err)
+				slog.Warn("folder_api_unavailable_falling_back_to_page", "path", currentPath, "error", err.Error())
 				pageCreated, pageErr := remote.CreatePage(ctx, confluence.PageUpsertInput{
 					SpaceID:      spaceID,
 					ParentPageID: parentID,
@@ -211,20 +153,17 @@ func ensureFolderHierarchy(
 					Status:       "current",
 					BodyADF:      []byte(`{"version":1,"type":"doc","content":[]}`),
 				})
-				if pageErr == nil {
-					created = confluence.Folder{
-						ID:         pageCreated.ID,
-						SpaceID:    pageCreated.SpaceID,
-						Title:      pageCreated.Title,
-						ParentID:   pageCreated.ParentPageID,
-						ParentType: pageCreated.ParentType,
-					}
-					err = nil
-					foundExisting = true
+				if pageErr != nil {
+					return nil, fmt.Errorf("create compatibility hierarchy page %q after folder fallback: %w", currentPath, pageErr)
 				}
-			}
-
-			if err != nil {
+				created = confluence.Folder{
+					ID:         pageCreated.ID,
+					SpaceID:    pageCreated.SpaceID,
+					Title:      pageCreated.Title,
+					ParentID:   pageCreated.ParentPageID,
+					ParentType: pageCreated.ParentType,
+				}
+			} else {
 				return nil, fmt.Errorf("create folder %q: %w", currentPath, err)
 			}
 		}
@@ -236,7 +175,11 @@ func ensureFolderHierarchy(
 
 		folderIDByPath[currentPath] = createdID
 		parentID = createdID
-		parentType = "folder"
+		if opts != nil && opts.folderMode == tenantFolderModePageFallback {
+			parentType = "page"
+		} else {
+			parentType = "folder"
+		}
 
 		if diagnostics != nil {
 			*diagnostics = append(*diagnostics, PushDiagnostic{
@@ -248,6 +191,22 @@ func ensureFolderHierarchy(
 	}
 
 	return folderIDByPath, nil
+}
+
+func appendPushFolderCompatibilityDiagnosticOnce(diagnostics *[]PushDiagnostic, err error) {
+	if diagnostics == nil {
+		return
+	}
+	for _, diag := range *diagnostics {
+		if strings.TrimSpace(diag.Code) == "FOLDER_COMPATIBILITY_MODE" {
+			return
+		}
+	}
+	*diagnostics = append(*diagnostics, PushDiagnostic{
+		Path:    "",
+		Code:    "FOLDER_COMPATIBILITY_MODE",
+		Message: folderCompatibilityModeMessage(err),
+	})
 }
 
 func collapseFolderParentIfIndexPage(
@@ -502,7 +461,7 @@ func precreatePendingPushPages(
 	ctx context.Context,
 	remote PushRemote,
 	space confluence.Space,
-	opts PushOptions,
+	opts *PushOptions,
 	state fs.SpaceState,
 	changes []PushFileChange,
 	pageIDByPath PageIndex,

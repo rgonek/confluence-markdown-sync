@@ -176,6 +176,7 @@ type rollbackPushRemote struct {
 	archivePagesErr           error
 	archiveTaskWaitErr        error
 	listFoldersErr            error
+	createFolderErr           error
 	getContentStatusErr       error
 	failUpdate                bool
 	failCreatePageErr         error
@@ -474,6 +475,9 @@ func (f *rollbackPushRemote) DeleteAttachment(_ context.Context, attachmentID st
 
 func (f *rollbackPushRemote) CreateFolder(_ context.Context, input confluence.FolderCreateInput) (confluence.Folder, error) {
 	f.createFolderCalls++
+	if f.createFolderErr != nil {
+		return confluence.Folder{}, f.createFolderErr
+	}
 	folder := confluence.Folder{ID: fmt.Sprintf("folder-%d", f.createFolderCalls), SpaceID: input.SpaceID, Title: input.Title, ParentID: input.ParentID, ParentType: input.ParentType}
 	f.folders = append(f.folders, folder)
 	return folder, nil

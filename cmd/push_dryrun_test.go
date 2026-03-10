@@ -501,7 +501,7 @@ func TestRunPush_PreflightShowsDestructiveDeleteProminent(t *testing.T) {
 	}
 }
 
-func TestRunPush_PreflightReportsFolderCapabilityCause(t *testing.T) {
+func TestRunPush_PreflightDoesNotProbeUndocumentedFolderListAPI(t *testing.T) {
 	runParallelCommandTest(t)
 
 	repo := t.TempDir()
@@ -527,12 +527,6 @@ func TestRunPush_PreflightReportsFolderCapabilityCause(t *testing.T) {
 	newPushRemote = func(_ *config.Config) (syncflow.PushRemote, error) {
 		return &preflightCapabilityFakePushRemote{
 			cmdFakePushRemote: newCmdFakePushRemote(1),
-			folderErr: &confluence.APIError{
-				StatusCode: 501,
-				Method:     "GET",
-				URL:        "/wiki/api/v2/folders",
-				Message:    "Not Implemented",
-			},
 		}, nil
 	}
 	newPullRemote = func(_ *config.Config) (syncflow.PullRemote, error) {
@@ -555,11 +549,8 @@ func TestRunPush_PreflightReportsFolderCapabilityCause(t *testing.T) {
 	}
 
 	text := out.String()
-	if !strings.Contains(text, "Remote capability concerns:") {
-		t.Fatalf("preflight output missing remote capability section:\n%s", text)
-	}
-	if !strings.Contains(text, "tenant does not support the folder API") {
-		t.Fatalf("preflight output missing explicit folder compatibility cause:\n%s", text)
+	if strings.Contains(text, "folder API") {
+		t.Fatalf("preflight should not probe undocumented folder list capability, got:\n%s", text)
 	}
 }
 
