@@ -190,6 +190,22 @@ func runValidateTargetWithContextReportWithOverride(ctx context.Context, out io.
 		return result, fmt.Errorf("validation failed: duplicate page IDs detected - rename each file to have a unique id or remove the duplicate id")
 	}
 
+	if folderConflicts := syncflow.DetectFolderTitleConflicts(targetCtx.spaceDir, targetCtx.files); len(folderConflicts) > 0 {
+		for _, conflict := range folderConflicts {
+			msg := fmt.Sprintf(
+				"folder title %q is used by multiple directory-backed folders: %s — Confluence folder titles must be unique across the space; rename or convert one path into a page-backed directory",
+				conflict.Title,
+				strings.Join(conflict.Paths, ", "),
+			)
+			_, _ = fmt.Fprintf(out, "Validation failed: %s\n", msg)
+			result.Diagnostics = append(result.Diagnostics, commandRunReportDiagnostic{
+				Code:    "duplicate_folder_title",
+				Message: msg,
+			})
+		}
+		return result, fmt.Errorf("validation failed: duplicate folder titles detected - rename or convert the conflicting folders before retrying")
+	}
+
 	globalIndex, err := buildWorkspaceGlobalPageIndex(targetCtx.spaceDir)
 	if err != nil {
 		return result, fmt.Errorf("failed to build global page index: %w", err)

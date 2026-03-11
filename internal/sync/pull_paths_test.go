@@ -1,6 +1,8 @@
 package sync
 
 import (
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/rgonek/confluence-markdown-sync/internal/confluence"
@@ -60,7 +62,7 @@ func TestPlanPagePaths_UsesFolderHierarchy(t *testing.T) {
 	}
 }
 
-func TestPlanPagePaths_PreservesExistingPathWhenTitleChangesInSameParent(t *testing.T) {
+func TestPlanPagePaths_ReconcilesExistingPathToCanonicalTitle(t *testing.T) {
 	spaceDir := t.TempDir()
 
 	pages := []confluence.Page{
@@ -72,8 +74,62 @@ func TestPlanPagePaths_PreservesExistingPathWhenTitleChangesInSameParent(t *test
 
 	_, relByID := PlanPagePaths(spaceDir, previousPageIndex, pages, nil)
 
-	if got := relByID["1"]; got != "custom-title.md" {
-		t.Fatalf("preserved path = %q, want custom-title.md", got)
+	if got := relByID["1"]; got != "Renamed-Page.md" {
+		t.Fatalf("canonical path = %q, want Renamed-Page.md", got)
+	}
+}
+
+func TestPlanPagePaths_ReconcilesShortSlugToCanonicalPath(t *testing.T) {
+	spaceDir := t.TempDir()
+
+	pages := []confluence.Page{
+		{ID: "1", Title: "Cross Space Target 2026-03-11-0712", ParentPageID: "10"},
+		{ID: "10", Title: "Software Development"},
+	}
+	previousPageIndex := map[string]string{
+		"Software-Development/XT-20260311-0712.md": "1",
+		"Software-Development/Software-Development.md": "10",
+	}
+
+	_, relByID := PlanPagePaths(spaceDir, previousPageIndex, pages, nil)
+
+	if got := relByID["1"]; got != "Software-Development/Cross-Space-Target-2026-03-11-0712.md" {
+		t.Fatalf("canonical child path = %q, want Software-Development/Cross-Space-Target-2026-03-11-0712.md", got)
+	}
+}
+
+func TestDetectFolderTitleConflicts_FindsDuplicatePureFolders(t *testing.T) {
+	spaceDir := t.TempDir()
+
+	conflicts := DetectFolderTitleConflicts(spaceDir, []string{
+		filepath.Join(spaceDir, "API", "One.md"),
+		filepath.Join(spaceDir, "Guides", "API", "Two.md"),
+		filepath.Join(spaceDir, "Guides", "Guides.md"),
+	})
+
+	if len(conflicts) != 1 {
+		t.Fatalf("conflicts = %+v, want 1 duplicate title", conflicts)
+	}
+	if conflicts[0].Title != "API" {
+		t.Fatalf("conflict title = %q, want API", conflicts[0].Title)
+	}
+	if got := strings.Join(conflicts[0].Paths, ","); got != "API,Guides/API" {
+		t.Fatalf("conflict paths = %q, want API,Guides/API", got)
+	}
+}
+
+func TestDetectFolderTitleConflicts_IgnoresPageBackedDirectories(t *testing.T) {
+	spaceDir := t.TempDir()
+
+	conflicts := DetectFolderTitleConflicts(spaceDir, []string{
+		filepath.Join(spaceDir, "API", "API.md"),
+		filepath.Join(spaceDir, "API", "One.md"),
+		filepath.Join(spaceDir, "Guides", "API", "API.md"),
+		filepath.Join(spaceDir, "Guides", "API", "Two.md"),
+	})
+
+	if len(conflicts) != 0 {
+		t.Fatalf("conflicts = %+v, want none for page-backed directories", conflicts)
 	}
 }
 

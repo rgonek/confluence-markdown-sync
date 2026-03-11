@@ -12,10 +12,10 @@ import (
 	"github.com/rgonek/confluence-markdown-sync/internal/fs"
 )
 
-// PlanPagePaths builds deterministic markdown paths for remote pages.
+// PlanPagePaths builds deterministic canonical markdown paths for remote pages.
 //
-// It preserves previously mapped paths from page_path_index when possible,
-// then allocates unique sanitized filenames for newly discovered pages.
+// It always recomputes the canonical pull path from the current remote
+// hierarchy, then allocates unique sanitized filenames if needed.
 func PlanPagePaths(
 	spaceDir string,
 	previousPageIndex map[string]string,
@@ -46,21 +46,6 @@ func PlanPagePaths(
 			}
 		}
 	}
-	previousPathByID := map[string]string{}
-	for _, previousPath := range sortedStringKeys(previousPageIndex) {
-		pageID := previousPageIndex[previousPath]
-		if _, exists := pageByID[pageID]; !exists {
-			continue
-		}
-		normalized := normalizeRelPath(previousPath)
-		if normalized == "" {
-			continue
-		}
-		if _, exists := previousPathByID[pageID]; !exists {
-			previousPathByID[pageID] = normalized
-		}
-	}
-
 	absByID := map[string]string{}
 	relByID := map[string]string{}
 	usedRelPaths := map[string]struct{}{}
@@ -72,9 +57,6 @@ func PlanPagePaths(
 	plans := make([]pagePathPlan, 0, len(pages))
 	for _, page := range pages {
 		baseRelPath := plannedPageRelPath(page, pageByID, folderByID, hasChildren)
-		if previousPath := previousPathByID[page.ID]; previousPath != "" && sameParentDirectory(previousPath, baseRelPath) {
-			baseRelPath = previousPath
-		}
 
 		plans = append(plans, pagePathPlan{
 			ID:          page.ID,
@@ -185,12 +167,6 @@ func ancestorPathSegments(parentID string, parentType string, pageByID map[strin
 		segments = append(segments, segmentsReversed[i])
 	}
 	return segments, true
-}
-
-func sameParentDirectory(pathA, pathB string) bool {
-	dirA := normalizeRelPath(filepath.Dir(pathA))
-	dirB := normalizeRelPath(filepath.Dir(pathB))
-	return dirA == dirB
 }
 
 func ensureUniqueMarkdownPath(baseName string, used map[string]struct{}) string {
