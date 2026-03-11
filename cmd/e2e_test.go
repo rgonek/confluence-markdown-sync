@@ -38,19 +38,29 @@ var sandboxBaselineDiagnosticAllowlist = map[string][]e2eExpectedDiagnostic{
 			Code: "UNKNOWN_MEDIA_ID_UNRESOLVED",
 		},
 		{
+			Path:            "Technical-Documentation/Live-Verification-2026-03-11-0712/Live-Verification-2026-03-11-0712.md",
+			Code:            "CROSS_SPACE_LINK_PRESERVED",
+			MessageContains: "pageId=26673153",
+		},
+		{
 			Path:            "Technical-Documentation/Live-Workflow-Test-2026-03-05/Endpoint-Notes.md",
-			Code:            "unresolved_reference",
+			Code:            "CROSS_SPACE_LINK_PRESERVED",
 			MessageContains: "pageId=17727489#Task-list",
 		},
 		{
 			Path:            "Technical-Documentation/Live-Workflow-Test-2026-03-05/Live-Workflow-Test-2026-03-05.md",
-			Code:            "unresolved_reference",
+			Code:            "CROSS_SPACE_LINK_PRESERVED",
 			MessageContains: "pageId=17727489",
 		},
 		{
 			Path:            "Technical-Documentation/Live-Workflow-Test-2026-03-05/Live-Workflow-Test-2026-03-05.md",
-			Code:            "unresolved_reference",
+			Code:            "CROSS_SPACE_LINK_PRESERVED",
 			MessageContains: "pageId=17530900#Task-list",
+		},
+		{
+			Path:            "Technical-Documentation/Live-Workflow-Test-2026-03-10-1655/Live-Workflow-Test-2026-03-10-1655.md",
+			Code:            "CROSS_SPACE_LINK_PRESERVED",
+			MessageContains: "pageId=25460737",
 		},
 		{
 			Path:            "Technical-Documentation/Live-Workflow-Test-2026-03-05/Checklist-and-Diagrams.md",
@@ -58,6 +68,16 @@ var sandboxBaselineDiagnosticAllowlist = map[string][]e2eExpectedDiagnostic{
 		},
 	},
 	"SD2": {
+		{
+			Path:            "Software-Development/Cross-Space-Target-2026-03-10-1655.md",
+			Code:            "CROSS_SPACE_LINK_PRESERVED",
+			MessageContains: "pageId=25591809",
+		},
+		{
+			Path:            "Software-Development/Cross-Space-Target-2026-03-11-0712.md",
+			Code:            "CROSS_SPACE_LINK_PRESERVED",
+			MessageContains: "pageId=26771457",
+		},
 		{
 			Path:            "Software-Development/Release-Sandbox-2026-03-05.md",
 			Code:            "CROSS_SPACE_LINK_PRESERVED",
@@ -147,9 +167,7 @@ func TestWorkflow_ConflictResolution(t *testing.T) {
 		t.Fatalf("Remote update (conflict simulation) failed: %v", err)
 	}
 	fmt.Printf("Remote version after simulation: %d\n", updatedRemote.Version)
-
-	// Wait for eventual consistency
-	time.Sleep(5 * time.Second)
+	waitForPageVersion(t, ctx, client, pageID, updatedRemote.Version)
 
 	// 4. Try push --on-conflict=cancel -> should fail
 	cmd := exec.Command(confBin, "push", simplePath, "--on-conflict=cancel", "--yes", "--non-interactive")
@@ -242,14 +260,17 @@ func TestWorkflow_PushAutoPullMerge(t *testing.T) {
 
 	// 3. Simulate remote update (bump version)
 	remotePage, _ := client.GetPage(ctx, pageID)
-	client.UpdatePage(ctx, pageID, confluence.PageUpsertInput{
+	updatedRemote, err := client.UpdatePage(ctx, pageID, confluence.PageUpsertInput{
 		SpaceID:      remotePage.SpaceID,
 		ParentPageID: remotePage.ParentPageID,
 		Title:        remotePage.Title,
 		Version:      remotePage.Version + 1,
 		BodyADF:      []byte(`{"version":1,"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"Remote update for auto pull-merge"}]}]}`),
 	})
-	time.Sleep(5 * time.Second)
+	if err != nil {
+		t.Fatalf("Remote update (auto pull-merge simulation) failed: %v", err)
+	}
+	waitForPageVersion(t, ctx, client, pageID, updatedRemote.Version)
 
 	// 4. Run push with --on-conflict=pull-merge
 	// This should trigger the automatic pull
@@ -270,8 +291,8 @@ func TestWorkflow_PushAutoPullMerge(t *testing.T) {
 	simplePath = findMarkdownByPageID(t, spaceDir, pageID)
 	doc, _ = fs.ReadMarkdownDocument(simplePath)
 	// After pull (even with conflict), the frontmatter version should be updated
-	if doc.Frontmatter.Version != remotePage.Version+1 {
-		t.Fatalf("Local version should be updated after auto pull-merge: got %d, want %d", doc.Frontmatter.Version, remotePage.Version+1)
+	if doc.Frontmatter.Version != updatedRemote.Version {
+		t.Fatalf("Local version should be updated after auto pull-merge: got %d, want %d", doc.Frontmatter.Version, updatedRemote.Version)
 	}
 	raw, readErr := os.ReadFile(simplePath)
 	if readErr != nil {
@@ -336,16 +357,17 @@ func TestWorkflow_PushAutoPullMergeFailDoesNotMutateWorkspace(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetPage: %v", err)
 	}
-	if _, err := client.UpdatePage(ctx, pageID, confluence.PageUpsertInput{
+	updatedRemote, err := client.UpdatePage(ctx, pageID, confluence.PageUpsertInput{
 		SpaceID:      remotePage.SpaceID,
 		ParentPageID: remotePage.ParentPageID,
 		Title:        remotePage.Title,
 		Version:      remotePage.Version + 1,
 		BodyADF:      []byte(`{"version":1,"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"Remote update for auto pull-merge fail"}]}]}`),
-	}); err != nil {
+	})
+	if err != nil {
 		t.Fatalf("Remote update (conflict simulation) failed: %v", err)
 	}
-	time.Sleep(5 * time.Second)
+	waitForPageVersion(t, ctx, client, pageID, updatedRemote.Version)
 
 	cmd := exec.Command(confBin, "push", simplePath, "--on-conflict=pull-merge", "--merge-resolution=fail", "--yes", "--non-interactive")
 	cmd.Dir = tmpDir

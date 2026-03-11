@@ -26,7 +26,7 @@ coverage-check:
 
 ## test-e2e: run all end-to-end tests (requires CONF_E2E_DOMAIN, CONF_E2E_EMAIL, CONF_E2E_API_TOKEN, CONF_E2E_PRIMARY_SPACE_KEY, CONF_E2E_SECONDARY_SPACE_KEY)
 test-e2e: build
-	$(GO) test -v -tags=e2e ./cmd -run '^TestWorkflow_'
+	$(GO) test -timeout 20m -v -tags=e2e ./cmd -run '^TestWorkflow_'
 
 ## release-check: run the release gate, including live sandbox E2E coverage
 release-check: fmt-check lint test-unit test-e2e

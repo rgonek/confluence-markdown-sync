@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -537,7 +538,12 @@ func listAllPullChangesForEstimate(
 }
 
 func runGit(workdir string, args ...string) (string, error) {
-	cmd := exec.Command("git", args...) //nolint:gosec // Intentionally running git
+	gitArgs := args
+	if runtime.GOOS == "windows" {
+		gitArgs = append([]string{"-c", "core.longpaths=true"}, args...)
+	}
+
+	cmd := exec.Command("git", gitArgs...) //nolint:gosec // Intentionally running git
 	if strings.TrimSpace(workdir) != "" {
 		cmd.Dir = workdir
 	}
@@ -545,9 +551,9 @@ func runGit(workdir string, args ...string) (string, error) {
 	if err != nil {
 		msg := strings.TrimSpace(string(out))
 		if msg == "" {
-			return "", fmt.Errorf("git %s failed: %w", strings.Join(args, " "), err)
+			return "", fmt.Errorf("git %s failed: %w", strings.Join(gitArgs, " "), err)
 		}
-		return "", fmt.Errorf("git %s failed: %s", strings.Join(args, " "), msg)
+		return "", fmt.Errorf("git %s failed: %s", strings.Join(gitArgs, " "), msg)
 	}
 	return string(out), nil
 }

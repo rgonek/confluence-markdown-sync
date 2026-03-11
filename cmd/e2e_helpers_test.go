@@ -274,6 +274,7 @@ func findMarkdownByPageID(t *testing.T, spaceDir, pageID string) string {
 	t.Helper()
 
 	var matched string
+	var backupMatch string
 	err := filepath.WalkDir(spaceDir, func(path string, d os.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
@@ -293,6 +294,12 @@ func findMarkdownByPageID(t *testing.T, spaceDir, pageID string) string {
 			return err
 		}
 		if strings.TrimSpace(doc.Frontmatter.ID) == pageID {
+			if strings.Contains(filepath.Base(path), "(My Local Changes") {
+				if strings.TrimSpace(backupMatch) == "" {
+					backupMatch = path
+				}
+				return nil
+			}
 			matched = path
 			return filepath.SkipAll
 		}
@@ -300,6 +307,9 @@ func findMarkdownByPageID(t *testing.T, spaceDir, pageID string) string {
 	})
 	if err != nil && err != filepath.SkipAll {
 		t.Fatalf("find markdown by page id: %v", err)
+	}
+	if strings.TrimSpace(matched) == "" {
+		matched = backupMatch
 	}
 	if strings.TrimSpace(matched) == "" {
 		t.Fatalf("could not find markdown file for page ID %s in %s", pageID, spaceDir)
@@ -532,6 +542,25 @@ func waitForPageADF(t *testing.T, ctx context.Context, client *confluence.Client
 				t.Fatalf("GetPage(%s) did not satisfy predicate before timeout: %v", pageID, err)
 			}
 			t.Fatalf("remote ADF for page %s did not satisfy predicate before timeout: %s", pageID, string(page.BodyADF))
+		}
+		time.Sleep(2 * time.Second)
+	}
+}
+
+func waitForPageVersion(t *testing.T, ctx context.Context, client *confluence.Client, pageID string, expectedVersion int) confluence.Page {
+	t.Helper()
+
+	deadline := time.Now().Add(45 * time.Second)
+	for {
+		page, err := client.GetPage(ctx, pageID)
+		if err == nil && page.Version >= expectedVersion {
+			return page
+		}
+		if time.Now().After(deadline) {
+			if err != nil {
+				t.Fatalf("GetPage(%s) did not reach version %d before timeout: %v", pageID, expectedVersion, err)
+			}
+			t.Fatalf("page %s version did not reach %d before timeout: got %d", pageID, expectedVersion, page.Version)
 		}
 		time.Sleep(2 * time.Second)
 	}

@@ -28,6 +28,9 @@ func selectChangedPages(
 			return nil, changeByPageID, nil
 		}
 		changeByPageID[targetID] = changeFromPage(pageByID[targetID], opts.SpaceKey)
+		if latestPage, err := remote.GetPage(ctx, targetID); err == nil {
+			changeByPageID[targetID] = mergeChangedPage(changeByPageID[targetID], changeFromPage(latestPage, opts.SpaceKey))
+		}
 		return []string{targetID}, changeByPageID, nil
 	}
 
