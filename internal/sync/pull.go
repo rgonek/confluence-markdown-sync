@@ -574,6 +574,15 @@ func Pull(ctx context.Context, remote PullRemote, opts PullOptions) (PullResult,
 		if !ok {
 			return PullResult{}, fmt.Errorf("planned path missing for page %s", page.ID)
 		}
+		if previousRelPath, tracked := trackedPathForPageID(state.PagePathIndex, page.ID); tracked {
+			plannedRelPath := pagePathByIDRel[page.ID]
+			if sameRelPathDifferentCase(previousRelPath, plannedRelPath) {
+				previousAbsPath := filepath.Join(spaceDir, filepath.FromSlash(previousRelPath))
+				if err := renameCaseOnlyPath(previousAbsPath, outputPath); err != nil {
+					return PullResult{}, fmt.Errorf("rename markdown %s to %s: %w", previousRelPath, plannedRelPath, err)
+				}
+			}
+		}
 
 		if opts.Progress != nil {
 			opts.Progress.SetCurrentItem(filepath.Base(outputPath))
@@ -660,7 +669,14 @@ func Pull(ctx context.Context, remote PullRemote, opts PullOptions) (PullResult,
 	deletedMarkdownSet := map[string]struct{}{}
 	for oldPath, pageID := range state.PagePathIndex {
 		newPath, exists := pagePathByIDRel[pageID]
-		if !exists || normalizeRelPath(oldPath) != normalizeRelPath(newPath) {
+		if !exists {
+			deletedMarkdownSet[normalizeRelPath(oldPath)] = struct{}{}
+			continue
+		}
+		if sameRelPathDifferentCase(oldPath, newPath) {
+			continue
+		}
+		if normalizeRelPath(oldPath) != normalizeRelPath(newPath) {
 			deletedMarkdownSet[normalizeRelPath(oldPath)] = struct{}{}
 		}
 	}
@@ -844,6 +860,54 @@ func removeEmptyParentDirs(startDir, stopDir string) error {
 		}
 		startDir = filepath.Dir(startDir)
 	}
+}
+
+func trackedPathForPageID(pagePathIndex map[string]string, pageID string) (string, bool) {
+	pageID = strings.TrimSpace(pageID)
+	if pageID == "" {
+		return "", false
+	}
+	for relPath, trackedPageID := range pagePathIndex {
+		if strings.TrimSpace(trackedPageID) != pageID {
+			continue
+		}
+		normalized := normalizeRelPath(relPath)
+		if normalized == "" {
+			continue
+		}
+		return normalized, true
+	}
+	return "", false
+}
+
+func sameRelPathDifferentCase(a, b string) bool {
+	normalizedA := normalizeRelPath(a)
+	normalizedB := normalizeRelPath(b)
+	return normalizedA != "" && normalizedB != "" && normalizedA != normalizedB && strings.EqualFold(normalizedA, normalizedB)
+}
+
+func renameCaseOnlyPath(oldPath, newPath string) error {
+	if !sameRelPathDifferentCase(oldPath, newPath) {
+		return nil
+	}
+	if _, err := os.Stat(oldPath); err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(newPath), 0o750); err != nil {
+		return err
+	}
+	tempPath := newPath + ".case-rename-tmp"
+	if err := os.Rename(oldPath, tempPath); err != nil {
+		return err
+	}
+	if err := os.Rename(tempPath, newPath); err != nil {
+		_ = os.Rename(tempPath, oldPath)
+		return err
+	}
+	return nil
 }
 
 func isSubpathOrSame(root, candidate string) bool {

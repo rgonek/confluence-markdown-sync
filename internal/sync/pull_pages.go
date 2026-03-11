@@ -195,11 +195,7 @@ func pageMatchesExpectedState(page confluence.Page, expectedVersion int, expecte
 }
 
 func shouldIgnoreFolderHierarchyError(err error) bool {
-	if errors.Is(err, confluence.ErrNotFound) {
-		return true
-	}
-	var apiErr *confluence.APIError
-	return errors.As(err, &apiErr)
+	return shouldDegradeFolderLookupError(err)
 }
 
 func listAllPages(ctx context.Context, remote PullRemote, opts confluence.PageListOptions, progress Progress) ([]confluence.Page, error) {

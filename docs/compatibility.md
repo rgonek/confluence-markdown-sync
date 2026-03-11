@@ -9,7 +9,7 @@ when a dependency is unavailable.
 | Feature | Support Level | Tenant Dependency | Degraded Fallback |
 |---------|--------------|-------------------|-------------------|
 | Page sync (pull/push) | Full | None | — |
-| Page hierarchy (folders) | Full | Folder API | Page-based hierarchy when folder API returns any API error (`FOLDER_COMPATIBILITY_MODE` / `FOLDER_LOOKUP_UNAVAILABLE`), with diagnostics, summaries, and JSON reports distinguishing unsupported capability from upstream endpoint failure |
+| Page hierarchy (folders) | Full | Folder API | Pull/diff can fall back to page-based hierarchy lookup when folder lookup is unavailable; push fails closed and requires explicit interactive downgrade before converting a folder into a page-with-subpages node |
 | Content status (lozenges) | Full | Content Status API | Status sync disabled when API returns 404/405/501 (`CONTENT_STATUS_COMPATIBILITY_MODE`) |
 | Labels | Full | None | — |
 | Attachments (images/files) | Full | None | — |
@@ -27,22 +27,22 @@ when a dependency is unavailable.
 
 ## Compatibility Mode Details
 
-### Folder API (`FOLDER_COMPATIBILITY_MODE` / `FOLDER_LOOKUP_UNAVAILABLE`)
+### Folder API (`FOLDER_LOOKUP_UNAVAILABLE`)
 
 `conf` uses the Confluence Folder API to resolve page hierarchy during `pull`
-and `push`. If the tenant does not expose this API (any API-level error is
-returned), `conf` automatically falls back to page-based hierarchy:
+and `push`.
 
-- **Pull**: hierarchy is derived from page parent relationships only; folder
-  nodes are treated as regular parent pages. Emits `FOLDER_LOOKUP_UNAVAILABLE`.
-- **Push**: folder creation is skipped; pages are nested under page parents
-  instead. Emits `FOLDER_COMPATIBILITY_MODE`.
+- **Pull / diff**: if folder lookup is unavailable, hierarchy is derived from
+  page parent relationships only and the run emits `FOLDER_LOOKUP_UNAVAILABLE`.
+- **Push**: if folder creation would require changing a pure folder into a page,
+  the CLI fails closed. Interactive runs can ask the operator to accept a
+  folder-to-page semantic downgrade by rewriting the local workspace into a
+  page-with-subpages shape. Non-interactive runs do not auto-downgrade.
 
-No configuration change is needed. The mode is detected automatically on the
-first folder lookup attempt each run. Diagnostics should make it clear whether
-the fallback was triggered by an unsupported tenant capability ("tenant does
-not support the folder API") or by an upstream endpoint failure ("folder API
-endpoint failed upstream").
+Compatibility diagnostics still distinguish unsupported capability from lookup
+or endpoint failures on the read path. On the write path, unsupported tenant
+capability and semantic conflicts are surfaced as explicit push errors instead
+of silent fallback.
 
 ### Content Status API (`CONTENT_STATUS_COMPATIBILITY_MODE`)
 
@@ -105,9 +105,7 @@ validate any workflow that relies on raw ADF preservation.
 
 Running `conf push --preflight` probes the remote tenant before any write and
 reports which compatibility modes are active. When the pending push needs
-folder hierarchy writes, preflight surfaces whether fallback is caused by an
-unsupported tenant capability or by an upstream folder endpoint failure. It
-also probes content-status compatibility ahead of time so operators can decide
-whether to proceed. The final push summary and JSON report surface the active
-fallback mode as well, so degraded folder behavior is still visible after the
-run completes.
+folder hierarchy writes, preflight surfaces whether native folder behavior is
+blocked by unsupported capability, semantic conflicts, or another folder API
+failure. It also probes content-status compatibility ahead of time so operators
+can decide whether to proceed.

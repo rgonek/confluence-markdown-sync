@@ -84,16 +84,16 @@ func TestPull_ForceFullPullsAllPagesWithoutIncrementalChanges(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Pull() without force error: %v", err)
 	}
-	if len(resultNoForce.UpdatedMarkdown) != 1 || resultNoForce.UpdatedMarkdown[0] != "root.md" {
+	if len(resultNoForce.UpdatedMarkdown) != 1 || resultNoForce.UpdatedMarkdown[0] != "Root.md" {
 		t.Fatalf("expected incremental pull to update root.md without force, got %+v", resultNoForce.UpdatedMarkdown)
 	}
 
-	rootNoForce, err := fs.ReadMarkdownDocument(filepath.Join(spaceDir, "root.md"))
+	rootNoForce, err := fs.ReadMarkdownDocument(filepath.Join(spaceDir, "Root.md"))
 	if err != nil {
-		t.Fatalf("read root.md without force: %v", err)
+		t.Fatalf("read Root.md without force: %v", err)
 	}
 	if !strings.Contains(rootNoForce.Body, "new body") {
-		t.Fatalf("root.md should be updated without force when the remote version advances")
+		t.Fatalf("Root.md should be updated without force when the remote version advances")
 	}
 
 	forceRemote := &fakePullRemote{
@@ -120,12 +120,12 @@ func TestPull_ForceFullPullsAllPagesWithoutIncrementalChanges(t *testing.T) {
 		t.Fatalf("expected one updated markdown with force, got %+v", resultForce.UpdatedMarkdown)
 	}
 
-	rootForce, err := fs.ReadMarkdownDocument(filepath.Join(spaceDir, "root.md"))
+	rootForce, err := fs.ReadMarkdownDocument(filepath.Join(spaceDir, "Root.md"))
 	if err != nil {
-		t.Fatalf("read root.md with force: %v", err)
+		t.Fatalf("read Root.md with force: %v", err)
 	}
 	if !strings.Contains(rootForce.Body, "new body") {
-		t.Fatalf("root.md should be updated with force; got body:\n%s", rootForce.Body)
+		t.Fatalf("Root.md should be updated with force; got body:\n%s", rootForce.Body)
 	}
 }
 
@@ -232,22 +232,22 @@ func TestPull_DraftRecovery(t *testing.T) {
 	// Draft page should be preserved, not deleted
 	foundDraft := false
 	for _, p := range res.UpdatedMarkdown {
-		if p == "draft.md" {
+		if p == "Draft-Page.md" {
 			foundDraft = true
 			break
 		}
 	}
 	if !foundDraft {
-		t.Errorf("draft.md not found in updated markdown, was it erroneously deleted?")
+		t.Errorf("Draft-Page.md not found in updated markdown, was it erroneously deleted?")
 	}
 
 	// Verify draft frontmatter
-	doc, err := fs.ReadMarkdownDocument(filepath.Join(spaceDir, "draft.md"))
+	doc, err := fs.ReadMarkdownDocument(filepath.Join(spaceDir, "Draft-Page.md"))
 	if err != nil {
-		t.Fatalf("read draft.md: %v", err)
+		t.Fatalf("read Draft-Page.md: %v", err)
 	}
 	if doc.Frontmatter.State != "draft" {
-		t.Errorf("draft.md status = %q, want draft", doc.Frontmatter.State)
+		t.Errorf("Draft-Page.md status = %q, want draft", doc.Frontmatter.State)
 	}
 }
 

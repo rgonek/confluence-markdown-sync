@@ -198,6 +198,9 @@ func TestRunPush_SpaceModeAssumesPullMerge(t *testing.T) {
 	setupEnv(t)
 	chdirRepo(t, spaceDir)
 	setAutomationFlags(t, false, true) // non-interactive
+	oldMergeResolution := flagMergeResolution
+	flagMergeResolution = "keep-both"
+	t.Cleanup(func() { flagMergeResolution = oldMergeResolution })
 
 	cmd := &cobra.Command{}
 	cmd.SetOut(&bytes.Buffer{})
@@ -211,5 +214,42 @@ func TestRunPush_SpaceModeAssumesPullMerge(t *testing.T) {
 	}
 	if factoryCalls == 0 {
 		t.Fatal("expected remote factory to be called")
+	}
+}
+
+func TestRunPush_SpaceModePullMergeRequiresMergeResolutionInNonInteractiveMode(t *testing.T) {
+	runParallelCommandTest(t)
+
+	repo := t.TempDir()
+	spaceDir := preparePushRepoWithBaseline(t, repo)
+
+	writeMarkdown(t, filepath.Join(spaceDir, "root.md"), fs.MarkdownDocument{
+		Frontmatter: fs.Frontmatter{
+			Title:                  "Root",
+			ID:                     "1",
+			Version:                1,
+			ConfluenceLastModified: "2026-02-01T10:00:00Z",
+		},
+		Body: "Updated local content\n",
+	})
+	runGitForTest(t, repo, "add", ".")
+	runGitForTest(t, repo, "commit", "-m", "local change")
+
+	setupEnv(t)
+	chdirRepo(t, spaceDir)
+	setAutomationFlags(t, false, true)
+	oldMergeResolution := flagMergeResolution
+	flagMergeResolution = ""
+	t.Cleanup(func() { flagMergeResolution = oldMergeResolution })
+
+	cmd := &cobra.Command{}
+	cmd.SetOut(&bytes.Buffer{})
+
+	err := runPush(cmd, config.Target{Mode: config.TargetModeSpace, Value: ""}, "", false)
+	if err == nil {
+		t.Fatal("runPush() expected merge-resolution requirement error")
+	}
+	if !strings.Contains(err.Error(), "--merge-resolution") {
+		t.Fatalf("expected merge-resolution guidance, got: %v", err)
 	}
 }

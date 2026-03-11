@@ -85,6 +85,56 @@ func TestApplyAndDropStash_KeepBothCreatesSideBySideConflictCopy(t *testing.T) {
 	}
 }
 
+func TestApplyAndDropStash_NonInteractiveKeepBothUsesMergeResolution(t *testing.T) {
+	runParallelCommandTest(t)
+
+	repo := t.TempDir()
+	setupGitRepo(t, repo)
+
+	spaceDir := filepath.Join(repo, "Engineering (ENG)")
+	if err := os.MkdirAll(spaceDir, 0o750); err != nil {
+		t.Fatalf("mkdir space dir: %v", err)
+	}
+
+	repoPath := filepath.ToSlash(filepath.Join("Engineering (ENG)", "Page.md"))
+	mainFile := filepath.Join(spaceDir, "Page.md")
+	if err := os.WriteFile(mainFile, []byte("base\n"), 0o600); err != nil {
+		t.Fatalf("write base file: %v", err)
+	}
+
+	runGitForTest(t, repo, "add", ".")
+	runGitForTest(t, repo, "commit", "-m", "baseline")
+
+	if err := os.WriteFile(mainFile, []byte("local edit\n"), 0o600); err != nil {
+		t.Fatalf("write local edit: %v", err)
+	}
+	runGitForTest(t, repo, "stash", "push", "--include-untracked", "-m", "local", "--", repoPath)
+	stashRef := strings.TrimSpace(runGitForTest(t, repo, "stash", "list", "-1", "--format=%gd"))
+	if stashRef == "" {
+		t.Fatal("expected stash ref")
+	}
+
+	if err := os.WriteFile(mainFile, []byte("website edit\n"), 0o600); err != nil {
+		t.Fatalf("write website edit: %v", err)
+	}
+	runGitForTest(t, repo, "add", repoPath)
+	runGitForTest(t, repo, "commit", "-m", "website update")
+
+	oldMergeResolution := flagMergeResolution
+	flagMergeResolution = "keep-both"
+	t.Cleanup(func() { flagMergeResolution = oldMergeResolution })
+	setAutomationFlags(t, false, true)
+
+	out := &bytes.Buffer{}
+	if err := applyAndDropStash(repo, stashRef, filepath.ToSlash(filepath.Base(spaceDir)), strings.NewReader(""), out); err != nil {
+		t.Fatalf("applyAndDropStash() error: %v", err)
+	}
+
+	if _, err := os.Stat(filepath.Join(spaceDir, "Page (My Local Changes).md")); err != nil {
+		t.Fatalf("expected side-by-side backup under non-interactive keep-both: %v", err)
+	}
+}
+
 func TestRunPull_DiscardLocalFailureRestoresLocalChanges(t *testing.T) {
 	runParallelCommandTest(t)
 

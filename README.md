@@ -9,7 +9,7 @@ Write docs like code. Publish to Confluence with confidence. ✍️
 ## Why teams use `conf` ✨
 - 📝 Markdown-first authoring with Confluence as the destination.
 - 🛡️ Safe sync model with validation before remote writes.
-- 👀 Clear preview step via `conf diff` for tracked pages and `conf push --preflight` for brand-new files.
+- 👀 Clear preview step via `conf diff` for tracked pages and brand-new files, plus `conf push --preflight` for full push planning.
 - 🔎 Local full-text search across synced Markdown with SQLite or Bleve backends.
 - 🤖 Works in local repos and automation pipelines.
 
@@ -38,7 +38,7 @@ conf init
 `conf init` prepares Git metadata, `.gitignore`, and `.env` scaffolding, and creates an initial commit when it initializes a new Git repository.
 If `ATLASSIAN_*` or legacy `CONFLUENCE_*` credentials are already set in the environment, `conf init` writes `.env` from them without prompting.
 
-`conf pull` mirrors Confluence hierarchy locally by placing folders and child pages in nested directories. Pages with children use `<Page>/<Page>.md` so they are distinct from pure folders. Incremental pulls reconcile remote creates, updates, and deletes without requiring `--force`. Leaf-page title renames can keep the existing Markdown path when the effective parent directory is unchanged, but pages that own subtree directories move when their self-owned directory segment changes. Hierarchy moves and ancestor/path-segment sanitization changes are surfaced as `PAGE_PATH_MOVED` notes in `conf pull`/`conf diff`, and `conf status` previews tracked moves before the next pull.
+`conf pull` mirrors Confluence hierarchy locally by placing folders and child pages in nested directories. Pages with children use `<Page>/<Page>.md` so they are distinct from pure folders. Incremental pulls reconcile remote creates, updates, and deletes without requiring `--force`. Canonical pull paths always win, so older authored slugs are reconciled into the same path shape a fresh workspace would get. Hierarchy moves and ancestor/path-segment sanitization changes are surfaced as `PAGE_PATH_MOVED` notes in `conf pull`/`conf diff`, and `conf status` previews tracked moves before the next pull.
 
 ## Quick flow 🔄
 > ⚠️ **IMPORTANT**: If you are developing `conf` itself, NEVER run sync commands against real Confluence spaces in the repository root. This prevents accidental commits of synced documentation. Use a separate sandbox folder.
@@ -57,7 +57,7 @@ conf validate ENG
 conf diff ENG
 
 # Preview a brand-new file before its first push
-conf push .\ENG\New-Page.md --preflight
+conf diff .\ENG\New-Page.md
 
 # 4) Push local changes
 conf push ENG --on-conflict=cancel
@@ -73,7 +73,9 @@ conf push ENG --on-conflict=cancel
 - Removing tracked Markdown pages archives the corresponding remote page; follow-up pull removes the archived page from tracked local state
 - `pull` and `push` are serialized per repository with a workspace lock, so concurrent mutating runs fail fast with a clear lock message
 - `push` failures retain recovery refs and print exact `conf recover`, `git switch`, and cleanup commands for the retained run
-- Status scope: `conf status` reports Markdown page drift only; use `git status` for local asset changes or `conf diff` for attachment-aware remote inspection. There is no attachment-aware `conf status` mode yet
+- Status scope: `conf status` reports Markdown page drift by default; add `--attachments` to inspect attachment-only drift and orphaned local assets from the same command
+- Non-interactive `push --on-conflict=pull-merge` requires `--merge-resolution=fail|keep-local|keep-remote|keep-both`
+- Push never silently converts a directory-backed folder into a page; interactive runs require explicit confirmation before any folder-to-page downgrade
 - Label rules: labels are trimmed, lowercased, deduplicated, and sorted; empty labels and labels containing whitespace are rejected
 - Search filters: `--space`, repeatable `--label`, `--heading`, `--created-by`, `--updated-by`, date bounds, and `--result-detail`
 - Git remote is optional (local Git is enough)

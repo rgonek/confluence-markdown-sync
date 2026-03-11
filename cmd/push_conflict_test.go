@@ -258,3 +258,74 @@ func TestRunPush_PullMergeDoesNotForceDiscardLocalDuringPull(t *testing.T) {
 		t.Fatalf("expected pull-merge completion guidance, got:\n%s", out.String())
 	}
 }
+
+func TestRunPush_PullMergeFailResolutionStopsBeforeMutatingWorkspace(t *testing.T) {
+	runParallelCommandTest(t)
+
+	repo := t.TempDir()
+	spaceDir := preparePushRepoWithBaseline(t, repo)
+	rootPath := filepath.Join(spaceDir, "root.md")
+
+	writeMarkdown(t, rootPath, fs.MarkdownDocument{
+		Frontmatter: fs.Frontmatter{
+			Title: "Root",
+			ID:    "1",
+
+			Version:                1,
+			ConfluenceLastModified: "2026-02-01T10:00:00Z",
+		},
+		Body: "local uncommitted content\n",
+	})
+
+	fake := newCmdFakePushRemote(3)
+	oldPushFactory := newPushRemote
+	oldPullFactory := newPullRemote
+	newPushRemote = func(_ *config.Config) (syncflow.PushRemote, error) { return fake, nil }
+	newPullRemote = func(_ *config.Config) (syncflow.PullRemote, error) { return fake, nil }
+	t.Cleanup(func() {
+		newPushRemote = oldPushFactory
+		newPullRemote = oldPullFactory
+	})
+
+	pullCalled := false
+	oldRunPullForPush := runPullForPush
+	runPullForPush = func(_ *cobra.Command, _ config.Target) (commandRunReport, error) {
+		pullCalled = true
+		return commandRunReport{}, nil
+	}
+	t.Cleanup(func() {
+		runPullForPush = oldRunPullForPush
+	})
+
+	oldMergeResolution := flagMergeResolution
+	flagMergeResolution = "fail"
+	t.Cleanup(func() { flagMergeResolution = oldMergeResolution })
+
+	setAutomationFlags(t, false, true)
+	setupEnv(t)
+	chdirRepo(t, spaceDir)
+
+	cmd := &cobra.Command{}
+	cmd.SetOut(&bytes.Buffer{})
+	err := runPush(cmd, config.Target{Mode: config.TargetModeSpace, Value: ""}, OnConflictPullMerge, false)
+	if err == nil {
+		t.Fatal("runPush() expected explicit fail-before-mutate error")
+	}
+	if !strings.Contains(err.Error(), "--merge-resolution=fail") {
+		t.Fatalf("expected fail-resolution guidance, got: %v", err)
+	}
+	if pullCalled {
+		t.Fatal("automatic pull-merge should not run when --merge-resolution=fail is selected")
+	}
+
+	doc, readErr := fs.ReadMarkdownDocument(rootPath)
+	if readErr != nil {
+		t.Fatalf("read root markdown: %v", readErr)
+	}
+	if !strings.Contains(doc.Body, "local uncommitted content") {
+		t.Fatalf("expected local file to remain untouched, got body %q", doc.Body)
+	}
+	if stashList := strings.TrimSpace(runGitForTest(t, repo, "stash", "list")); stashList != "" {
+		t.Fatalf("expected stash to be empty when pull-merge is not attempted, got:\n%s", stashList)
+	}
+}

@@ -28,6 +28,10 @@ Additional push flag:
 - `--on-conflict=pull-merge|force|cancel`
   - required with `push --non-interactive` for file targets.
   - optional for space targets (defaults to `pull-merge`).
+- `--merge-resolution=fail|keep-local|keep-remote|keep-both`
+  - used with `--on-conflict=pull-merge --non-interactive`.
+  - `fail` stops before mutating the main workspace.
+  - `keep-local`, `keep-remote`, and `keep-both` apply the corresponding pull-conflict resolution automatically.
 
 ## Safety Confirmation Rules
 
@@ -50,7 +54,11 @@ When remote versions are ahead:
 - `force`: overwrite based on remote head.
 - `cancel`: stop without remote writes.
 
-In non-interactive usage, set one explicitly.
+In non-interactive usage:
+
+- file targets still require an explicit `--on-conflict` policy,
+- `pull-merge` also requires an explicit `--merge-resolution`,
+- `--merge-resolution=fail` aborts before the automatic pull touches the main workspace.
 
 If `pull-merge` stops after preserving local edits, the CLI now prints the expected recovery sequence explicitly:
 
@@ -79,7 +87,7 @@ Recommended operator flow:
 2. Resolve markers and run `conf validate <SPACE_KEY>`.
 3. Commit the merge-resolution result before the next `conf push`.
 
-For automation (`--non-interactive`), conflicts fail fast and require manual follow-up.
+For automation (`--non-interactive`), set `--merge-resolution=keep-local|keep-remote|keep-both` if you want deterministic conflict handling, or `--merge-resolution=fail` if you want the command to stop before mutating the workspace.
 
 ## Push Rollback Expectations
 
@@ -108,8 +116,8 @@ If `ARCHIVE_TASK_STILL_RUNNING` appears, Confluence did not finish within the cu
 
 Asset drift note:
 
-- `conf status` remains page-only.
-- Use `git status` for local asset changes and `conf diff` when automation needs attachment-aware remote inspection.
+- `conf status` defaults to page drift only, but `conf status --attachments` adds attachment-only drift and orphaned local asset inspection.
+- Use `git status` when you want raw Git detail in addition to the sync-aware status view.
 - The first push for locally sourced assets may emit `ATTACHMENT_PATH_NORMALIZED` because `conf` relocates files into the managed `assets/<page-id>/...` hierarchy. That rename is expected and stable after the next pull.
 
 ## Dry-Run Behavior (`push --dry-run`)

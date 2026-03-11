@@ -160,14 +160,21 @@ type folderFallbackCauseKind string
 const (
 	folderFallbackCauseUnsupportedCapability folderFallbackCauseKind = "unsupported tenant capability"
 	folderFallbackCauseUpstreamFailure       folderFallbackCauseKind = "upstream endpoint failure"
+	folderFallbackCauseSemanticConflict      folderFallbackCauseKind = "folder semantic conflict"
+	folderFallbackCauseMissingFolder         folderFallbackCauseKind = "missing folder"
 )
 
 func folderFallbackCause(err error) folderFallbackCauseKind {
+	var apiErr *confluence.APIError
 	switch {
 	case err == nil:
 		return folderFallbackCauseUpstreamFailure
-	case errors.Is(err, confluence.ErrNotFound), isCompatibilityProbeError(err):
+	case errors.Is(err, confluence.ErrNotFound):
+		return folderFallbackCauseMissingFolder
+	case isCompatibilityProbeError(err):
 		return folderFallbackCauseUnsupportedCapability
+	case errors.As(err, &apiErr) && (apiErr.StatusCode == 400 || apiErr.StatusCode == 409):
+		return folderFallbackCauseSemanticConflict
 	default:
 		return folderFallbackCauseUpstreamFailure
 	}
@@ -175,4 +182,28 @@ func folderFallbackCause(err error) folderFallbackCauseKind {
 
 func folderFallbackCauseLabel(err error) string {
 	return string(folderFallbackCause(err))
+}
+
+func shouldDegradeFolderLookupError(err error) bool {
+	switch folderFallbackCause(err) {
+	case folderFallbackCauseMissingFolder, folderFallbackCauseUnsupportedCapability, folderFallbackCauseUpstreamFailure:
+		return true
+	default:
+		return false
+	}
+}
+
+func isFolderDowngradeCandidate(err error) bool {
+	switch folderFallbackCause(err) {
+	case folderFallbackCauseUnsupportedCapability:
+		return true
+	case folderFallbackCauseSemanticConflict:
+		lower := strings.ToLower(strings.TrimSpace(err.Error()))
+		return strings.Contains(lower, "title already exists") ||
+			strings.Contains(lower, "already exists") ||
+			strings.Contains(lower, "duplicate") ||
+			strings.Contains(lower, "conflict")
+	default:
+		return false
+	}
 }

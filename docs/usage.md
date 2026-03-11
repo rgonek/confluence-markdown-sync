@@ -95,8 +95,7 @@ Highlights:
 - page files follow Confluence hierarchy (folders and parent/child pages become nested directories),
 - pages that have children are written as `<Page>/<Page>.md` so they are distinguishable from folders,
 - incremental pulls reconcile remote page creates, updates, and deletes without requiring `--force`,
-- leaf-page title renames can keep the existing Markdown path when the effective parent directory is unchanged,
-- pages that own subtree directories move when their self-owned directory segment changes,
+- canonical pull paths always win, so previously authored short slugs are renamed into the same path shape a fresh workspace would get,
 - hierarchy moves and ancestor/path-segment sanitization changes move the Markdown file and emit `PAGE_PATH_MOVED` notes with old/new paths,
 - same-space links rewritten to relative Markdown links,
 - cross-space links preserved as readable remote URLs/references instead of being rewritten to local Markdown paths,
@@ -116,6 +115,7 @@ Checks include:
 
 - frontmatter schema,
 - immutable metadata integrity,
+- duplicate directory-backed folder titles that Confluence would reject across the space,
 - link/asset resolution,
 - strict Markdown -> ADF conversion compatibility.
 
@@ -125,16 +125,17 @@ Use this before major pushes or in CI.
 
 ### `conf status [TARGET]`
 
-Shows a high-level sync summary for Markdown pages.
+Shows a high-level sync summary for Markdown pages, with optional attachment drift inspection.
 
 Highlights:
 
 - compares local Markdown drift against the last sync baseline,
 - checks whether tracked remote pages are ahead, missing, or newly added,
 - surfaces planned tracked-page path relocations that would happen on the next pull,
-- focuses on Markdown page files only.
+- defaults to Markdown page drift only for speed,
+- `--attachments` adds local attachment additions/deletions, remote attachment additions/deletions, and orphaned local assets.
 
-Attachment-only changes are intentionally excluded from `conf status`. Use `git status` for local asset changes or `conf diff` for attachment-aware remote inspection. There is no attachment-aware `conf status` mode yet.
+The default output calls out that page-only scope explicitly. Use `conf status --attachments` when the operator question is “is this fully synced, including assets?”
 
 ### `conf diff [TARGET]`
 
@@ -149,7 +150,7 @@ Highlights:
 - strips read-only author/timestamp metadata so the diff stays focused on actionable drift,
 - compares using `git diff --no-index`,
 - supports both file and space targets,
-- requires an `id` for file-mode remote comparison; for a brand-new local file without `id`, use `conf push <file> --preflight` instead.
+- renders a create preview for brand-new local files without `id`, including resolved parent, canonical target path, attachment uploads, and an ADF summary.
 
 ### `conf init agents [TARGET]`
 
@@ -187,7 +188,11 @@ Highlights:
 - failed pushes print concrete `recover`, branch inspection, and cleanup commands for the retained run,
 - space-scoped push, `--preflight`, and `--dry-run` validate the full target space whenever there are in-scope changes,
 - `--preflight` uses the same validation scope and strictness as a real push,
+- `--preflight` and `conf diff <new-file.md>` share the same create-preview model for brand-new pages,
 - `--on-conflict=pull-merge` restores local edits before running `pull` and preserves them via merge results, conflict markers, or retained recovery state instead of silently discarding them,
+- `--non-interactive --on-conflict=pull-merge` requires `--merge-resolution=fail|keep-local|keep-remote|keep-both`,
+- `--merge-resolution=fail` stops before mutating the main workspace, while the other merge-resolution values apply the requested pull-conflict choice deterministically,
+- push never silently downgrades a directory-backed folder into a page; if Confluence cannot represent the folder natively, interactive push requires explicit operator confirmation before rewriting the workspace to a page-with-subpages shape,
 - when `--on-conflict=pull-merge` stops after a conflict-preserving pull, the CLI prints explicit next steps to resolve files, `git add` them, and rerun push,
 - removing tracked Markdown pages archives the corresponding remote page and follow-up pull removes it from tracked local state,
 - tracked page removals are previewed and summarized as remote archive operations rather than hard deletes,

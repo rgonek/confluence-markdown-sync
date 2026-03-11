@@ -168,11 +168,11 @@ func TestRunPush_ReportJSONPullMergeEmitsSingleObjectAndCapturesPullMergeReport(
 	if report.ConflictResolution.Status != "completed" {
 		t.Fatalf("conflict resolution status = %q, want completed", report.ConflictResolution.Status)
 	}
-	if !containsString(report.ConflictResolution.MutatedFiles, "root.md") {
-		t.Fatalf("conflict resolution mutated files = %v, want root.md", report.ConflictResolution.MutatedFiles)
+	if !containsString(report.ConflictResolution.MutatedFiles, "Root.md") {
+		t.Fatalf("conflict resolution mutated files = %v, want Root.md", report.ConflictResolution.MutatedFiles)
 	}
-	if !containsString(report.MutatedFiles, "root.md") {
-		t.Fatalf("outer mutated files = %v, want root.md from pull-merge", report.MutatedFiles)
+	if !containsString(report.MutatedFiles, "Root.md") {
+		t.Fatalf("outer mutated files = %v, want Root.md from pull-merge", report.MutatedFiles)
 	}
 }
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/rgonek/confluence-markdown-sync/internal/confluence"
@@ -176,4 +177,24 @@ func (e *PushConflictError) Error() string {
 		e.RemoteVersion,
 		e.Policy,
 	)
+}
+
+// FolderPageFallbackRequiredError reports that continuing a push would require
+// rewriting a local directory-backed folder into a page-with-subpages node.
+type FolderPageFallbackRequiredError struct {
+	Path    string
+	Reason  string
+	Message string
+	Cause   error
+}
+
+func (e *FolderPageFallbackRequiredError) Error() string {
+	if strings.TrimSpace(e.Message) != "" {
+		return e.Message
+	}
+	return fmt.Sprintf("folder %s requires explicit page fallback: %v", e.Path, e.Cause)
+}
+
+func (e *FolderPageFallbackRequiredError) Unwrap() error {
+	return e.Cause
 }
