@@ -3,7 +3,7 @@ MAIN       := ./cmd/conf
 GO         := go
 GOFLAGS    :=
 
-.PHONY: build install test test-unit test-e2e release-check coverage-check fmt fmt-check lint clean
+.PHONY: build install test test-unit test-e2e ci-ubuntu release-check coverage-check fmt fmt-check lint clean
 
 ## build: compile the conf binary
 build:
@@ -27,6 +27,11 @@ coverage-check:
 ## test-e2e: run all end-to-end tests (requires CONF_E2E_DOMAIN, CONF_E2E_EMAIL, CONF_E2E_API_TOKEN, CONF_E2E_PRIMARY_SPACE_KEY, CONF_E2E_SECONDARY_SPACE_KEY)
 test-e2e: build
 	$(GO) test -timeout 20m -v -tags=e2e ./cmd -run '^TestWorkflow_'
+
+## ci-ubuntu: run the GitHub Actions ubuntu test job inside Docker
+ci-ubuntu:
+	docker build -f docker/ubuntu-ci.Dockerfile -t conf-ci-ubuntu .
+	docker run --rm conf-ci-ubuntu
 
 ## release-check: run the release gate, including live sandbox E2E coverage
 release-check: fmt-check lint test-unit test-e2e

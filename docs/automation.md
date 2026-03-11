@@ -220,6 +220,15 @@ Current documented baseline allowlist for the maintained release sandbox:
 
 If these spaces are cleaned up later, remove the allowlist entries in the same change that removes the warnings.
 
+## Reproducing Ubuntu CI Locally
+
+The GitHub Actions Ubuntu job can be reproduced locally in Docker with the same command sequence used by `.github/workflows/ci.yml`.
+
+- `make ci-ubuntu`
+- or on Windows PowerShell: `./scripts/ci-ubuntu.ps1`
+
+The Docker image installs the Linux toolchain needed for `go test -race`, runs `go vet`, `go build -trimpath ./cmd/conf`, `go test -race ./...`, `go run ./tools/coveragecheck`, `go run ./tools/gofmtcheck`, and `golangci-lint run`.
+
 ## Live Sandbox Release Checklist
 
 Use this checklist for a release candidate. It turns the 2026-03-09 one-off live verification into a repeatable gate.
