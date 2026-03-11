@@ -270,7 +270,7 @@ func TestRunDiff_SpaceModeShowsMetadataSummaryForRemoteMetadataOnlyChanges(t *te
 		t.Fatalf("mkdir space: %v", err)
 	}
 
-	writeMarkdown(t, filepath.Join(spaceDir, "root.md"), fs.MarkdownDocument{
+	writeMarkdown(t, filepath.Join(spaceDir, "Root.md"), fs.MarkdownDocument{
 		Frontmatter: fs.Frontmatter{
 			Title:   "Root",
 			ID:      "1",
@@ -281,7 +281,7 @@ func TestRunDiff_SpaceModeShowsMetadataSummaryForRemoteMetadataOnlyChanges(t *te
 
 	if err := fs.SaveState(spaceDir, fs.SpaceState{
 		PagePathIndex: map[string]string{
-			"root.md": "1",
+			"Root.md": "1",
 		},
 		AttachmentIndex: map[string]string{},
 	}); err != nil {
@@ -328,7 +328,7 @@ func TestRunDiff_SpaceModeShowsMetadataSummaryForRemoteMetadataOnlyChanges(t *te
 	if !strings.Contains(got, "metadata drift summary") {
 		t.Fatalf("expected metadata summary, got:\n%s", got)
 	}
-	if !strings.Contains(got, "root.md") {
+	if !strings.Contains(got, "Root.md") {
 		t.Fatalf("expected metadata summary to include path, got:\n%s", got)
 	}
 	if !strings.Contains(got, "state: current -> draft") {
