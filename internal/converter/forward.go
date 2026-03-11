@@ -32,6 +32,7 @@ func Forward(ctx context.Context, adfJSON []byte, cfg ForwardConfig, sourcePath 
 		TextColorStyle:       adfconv.ColorPandoc,
 		BackgroundColorStyle: adfconv.ColorPandoc,
 		MentionStyle:         adfconv.MentionPandoc,
+		HardBreakStyle:       adfconv.HardBreakDoubleSpace,
 		AlignmentStyle:       adfconv.AlignPandoc,
 		ExpandStyle:          adfconv.ExpandPandoc,
 		InlineCardStyle:      adfconv.InlineCardLink,

@@ -47,6 +47,21 @@ func TestForwardWithHook(t *testing.T) {
 	}
 }
 
+func TestForward_UsesDoubleSpaceHardBreaks(t *testing.T) {
+	ctx := context.Background()
+	adfJSON := []byte(`{"version":1,"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"Line 1"},{"type":"hardBreak"},{"type":"text","text":"Line 2"}]}]}`)
+
+	res, err := Forward(ctx, adfJSON, ForwardConfig{}, "test.md")
+	if err != nil {
+		t.Fatalf("Forward failed: %v", err)
+	}
+
+	expected := "Line 1  \nLine 2\n"
+	if res.Markdown != expected {
+		t.Fatalf("expected double-space hard break markdown %q, got %q", expected, res.Markdown)
+	}
+}
+
 func TestNormalizeForwardMarkdown_UnescapesInlineLinks(t *testing.T) {
 	input := "Intro \\[Page A\\]\\(./Page-A.md#overview\\) and \\[External\\]\\(https://example.com/docs\\).\n"
 	want := "Intro [Page A](./Page-A.md#overview) and [External](https://example.com/docs).\n"

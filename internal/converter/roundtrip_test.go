@@ -66,6 +66,32 @@ func TestRoundTripGolden(t *testing.T) {
 	}
 }
 
+func TestRoundTrip_PreservesDoubleSpaceHardBreaks(t *testing.T) {
+	ctx := context.Background()
+	inputMarkdown := []byte("Line 1  \nLine 2\n")
+
+	reverse, err := Reverse(ctx, inputMarkdown, ReverseConfig{Strict: true}, "fixtures/hard-break.md")
+	if err != nil {
+		t.Fatalf("reverse conversion failed: %v", err)
+	}
+
+	forward, err := Forward(ctx, reverse.ADF, ForwardConfig{}, "fixtures/hard-break.md")
+	if err != nil {
+		t.Fatalf("forward conversion failed: %v", err)
+	}
+
+	if got, want := forward.Markdown, string(inputMarkdown); got != want {
+		t.Fatalf("hard-break round-trip markdown mismatch\n--- got ---\n%q\n--- want ---\n%q", got, want)
+	}
+
+	if len(reverse.Warnings) > 0 {
+		t.Fatalf("reverse warnings: %s", formatWarningTypes(reverse.Warnings))
+	}
+	if len(forward.Warnings) > 0 {
+		t.Fatalf("forward warnings: %s", formatWarningTypes(forward.Warnings))
+	}
+}
+
 func formatWarningTypes(warnings []adfconv.Warning) string {
 	types := make([]string, 0, len(warnings))
 	for _, warning := range warnings {

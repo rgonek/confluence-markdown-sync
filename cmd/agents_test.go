@@ -146,6 +146,10 @@ func TestAgentsMDTemplateAlignment(t *testing.T) {
 		t.Error("workspace AGENTS.md missing Content Support Contract section")
 	}
 
+	if !strings.Contains(content, "must be unique across the entire space") {
+		t.Error("workspace AGENTS.md missing folder uniqueness guidance")
+	}
+
 	// Root workspace AGENTS.md should stay operational and self-contained.
 	for _, banned := range []string{"Documentation Strategy", "Specs and PRDs", "Spec/PRD document"} {
 		if strings.Contains(content, banned) {
@@ -171,6 +175,10 @@ func TestReadmeMDTemplateAlignment(t *testing.T) {
 	// id must still be documented as immutable.
 	if !strings.Contains(content, "`id`") {
 		t.Error("README.md template missing id frontmatter reference")
+	}
+
+	if !strings.Contains(content, "must be unique across the entire space") {
+		t.Error("README.md template missing folder uniqueness guidance")
 	}
 }
 

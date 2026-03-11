@@ -80,6 +80,7 @@ Space/
 - The parent page file **must** be ` + "`DirectoryName/DirectoryName.md`" + ` (filename matches directory name).
 - Sibling ` + "`.md`" + ` files inside the directory become subpages of that parent.
 - This mirrors the Confluence page tree hierarchy in the local filesystem.
+- Directory-backed folder names must be unique across the entire space, even under different parents. For example, you cannot keep both ` + "`Guides/API/`" + ` and ` + "`Archive/API/`" + ` as folders.
 
 ## Content Support Contract
 - **Same-space links**: Relative Markdown links between pages in the same space are fully supported.
@@ -131,6 +132,7 @@ ATLASSIAN_API_TOKEN=<your-api-token>
   - ` + "`state`" + `: Lifecycle state (` + "`draft`" + ` or ` + "`current`" + `).
   - ` + "`status`" + `: Confluence visual lozenge (e.g., "Ready to review").
   - ` + "`labels`" + `: Confluence page labels (list).
+- Directory-backed folder names must be unique across the entire space, regardless of nesting. You cannot create two folders with the same title under different parents.
 - ` + "`.confluence-state.json`" + ` is local state and is gitignored.
 - Recovery from a failed push is CLI-guided — no manual Git commands required.
 `

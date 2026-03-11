@@ -214,3 +214,10 @@ The system SHALL preserve supported structured Markdown content across push/pull
 - WHEN the content is pushed and later pulled
 - THEN the system SHALL preserve the same visible date text
 - AND the system SHALL not coerce the text into a different calendar date or an implicit date macro unless the source explicitly requested date markup
+
+#### Scenario: Hard line breaks round-trip as Markdown double-space breaks
+
+- GIVEN Markdown content contains an explicit hard line break using the Markdown double-space form
+- WHEN the content is pushed and later pulled
+- THEN the system SHALL preserve the hard line break semantics
+- AND pulled Markdown SHALL render the hard line break using the double-space plus newline form rather than a trailing backslash

@@ -111,6 +111,7 @@ Structured run reports:
 - Implementation: `github.com/rgonek/jira-adf-converter/converter`.
 - Call shape: `ConvertWithContext(..., converter.ConvertOptions{SourcePath: ...})`.
 - Resolution mode: best effort.
+- Hard line break rendering: Markdown double-space plus newline.
 - Behavior on unresolved references: produce warnings/diagnostics and fallback Markdown output rather than fail the run.
 
 ### Reverse Conversion
@@ -186,6 +187,7 @@ Supported structured round-trip content includes:
 
 - Markdown task lists with preserved checkbox state
 - ordinary ISO-like date text that remains plain text unless the source explicitly requested date markup
+- Markdown hard line breaks rendered in pulled output as double-space plus newline
 
 Validation failure must stop `push` immediately.
 

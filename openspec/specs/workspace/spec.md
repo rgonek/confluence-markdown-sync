@@ -19,6 +19,13 @@ The system SHALL initialize a usable local `conf` workspace with local Git, igno
 - AND the system SHALL create `.env` scaffolding when credentials are not already persisted
 - AND the system SHALL create helper docs such as `README.md` and `AGENTS.md` when missing
 
+#### Scenario: Generated helper docs explain folder-title uniqueness
+
+- GIVEN the user runs `conf init` in a workspace that is missing helper docs
+- WHEN the system scaffolds `README.md` or `AGENTS.md`
+- THEN the generated guidance SHALL explain that directory-backed Confluence folder titles must be unique across the entire space
+- AND the guidance SHALL clarify that the uniqueness rule applies regardless of nesting depth
+
 #### Scenario: `conf init` reuses an existing repository
 
 - GIVEN the current directory is already a Git repository
