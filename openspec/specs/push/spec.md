@@ -99,6 +99,50 @@ The system SHALL make remote-ahead conflict handling explicit.
 - THEN the system SHALL preserve the local edits via a clean merge, conflict markers, or explicit recoverable state
 - AND the system SHALL not silently discard local edits
 
+#### Scenario: Non-interactive pull-merge requires an explicit merge-resolution policy
+
+- GIVEN push detects a remote-ahead conflict
+- AND the policy is `pull-merge`
+- AND the user passed `--non-interactive`
+- WHEN no explicit merge-resolution policy was supplied
+- THEN the system SHALL stop before mutating the main workspace
+- AND the error SHALL instruct the operator to choose an explicit merge-resolution policy or rerun interactively
+
+#### Scenario: Non-interactive pull-merge uses isolated conflict exploration
+
+- GIVEN push detects a remote-ahead conflict
+- AND the policy is `pull-merge`
+- AND the user passed `--non-interactive` with an explicit merge-resolution policy
+- WHEN push evaluates the pull-merge path
+- THEN the system SHALL perform the exploratory merge in isolated workspace state
+- AND the main workspace SHALL not be left in an unresolved merge state if the exploratory merge still conflicts
+
+### Requirement: Folder semantics are never downgraded silently
+
+The system SHALL fail closed when a directory-backed folder cannot be represented remotely without changing semantics.
+
+#### Scenario: Push refuses silent folder-to-page downgrade
+
+- GIVEN a local directory represents a folder-only hierarchy segment
+- WHEN push cannot create the corresponding Confluence folder because of unsupported capability, duplicate folder title, invalid parentage, or another hierarchy write constraint
+- THEN the system SHALL not silently create a page in place of that folder
+- AND the system SHALL surface the specific downgrade reason to the operator
+
+#### Scenario: Interactive push may offer explicit folder-to-page conversion
+
+- GIVEN push detects that continuing requires changing a directory-backed folder into a page-with-subpages node
+- AND the run is interactive
+- WHEN the operator explicitly accepts the downgrade
+- THEN the system SHALL rewrite the local workspace into the page-with-subpages shape before continuing
+- AND the resulting remote hierarchy SHALL match that rewritten local shape
+
+#### Scenario: Non-interactive push fails closed on required folder downgrade
+
+- GIVEN push detects that continuing would require changing a directory-backed folder into a page-with-subpages node
+- AND the run is non-interactive
+- WHEN no explicit interactive acceptance is possible
+- THEN the system SHALL fail before performing the semantic downgrade
+
 ### Requirement: Strict remote publishing
 
 The system SHALL publish Markdown to Confluence using strict conversion and explicit attachment/link resolution.
@@ -147,6 +191,13 @@ The system SHALL provide safe non-write inspection modes for push.
 - WHEN the command evaluates the target scope
 - THEN the system SHALL show the planned changes and validation outcome
 - AND the system SHALL not modify remote content or local Git state
+
+#### Scenario: Preflight surfaces create-preview detail for new pages
+
+- GIVEN the target scope contains a brand-new Markdown page without a Confluence `id`
+- WHEN the user runs `conf push --preflight`
+- THEN the system SHALL show a create preview that includes the resolved parent, canonical target path, and planned attachment mutations
+- AND the preview SHALL not require the operator to switch to a different command to inspect the create operation
 
 #### Scenario: Preflight uses the same validation scope as real push
 
