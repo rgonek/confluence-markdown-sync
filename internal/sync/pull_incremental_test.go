@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -245,11 +246,10 @@ func TestPull_IncrementalCreateRetriesUntilRemotePageMaterializes(t *testing.T) 
 			"20": {ID: "20", SpaceID: "space-1", Title: "Remote Child", ParentPageID: "10", Version: 1, LastModified: modifiedAt, BodyADF: rawJSON(t, emptyADF)},
 		},
 	}
-	childFetches := 0
+	var childFetches atomic.Int32
 	fake.getPageFunc = func(pageID string) (confluence.Page, error) {
 		if pageID == "20" {
-			childFetches++
-			if childFetches == 1 {
+			if childFetches.Add(1) == 1 {
 				return confluence.Page{}, confluence.ErrNotFound
 			}
 		}
@@ -276,8 +276,8 @@ func TestPull_IncrementalCreateRetriesUntilRemotePageMaterializes(t *testing.T) 
 		t.Fatalf("Pull() error: %v", err)
 	}
 
-	if childFetches < 2 {
-		t.Fatalf("expected child page fetch to retry, got %d attempt(s)", childFetches)
+	if childFetches.Load() < 2 {
+		t.Fatalf("expected child page fetch to retry, got %d attempt(s)", childFetches.Load())
 	}
 	if _, err := os.Stat(filepath.Join(spaceDir, "Parent", "Parent.md")); err != nil {
 		t.Fatalf("expected moved parent markdown: %v", err)
@@ -364,13 +364,12 @@ func TestPull_IncrementalUpdateRetriesUntilExpectedVersionIsReadable(t *testing.
 			"20": freshPage,
 		},
 	}
-	updateFetches := 0
+	var updateFetches atomic.Int32
 	fake.getPageFunc = func(pageID string) (confluence.Page, error) {
 		if pageID != "20" {
 			return confluence.Page{}, confluence.ErrNotFound
 		}
-		updateFetches++
-		if updateFetches == 1 {
+		if updateFetches.Add(1) == 1 {
 			return stalePage, nil
 		}
 		return freshPage, nil
@@ -392,8 +391,8 @@ func TestPull_IncrementalUpdateRetriesUntilExpectedVersionIsReadable(t *testing.
 		t.Fatalf("Pull() error: %v", err)
 	}
 
-	if updateFetches < 2 {
-		t.Fatalf("expected updated page fetch to retry, got %d attempt(s)", updateFetches)
+	if updateFetches.Load() < 2 {
+		t.Fatalf("expected updated page fetch to retry, got %d attempt(s)", updateFetches.Load())
 	}
 
 	doc, err := fs.ReadMarkdownDocument(pagePath)
@@ -468,13 +467,12 @@ func TestPull_TargetPageUsesFreshGetPageVersionWhenListingLags(t *testing.T) {
 			"20": freshPage,
 		},
 	}
-	getPageCalls := 0
+	var getPageCalls atomic.Int32
 	fake.getPageFunc = func(pageID string) (confluence.Page, error) {
 		if pageID != "20" {
 			return confluence.Page{}, confluence.ErrNotFound
 		}
-		getPageCalls++
-		if getPageCalls == 1 {
+		if getPageCalls.Add(1) == 1 {
 			// The target-page probe should see the fresh version before the later fetch loop runs.
 			return freshPage, nil
 		}
