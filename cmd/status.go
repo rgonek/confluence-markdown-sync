@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -23,6 +24,7 @@ type StatusRemote interface {
 	ListPages(ctx context.Context, opts confluence.PageListOptions) (confluence.PageListResult, error)
 	GetPage(ctx context.Context, pageID string) (confluence.Page, error)
 	GetFolder(ctx context.Context, folderID string) (confluence.Folder, error)
+	ListAttachments(ctx context.Context, pageID string) ([]confluence.Attachment, error)
 }
 
 // StatusReport contains the results of a sync drift inspection.
@@ -36,9 +38,16 @@ type StatusReport struct {
 	PlannedPathMoves []syncflow.PlannedPagePathMove
 	ConflictAhead    []string // pages that are both locally modified AND ahead on remote
 	MaxVersionDrift  int
+	LocalAttachmentAdded  []string
+	LocalAttachmentDeleted []string
+	RemoteAttachmentAdded []string
+	RemoteAttachmentDeleted []string
+	OrphanedLocalAssets   []string
 }
 
-const statusScopeNote = "Scope: markdown/page drift only; attachment-only drift is excluded from `conf status` output. Use `git status` for local asset changes or `conf diff` for attachment-aware remote inspection. There is no attachment-aware `conf status` mode yet."
+const statusScopeNote = "Scope: markdown/page drift by default. Use `conf status --attachments` to inspect local and remote attachment drift from the same command."
+
+var flagStatusAttachments bool
 
 var newStatusRemote = func(cfg *config.Config) (StatusRemote, error) {
 	return newConfluenceClientFromConfig(cfg)
@@ -51,7 +60,7 @@ func newStatusCmd() *cobra.Command {
 		Short: "Inspect local and remote sync drift",
 		Long: `status prints a high-level sync summary without mutating local files or remote content.
 
-Status scope: markdown/page drift only; attachment-only drift is excluded from ` + "`conf status`" + ` output. Use ` + "`git status`" + ` for local asset changes or ` + "`conf diff`" + ` for attachment-aware remote inspection. There is no attachment-aware ` + "`conf status`" + ` mode yet.
+Status scope defaults to markdown/page drift. Add ` + "`--attachments`" + ` to include local and remote attachment drift plus orphaned local asset files.
 
 TARGET follows the standard rule:
 - .md suffix => file mode (space inferred from file)
@@ -65,6 +74,7 @@ TARGET follows the standard rule:
 			return runStatus(cmd, config.ParseTarget(raw))
 		},
 	}
+	cmd.Flags().BoolVar(&flagStatusAttachments, "attachments", false, "Include attachment drift and orphaned local asset inspection")
 
 	return cmd
 }
@@ -126,7 +136,7 @@ func runStatus(cmd *cobra.Command, target config.Target) error {
 		targetRelPath = normalizeRepoRelPath(rel)
 	}
 
-	report, err := buildStatusReport(ctx, remote, target, initialCtx, state, spaceKey, targetRelPath)
+	report, err := buildStatusReport(ctx, remote, target, initialCtx, state, spaceKey, targetRelPath, flagStatusAttachments)
 	if err != nil {
 		return err
 	}
@@ -152,6 +162,12 @@ func runStatus(cmd *cobra.Command, target config.Target) error {
 		_, _ = fmt.Fprintln(out, "\nVersion drift: no remote-ahead tracked pages")
 	}
 
+	if flagStatusAttachments {
+		printStatusSection(out, "Attachment drift", report.LocalAttachmentAdded, nil, report.LocalAttachmentDeleted)
+		printStatusSection(out, "Remote attachment drift", report.RemoteAttachmentAdded, nil, report.RemoteAttachmentDeleted)
+		printStatusList(out, "orphaned local assets", report.OrphanedLocalAssets)
+	}
+
 	return nil
 }
 
@@ -163,6 +179,7 @@ func buildStatusReport(
 	state fs.SpaceState,
 	spaceKey string,
 	targetRelPath string,
+	includeAttachments bool,
 ) (StatusReport, error) {
 	localAdded, localModified, localDeleted, err := collectLocalStatusChanges(target, initialCtx.spaceDir, spaceKey)
 	if err != nil {
@@ -281,6 +298,28 @@ func buildStatusReport(
 	conflictAhead := computeConflictAhead(localModified, remoteModified)
 	sort.Strings(conflictAhead)
 
+	localAttachmentAdded := []string{}
+	localAttachmentDeleted := []string{}
+	remoteAttachmentAdded := []string{}
+	remoteAttachmentDeleted := []string{}
+	orphanedLocalAssets := []string{}
+
+	if includeAttachments {
+		var attachmentErr error
+		localAttachmentAdded, localAttachmentDeleted, remoteAttachmentAdded, remoteAttachmentDeleted, orphanedLocalAssets, attachmentErr = collectAttachmentStatus(
+			ctx,
+			remote,
+			target,
+			initialCtx.spaceDir,
+			state,
+			trackedPathByID,
+			targetRelPath,
+		)
+		if attachmentErr != nil {
+			return StatusReport{}, attachmentErr
+		}
+	}
+
 	return StatusReport{
 		LocalAdded:       localAdded,
 		LocalModified:    localModified,
@@ -291,7 +330,175 @@ func buildStatusReport(
 		PlannedPathMoves: plannedPathMoves,
 		ConflictAhead:    conflictAhead,
 		MaxVersionDrift:  maxVersionDrift,
+		LocalAttachmentAdded:   localAttachmentAdded,
+		LocalAttachmentDeleted: localAttachmentDeleted,
+		RemoteAttachmentAdded:  remoteAttachmentAdded,
+		RemoteAttachmentDeleted: remoteAttachmentDeleted,
+		OrphanedLocalAssets:    orphanedLocalAssets,
 	}, nil
+}
+
+func collectAttachmentStatus(
+	ctx context.Context,
+	remote StatusRemote,
+	target config.Target,
+	spaceDir string,
+	state fs.SpaceState,
+	trackedPathByID map[string]string,
+	targetRelPath string,
+) ([]string, []string, []string, []string, []string, error) {
+	targetCtx, err := resolveValidateTargetContext(target, spaceDir)
+	if err != nil {
+		return nil, nil, nil, nil, nil, fmt.Errorf("resolve attachment status target: %w", err)
+	}
+
+	trackedStateByPageID := map[string]map[string]string{}
+	attachmentIDToPath := map[string]string{}
+	for relPath, attachmentID := range state.AttachmentIndex {
+		pageID := pageIDFromAttachmentPath(relPath)
+		if pageID == "" {
+			continue
+		}
+		if targetRelPath != "" {
+			if trackedPath, ok := trackedPathByID[pageID]; !ok || trackedPath != targetRelPath {
+				continue
+			}
+		}
+		if trackedStateByPageID[pageID] == nil {
+			trackedStateByPageID[pageID] = map[string]string{}
+		}
+		trackedStateByPageID[pageID][normalizeRepoRelPath(relPath)] = strings.TrimSpace(attachmentID)
+		attachmentIDToPath[strings.TrimSpace(attachmentID)] = normalizeRepoRelPath(relPath)
+	}
+
+	localAdded := map[string]struct{}{}
+	localDeleted := map[string]struct{}{}
+	referencedByPage := map[string]map[string]struct{}{}
+	for _, file := range targetCtx.files {
+		relPath, relErr := filepath.Rel(spaceDir, file)
+		if relErr != nil {
+			continue
+		}
+		relPath = normalizeRepoRelPath(relPath)
+		doc, readErr := fs.ReadMarkdownDocument(file)
+		if readErr != nil {
+			continue
+		}
+		pageID := strings.TrimSpace(doc.Frontmatter.ID)
+		if pageID == "" {
+			pageID = strings.TrimSpace(state.PagePathIndex[relPath])
+		}
+		if pageID == "" {
+			continue
+		}
+		if referencedByPage[pageID] == nil {
+			referencedByPage[pageID] = map[string]struct{}{}
+		}
+		referencedPaths, refErr := syncflow.CollectReferencedAssetPaths(spaceDir, file, doc.Body)
+		if refErr != nil {
+			continue
+		}
+		for _, assetPath := range referencedPaths {
+			plannedKey := normalizeRepoRelPath(filepath.ToSlash(filepath.Join("assets", pageID, filepath.Base(assetPath))))
+			referencedByPage[pageID][plannedKey] = struct{}{}
+			if strings.TrimSpace(state.AttachmentIndex[plannedKey]) == "" {
+				localAdded[plannedKey] = struct{}{}
+				continue
+			}
+			if _, statErr := os.Stat(filepath.Join(spaceDir, filepath.FromSlash(plannedKey))); os.IsNotExist(statErr) {
+				localDeleted[plannedKey] = struct{}{}
+			}
+		}
+	}
+
+	for pageID, statePaths := range trackedStateByPageID {
+		referencedSet := referencedByPage[pageID]
+		for relPath := range statePaths {
+			if referencedSet == nil {
+				localDeleted[relPath] = struct{}{}
+				continue
+			}
+			if _, exists := referencedSet[relPath]; !exists {
+				localDeleted[relPath] = struct{}{}
+			}
+		}
+	}
+
+	remoteAdded := map[string]struct{}{}
+	remoteDeleted := map[string]struct{}{}
+	for pageID, trackedState := range trackedStateByPageID {
+		remoteAttachments, listErr := remote.ListAttachments(ctx, pageID)
+		if listErr != nil {
+			return nil, nil, nil, nil, nil, fmt.Errorf("list remote attachments for page %s: %w", pageID, listErr)
+		}
+		remoteIDs := map[string]confluence.Attachment{}
+		for _, attachment := range remoteAttachments {
+			attachmentID := strings.TrimSpace(attachment.ID)
+			if attachmentID == "" {
+				continue
+			}
+			remoteIDs[attachmentID] = attachment
+			if _, tracked := attachmentIDToPath[attachmentID]; !tracked {
+				remoteAdded[normalizeRepoRelPath(filepath.ToSlash(filepath.Join("assets", pageID, attachmentID+"-"+strings.TrimSpace(attachment.Filename))))] = struct{}{}
+			}
+		}
+		for relPath, attachmentID := range trackedState {
+			if _, exists := remoteIDs[attachmentID]; !exists {
+				remoteDeleted[relPath] = struct{}{}
+			}
+		}
+	}
+
+	orphaned := []string{}
+	assetsRoot := filepath.Join(spaceDir, "assets")
+	if _, statErr := os.Stat(assetsRoot); statErr == nil {
+		walkErr := filepath.WalkDir(assetsRoot, func(path string, d os.DirEntry, walkErr error) error {
+			if walkErr != nil || d.IsDir() {
+				return walkErr
+			}
+			relPath, relErr := filepath.Rel(spaceDir, path)
+			if relErr != nil {
+				return relErr
+			}
+			normalized := normalizeRepoRelPath(relPath)
+			if strings.TrimSpace(state.AttachmentIndex[normalized]) == "" {
+				orphaned = append(orphaned, normalized)
+			}
+			return nil
+		})
+		if walkErr != nil {
+			return nil, nil, nil, nil, nil, fmt.Errorf("walk local assets: %w", walkErr)
+		}
+	}
+
+	return sortedStatusSet(localAdded), sortedStatusSet(localDeleted), sortedStatusSet(remoteAdded), sortedStatusSet(remoteDeleted), dedupeSortedStatusPaths(orphaned), nil
+}
+
+func dedupeSortedStatusPaths(paths []string) []string {
+	if len(paths) == 0 {
+		return nil
+	}
+	sort.Strings(paths)
+	out := make([]string, 0, len(paths))
+	for _, path := range paths {
+		if len(out) > 0 && out[len(out)-1] == path {
+			continue
+		}
+		out = append(out, path)
+	}
+	return out
+}
+
+func sortedStatusSet(values map[string]struct{}) []string {
+	if len(values) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(values))
+	for value := range values {
+		out = append(out, value)
+	}
+	sort.Strings(out)
+	return out
 }
 
 func listAllPagesForStatus(ctx context.Context, remote StatusRemote, opts confluence.PageListOptions) ([]confluence.Page, error) {

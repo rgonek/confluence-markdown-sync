@@ -48,7 +48,7 @@ func TestBuildStatusReport(t *testing.T) {
 	target := config.Target{Value: "TEST", Mode: config.TargetModeSpace}
 
 	ctx := context.Background()
-	_, _ = buildStatusReport(ctx, mock, target, initialPullContext{}, fs.SpaceState{}, "TEST", "filterPath")
+	_, _ = buildStatusReport(ctx, mock, target, initialPullContext{}, fs.SpaceState{}, "TEST", "filterPath", false)
 }
 
 func TestRunStatus_Integration(t *testing.T) {
@@ -195,7 +195,7 @@ func TestBuildStatusReport_Drift(t *testing.T) {
 	mock := &mockStatusRemote{}
 	target := config.Target{Value: "TEST", Mode: config.TargetModeSpace}
 	ctx := context.Background()
-	_, _ = buildStatusReport(ctx, mock, target, initialPullContext{}, fs.SpaceState{}, "TEST", "filterPath")
+	_, _ = buildStatusReport(ctx, mock, target, initialPullContext{}, fs.SpaceState{}, "TEST", "filterPath", false)
 }
 
 func TestRunStatus_ExplainsMarkdownOnlyScopeForAssetDrift(t *testing.T) {
@@ -282,11 +282,11 @@ func TestStatusCmdHelp_ExplainsMarkdownPageScope(t *testing.T) {
 	runParallelCommandTest(t)
 
 	cmd := newStatusCmd()
-	if !strings.Contains(cmd.Long, "markdown/page drift only") {
-		t.Fatalf("expected long help to explain markdown/page-only scope, got:\n%s", cmd.Long)
+	if !strings.Contains(cmd.Long, "markdown/page drift") {
+		t.Fatalf("expected long help to explain markdown/page scope, got:\n%s", cmd.Long)
 	}
-	if !strings.Contains(cmd.Long, "attachment-only drift is excluded") {
-		t.Fatalf("expected long help to explain excluded attachment-only drift, got:\n%s", cmd.Long)
+	if !strings.Contains(cmd.Long, "--attachments") {
+		t.Fatalf("expected long help to advertise --attachments mode, got:\n%s", cmd.Long)
 	}
 }
 
@@ -453,6 +453,63 @@ func TestRunStatus_ShowsPlannedPathMoves(t *testing.T) {
 	}
 	if !strings.Contains(got, "Policies/Child.md -> Archive/Child.md") {
 		t.Fatalf("expected planned move detail, got:\n%s", got)
+	}
+}
+
+func TestRunStatus_AttachmentsFlagReportsAttachmentOnlyDrift(t *testing.T) {
+	runParallelCommandTest(t)
+	repo, spaceDir := setupStatusScopeRepo(t)
+	if err := os.Remove(filepath.Join(spaceDir, "assets", "1", "file.png")); err != nil {
+		t.Fatalf("remove asset: %v", err)
+	}
+
+	oldAttachments := flagStatusAttachments
+	t.Cleanup(func() { flagStatusAttachments = oldAttachments })
+
+	mock := &mockStatusRemote{
+		space: confluence.Space{ID: "space-1", Key: "TEST"},
+		pages: confluence.PageListResult{
+			Pages: []confluence.Page{
+				{ID: "1", Title: "Page", Version: 1},
+			},
+		},
+		page: confluence.Page{ID: "1", SpaceID: "space-1", Status: "current"},
+		attachments: map[string][]confluence.Attachment{
+			"1": {
+				{ID: "att-1", Filename: "file.png"},
+				{ID: "att-2", Filename: "remote-extra.png"},
+			},
+		},
+	}
+
+	oldNewStatusRemote := newStatusRemote
+	newStatusRemote = func(cfg *config.Config) (StatusRemote, error) {
+		return mock, nil
+	}
+	t.Cleanup(func() { newStatusRemote = oldNewStatusRemote })
+
+	chdirRepo(t, repo)
+	cmd := newStatusCmd()
+	flagStatusAttachments = true
+	out := &bytes.Buffer{}
+	cmd.SetOut(out)
+
+	if err := runStatus(cmd, config.Target{Value: "TEST", Mode: config.TargetModeSpace}); err != nil {
+		t.Fatalf("runStatus() error: %v", err)
+	}
+
+	got := out.String()
+	if !strings.Contains(got, "Attachment drift:") {
+		t.Fatalf("expected attachment drift section, got:\n%s", got)
+	}
+	if !strings.Contains(got, "deleted (1):") || !strings.Contains(got, "assets/1/file.png") {
+		t.Fatalf("expected local attachment deletion, got:\n%s", got)
+	}
+	if !strings.Contains(got, "Remote attachment drift:") {
+		t.Fatalf("expected remote attachment drift section, got:\n%s", got)
+	}
+	if !strings.Contains(got, "added (1):") || !strings.Contains(got, "assets/1/att-2-remote-extra.png") {
+		t.Fatalf("expected remote attachment addition, got:\n%s", got)
 	}
 }
 

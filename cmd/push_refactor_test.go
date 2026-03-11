@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -77,16 +78,40 @@ func TestPreflightAttachmentMutations_ScopesDeletesPerPage(t *testing.T) {
 		},
 	}
 
-	uploads, deletes := preflightAttachmentMutations(spaceDir, []syncflow.PushFileChange{
+	uploads, deletes := preflightAttachmentMutations(context.Background(), spaceDir, []syncflow.PushFileChange{
 		{Type: syncflow.PushChangeModify, Path: "root.md"},
 		{Type: syncflow.PushChangeModify, Path: "other.md"},
-	}, state)
+	}, pushPreflightContext{state: state})
 
 	if !reflect.DeepEqual(uploads, []string{"assets/1/new.png"}) {
 		t.Fatalf("uploads = %#v", uploads)
 	}
 	if !reflect.DeepEqual(deletes, []string{"assets/1/old.png"}) {
 		t.Fatalf("deletes = %#v", deletes)
+	}
+}
+
+func TestPreflightAttachmentMutations_ShowsNewPageUploads(t *testing.T) {
+	t.Parallel()
+
+	spaceDir := t.TempDir()
+	writeMarkdown(t, filepath.Join(spaceDir, "new-page.md"), fs.MarkdownDocument{
+		Frontmatter: fs.Frontmatter{Title: "New Page"},
+		Body:        "![diagram](diagram.png)\n",
+	})
+	if err := os.WriteFile(filepath.Join(spaceDir, "diagram.png"), []byte("png"), 0o600); err != nil {
+		t.Fatalf("write diagram: %v", err)
+	}
+
+	uploads, deletes := preflightAttachmentMutations(context.Background(), spaceDir, []syncflow.PushFileChange{
+		{Type: syncflow.PushChangeAdd, Path: "new-page.md"},
+	}, pushPreflightContext{state: fs.SpaceState{AttachmentIndex: map[string]string{}}})
+
+	if !reflect.DeepEqual(uploads, []string{"diagram.png (new page: new-page.md)"}) {
+		t.Fatalf("uploads = %#v", uploads)
+	}
+	if len(deletes) != 0 {
+		t.Fatalf("deletes = %#v, want none", deletes)
 	}
 }
 

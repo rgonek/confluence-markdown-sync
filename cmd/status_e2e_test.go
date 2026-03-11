@@ -133,7 +133,7 @@ func TestBuildStatusReport_Success(t *testing.T) {
 		spaceKey: "TEST",
 	}
 
-	report, err := buildStatusReport(context.Background(), mock, target, initialCtx, state, "TEST", "")
+	report, err := buildStatusReport(context.Background(), mock, target, initialCtx, state, "TEST", "", false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

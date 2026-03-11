@@ -147,8 +147,11 @@ func TestRunDiff_SpaceModeNoDifferences(t *testing.T) {
 	}
 
 	got := out.String()
-	if !strings.Contains(got, "diff completed with no differences") {
-		t.Fatalf("expected no-diff message, got:\n%s", got)
+	if !strings.Contains(got, "[PAGE_PATH_MOVED]") {
+		t.Fatalf("expected canonical path move diagnostic, got:\n%s", got)
+	}
+	if !strings.Contains(got, "root.md to Root.md") {
+		t.Fatalf("expected canonical root rename detail, got:\n%s", got)
 	}
 }
 
@@ -826,7 +829,7 @@ func TestRunDiff_RespectsCanceledContext(t *testing.T) {
 	}
 }
 
-func TestRunDiff_FileModeNewPageWithoutIDPointsToPreflight(t *testing.T) {
+func TestRunDiff_FileModeNewPageWithoutIDShowsCreatePreview(t *testing.T) {
 	runParallelCommandTest(t)
 	repo := t.TempDir()
 	setupGitRepo(t, repo)
@@ -852,17 +855,33 @@ func TestRunDiff_FileModeNewPageWithoutIDPointsToPreflight(t *testing.T) {
 	chdirRepo(t, repo)
 
 	cmd := &cobra.Command{}
-	cmd.SetOut(&bytes.Buffer{})
+	out := &bytes.Buffer{}
+	cmd.SetOut(out)
 
-	err := runDiff(cmd, config.Target{Mode: config.TargetModeFile, Value: newFile})
-	if err == nil {
-		t.Fatal("expected diff guidance error for brand-new file")
+	fake := &cmdFakePullRemote{
+		space:       confluence.Space{ID: "space-1", Key: "ENG", Name: "Engineering"},
+		attachments: map[string][]byte{},
 	}
-	if !strings.Contains(err.Error(), "has no id") {
-		t.Fatalf("expected missing-id guidance, got: %v", err)
+	oldFactory := newDiffRemote
+	newDiffRemote = func(_ *config.Config) (syncflow.PullRemote, error) { return fake, nil }
+	t.Cleanup(func() { newDiffRemote = oldFactory })
+
+	if err := runDiff(cmd, config.Target{Mode: config.TargetModeFile, Value: newFile}); err != nil {
+		t.Fatalf("expected create preview for brand-new file, got: %v", err)
 	}
-	if !strings.Contains(err.Error(), "conf push --preflight") {
-		t.Fatalf("expected preflight guidance, got: %v", err)
+
+	got := out.String()
+	if !strings.Contains(got, "new page preview:") {
+		t.Fatalf("expected create preview header, got:\n%s", got)
+	}
+	if !strings.Contains(got, `operation: create page "New Page"`) {
+		t.Fatalf("expected create operation detail, got:\n%s", got)
+	}
+	if !strings.Contains(got, "canonical target path: New-Page.md") {
+		t.Fatalf("expected canonical target path, got:\n%s", got)
+	}
+	if !strings.Contains(got, "resolved parent: space root") {
+		t.Fatalf("expected resolved parent detail, got:\n%s", got)
 	}
 }
 

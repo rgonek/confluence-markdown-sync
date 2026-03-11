@@ -371,6 +371,9 @@ func TestRunPush_PreflightUsesExistingRemotePageForContentStatusProbe(t *testing
 	if !strings.Contains(text, "content-status metadata sync disabled for this push") {
 		t.Fatalf("preflight output missing degraded-mode detail for new-page probe:\n%s", text)
 	}
+	if !strings.Contains(text, "create new-page.md (parent: space root, canonical path: New-page.md)") {
+		t.Fatalf("preflight output missing create preview detail:\n%s", text)
+	}
 }
 
 func TestRunPush_PreflightHonorsExplicitForceConflictPolicy(t *testing.T) {
