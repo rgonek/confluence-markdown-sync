@@ -2,12 +2,82 @@ package confluence
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 )
+
+var contentStateColorPattern = regexp.MustCompile(`^[0-9A-Fa-f]{6}$`)
+
+type contentStateDTO struct {
+	ID    int    `json:"id"`
+	Name  string `json:"name"`
+	Color string `json:"color"`
+}
+
+func (d contentStateDTO) toModel() ContentState {
+	return ContentState{
+		ID:    d.ID,
+		Name:  strings.TrimSpace(d.Name),
+		Color: normalizeContentStateColor(d.Color),
+	}
+}
+
+func (c *Client) ListContentStates(ctx context.Context) ([]ContentState, error) {
+	req, err := c.newRequest(ctx, http.MethodGet, "/wiki/rest/api/content-states", nil, nil)
+	if err != nil {
+		return nil, fmt.Errorf("create list content states request: %w", err)
+	}
+
+	var payload json.RawMessage
+	if err := c.do(req, &payload); err != nil {
+		return nil, fmt.Errorf("execute list content states request: %w", err)
+	}
+	return decodeContentStateListPayload(payload)
+}
+
+func (c *Client) ListSpaceContentStates(ctx context.Context, spaceKey string) ([]ContentState, error) {
+	key := strings.TrimSpace(spaceKey)
+	if key == "" {
+		return nil, errors.New("space key is required")
+	}
+
+	req, err := c.newRequest(ctx, http.MethodGet, "/wiki/rest/api/space/"+url.PathEscape(key)+"/state", nil, nil)
+	if err != nil {
+		return nil, fmt.Errorf("create list space content states request: %w", err)
+	}
+
+	var payload json.RawMessage
+	if err := c.do(req, &payload); err != nil {
+		return nil, fmt.Errorf("execute list space content states request: %w", err)
+	}
+	return decodeContentStateListPayload(payload)
+}
+
+func (c *Client) GetAvailableContentStates(ctx context.Context, pageID string) ([]ContentState, error) {
+	id := strings.TrimSpace(pageID)
+	if id == "" {
+		return nil, errors.New("page ID is required")
+	}
+
+	req, err := c.newRequest(ctx, http.MethodGet, "/wiki/rest/api/content/"+url.PathEscape(id)+"/state/available", nil, nil)
+	if err != nil {
+		return nil, fmt.Errorf("create available content states request: %w", err)
+	}
+
+	var payload json.RawMessage
+	if err := c.do(req, &payload); err != nil {
+		if isHTTPStatus(err, http.StatusNotFound) {
+			return nil, ErrNotFound
+		}
+		return nil, fmt.Errorf("execute available content states request: %w", err)
+	}
+	return decodeContentStateListPayload(payload)
+}
 
 // GetContentStatus fetches the visual UI content status (lozenge) for a page via v1 API.
 func (c *Client) GetContentStatus(ctx context.Context, pageID string, pageStatus string) (string, error) {
@@ -51,23 +121,34 @@ func (c *Client) GetContentStatus(ctx context.Context, pageID string, pageStatus
 }
 
 // SetContentStatus sets the visual UI content status (lozenge) for a page via v1 API.
-func (c *Client) SetContentStatus(ctx context.Context, pageID string, pageStatus string, statusName string) error {
+func (c *Client) SetContentStatus(ctx context.Context, pageID string, pageStatus string, state ContentState) error {
 	id := strings.TrimSpace(pageID)
 	if id == "" {
 		return errors.New("page ID is required")
 	}
-	statusName = strings.TrimSpace(statusName)
+	statusName := strings.TrimSpace(state.Name)
 	if statusName == "" {
 		return errors.New("status name is required")
+	}
+	if available, err := c.GetAvailableContentStates(ctx, id); err == nil {
+		for _, candidate := range available {
+			if strings.EqualFold(strings.TrimSpace(candidate.Name), statusName) {
+				state.ID = candidate.ID
+				state.Name = candidate.Name
+				state.Color = candidate.Color
+				break
+			}
+		}
 	}
 
 	query := url.Values{}
 	query.Set("status", normalizeContentStatePageStatus(pageStatus))
 
-	payload := struct {
-		Name string `json:"name"`
-	}{
-		Name: statusName,
+	payload := map[string]any{
+		"name": strings.TrimSpace(state.Name),
+	}
+	if state.ID > 0 {
+		payload["id"] = state.ID
 	}
 
 	req, err := c.newRequest(
@@ -130,6 +211,57 @@ func normalizeContentStatePageStatus(pageStatus string) string {
 	default:
 		return "current"
 	}
+}
+
+func normalizeContentStateColor(value string) string {
+	value = strings.TrimSpace(value)
+	trimmed := strings.TrimPrefix(value, "#")
+	if !contentStateColorPattern.MatchString(trimmed) {
+		return ""
+	}
+	return "#" + trimmed
+}
+
+func normalizeContentStates(stateGroups ...[]contentStateDTO) []ContentState {
+	seen := map[string]struct{}{}
+	out := make([]ContentState, 0)
+	for _, group := range stateGroups {
+		for _, item := range group {
+			state := item.toModel()
+			key := strings.ToLower(strings.TrimSpace(state.Name))
+			if key == "" {
+				continue
+			}
+			if _, exists := seen[key]; exists {
+				continue
+			}
+			seen[key] = struct{}{}
+			out = append(out, state)
+		}
+	}
+	return out
+}
+
+func decodeContentStateListPayload(payload json.RawMessage) ([]ContentState, error) {
+	if len(payload) == 0 {
+		return nil, nil
+	}
+
+	var bare []contentStateDTO
+	if err := json.Unmarshal(payload, &bare); err == nil {
+		return normalizeContentStates(bare), nil
+	}
+
+	var wrapped struct {
+		ContentStates       []contentStateDTO `json:"contentStates"`
+		Results             []contentStateDTO `json:"results"`
+		SpaceContentStates  []contentStateDTO `json:"spaceContentStates"`
+		CustomContentStates []contentStateDTO `json:"customContentStates"`
+	}
+	if err := json.Unmarshal(payload, &wrapped); err != nil {
+		return nil, fmt.Errorf("decode content states payload: %w", err)
+	}
+	return normalizeContentStates(wrapped.ContentStates, wrapped.Results, wrapped.SpaceContentStates, wrapped.CustomContentStates), nil
 }
 
 // GetLabels fetches all labels for a given page via v1 API.

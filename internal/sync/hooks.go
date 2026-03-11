@@ -71,7 +71,8 @@ func NewForwardLinkHookWithGlobalIndex(
 				}
 			}
 
-			if shouldPreserveAbsoluteCrossSpaceLink(pageID, in, currentSpaceDir, currentSpaceKey, globalIndex) {
+			if shouldPreserveAbsoluteCrossSpaceLink(pageID, in, currentSpaceDir, currentSpaceKey, globalIndex) ||
+				shouldPreserveAbsoluteConfluencePageLink(pageID, in, currentSpaceKey) {
 				href := preservedCrossSpaceHref(in)
 				if href != "" {
 					if onNotice != nil {
@@ -112,6 +113,10 @@ func shouldPreserveAbsoluteCrossSpaceLink(
 		return true
 	}
 
+	if targetSpaceKey := extractConfluenceURLSpaceKey(in.Href); targetSpaceKey != "" && !strings.EqualFold(targetSpaceKey, currentSpaceKey) {
+		return true
+	}
+
 	candidatePath := strings.TrimSpace(globalIndex[pageID])
 	if candidatePath == "" {
 		return false
@@ -123,6 +128,48 @@ func shouldPreserveAbsoluteCrossSpaceLink(
 		return true
 	}
 	return !isSubpathOrSame(currentSpaceDir, candidatePath)
+}
+
+func shouldPreserveAbsoluteConfluencePageLink(pageID string, in adfconv.LinkRenderInput, currentSpaceKey string) bool {
+	if strings.TrimSpace(pageID) == "" {
+		return false
+	}
+	if strings.TrimSpace(in.Meta.SpaceKey) != "" && strings.EqualFold(strings.TrimSpace(in.Meta.SpaceKey), currentSpaceKey) {
+		return false
+	}
+	href := strings.TrimSpace(in.Href)
+	if href == "" {
+		return false
+	}
+	u, err := url.Parse(href)
+	if err != nil || !u.IsAbs() {
+		return false
+	}
+	if extracted := ExtractPageID(href); extracted == "" {
+		return false
+	}
+	return true
+}
+
+func extractConfluenceURLSpaceKey(href string) string {
+	href = strings.TrimSpace(href)
+	if href == "" {
+		return ""
+	}
+	u, err := url.Parse(href)
+	if err != nil {
+		return ""
+	}
+	if !u.IsAbs() {
+		return ""
+	}
+	segments := strings.Split(strings.Trim(u.Path, "/"), "/")
+	for i := 0; i+2 < len(segments); i++ {
+		if strings.EqualFold(segments[i], "spaces") && strings.EqualFold(segments[i+2], "pages") {
+			return strings.TrimSpace(segments[i+1])
+		}
+	}
+	return ""
 }
 
 func preservedCrossSpaceHref(in adfconv.LinkRenderInput) string {
@@ -417,6 +464,7 @@ func NewReverseLinkHook(spaceDir string, index PageIndex, domain string) mdconv.
 // when needed, a global page index keyed by page ID.
 func NewReverseLinkHookWithGlobalIndex(spaceDir string, index PageIndex, globalIndex GlobalPageIndex, domain string) mdconv.LinkParseHook {
 	globalPathIndex := invertGlobalPageIndex(globalIndex)
+	sourceSpaceKey, _ := loadSpaceKeyForPath(spaceDir)
 
 	return func(ctx context.Context, in mdconv.LinkParseInput) (mdconv.LinkParseOutput, error) {
 		// If absolute URL or non-http scheme, let it pass (Handled=false)
@@ -469,6 +517,9 @@ func NewReverseLinkHookWithGlobalIndex(spaceDir string, index PageIndex, globalI
 		// Construct Confluence URL
 		// We use the viewpage.action URL format which is standard for ID-based links
 		dest := strings.TrimRight(domain, "/") + "/wiki/pages/viewpage.action?pageId=" + pageID
+		if targetSpaceKey, ok := loadSpaceKeyForPath(destPath); ok && targetSpaceKey != "" && !strings.EqualFold(targetSpaceKey, sourceSpaceKey) {
+			dest = strings.TrimRight(domain, "/") + "/wiki/spaces/" + url.PathEscape(targetSpaceKey) + "/pages/" + pageID
+		}
 		if strings.TrimSpace(anchor) != "" {
 			dest += "#" + anchor
 		}
@@ -535,6 +586,37 @@ func resolveGlobalPageIDBySameFile(destPath string, globalIndex GlobalPageIndex)
 	}
 
 	return "", false
+}
+
+func loadSpaceKeyForPath(path string) (string, bool) {
+	current := strings.TrimSpace(path)
+	if current == "" {
+		return "", false
+	}
+
+	info, err := os.Stat(current)
+	if err == nil && !info.IsDir() {
+		current = filepath.Dir(current)
+	}
+
+	for {
+		statePath := filepath.Join(current, fs.StateFileName)
+		if _, err := os.Stat(statePath); err == nil {
+			state, loadErr := fs.LoadState(current)
+			if loadErr != nil {
+				return "", false
+			}
+			if key := strings.TrimSpace(state.SpaceKey); key != "" {
+				return key, true
+			}
+			return "", false
+		}
+		parent := filepath.Dir(current)
+		if parent == current {
+			return "", false
+		}
+		current = parent
+	}
 }
 
 // NewReverseMediaHook creates a media hook for Markdown -> ADF conversion.

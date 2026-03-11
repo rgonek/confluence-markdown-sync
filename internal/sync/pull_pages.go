@@ -4,49 +4,54 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"sort"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/rgonek/confluence-markdown-sync/internal/confluence"
+	"github.com/rgonek/confluence-markdown-sync/internal/fs"
 )
 
-func selectChangedPageIDs(
+func selectChangedPages(
 	ctx context.Context,
 	remote PullRemote,
 	opts PullOptions,
 	overlapWindow time.Duration,
 	pageByID map[string]confluence.Page,
-) ([]string, error) {
+) ([]string, map[string]confluence.Change, error) {
+	changeByPageID := map[string]confluence.Change{}
+
 	if strings.TrimSpace(opts.TargetPageID) != "" {
 		targetID := strings.TrimSpace(opts.TargetPageID)
 		if _, ok := pageByID[targetID]; !ok {
-			return nil, nil
+			return nil, changeByPageID, nil
 		}
-		return []string{targetID}, nil
+		changeByPageID[targetID] = changeFromPage(pageByID[targetID], opts.SpaceKey)
+		return []string{targetID}, changeByPageID, nil
 	}
 
+	ids := map[string]struct{}{}
+
 	if opts.ForceFull {
-		allIDs := make([]string, 0, len(pageByID))
-		for id := range pageByID {
-			allIDs = append(allIDs, id)
+		for id, page := range pageByID {
+			ids[id] = struct{}{}
+			changeByPageID[id] = changeFromPage(page, opts.SpaceKey)
 		}
-		sort.Strings(allIDs)
-		return allIDs, nil
+		return sortedStringKeys(ids), changeByPageID, nil
 	}
 
 	if strings.TrimSpace(opts.State.LastPullHighWatermark) == "" {
-		allIDs := make([]string, 0, len(pageByID))
-		for id := range pageByID {
-			allIDs = append(allIDs, id)
+		for id, page := range pageByID {
+			ids[id] = struct{}{}
+			changeByPageID[id] = changeFromPage(page, opts.SpaceKey)
 		}
-		sort.Strings(allIDs)
-		return allIDs, nil
+		return sortedStringKeys(ids), changeByPageID, nil
 	}
 
 	watermark, err := time.Parse(time.RFC3339, strings.TrimSpace(opts.State.LastPullHighWatermark))
 	if err != nil {
-		return nil, fmt.Errorf("parse last_pull_high_watermark: %w", err)
+		return nil, nil, fmt.Errorf("parse last_pull_high_watermark: %w", err)
 	}
 
 	since := watermark.Add(-overlapWindow)
@@ -56,22 +61,137 @@ func selectChangedPageIDs(
 		Limit:    pullChangeBatchSize,
 	}, opts.Progress)
 	if err != nil {
-		return nil, fmt.Errorf("list incremental changes: %w", err)
+		return nil, nil, fmt.Errorf("list incremental changes: %w", err)
 	}
 
-	ids := map[string]struct{}{}
 	for _, change := range changes {
-		if _, ok := pageByID[change.PageID]; ok {
-			ids[change.PageID] = struct{}{}
+		pageID := strings.TrimSpace(change.PageID)
+		if pageID == "" {
+			continue
+		}
+		change.PageID = pageID
+		changeByPageID[pageID] = mergeChangedPage(changeByPageID[pageID], change)
+		if _, ok := pageByID[pageID]; ok {
+			ids[pageID] = struct{}{}
 		}
 	}
 
-	out := make([]string, 0, len(ids))
-	for id := range ids {
-		out = append(out, id)
+	trackedVersions := loadTrackedPageVersions(opts.SpaceDir, opts.State.PagePathIndex)
+	for pageID, page := range pageByID {
+		localVersion, tracked := trackedVersions[pageID]
+		if !tracked || page.Version > localVersion {
+			ids[pageID] = struct{}{}
+			changeByPageID[pageID] = mergeChangedPage(changeByPageID[pageID], changeFromPage(page, opts.SpaceKey))
+		}
 	}
-	sort.Strings(out)
-	return out, nil
+
+	return sortedStringKeys(ids), changeByPageID, nil
+}
+
+func changeFromPage(page confluence.Page, spaceKey string) confluence.Change {
+	return confluence.Change{
+		PageID:       strings.TrimSpace(page.ID),
+		SpaceKey:     strings.TrimSpace(spaceKey),
+		Title:        strings.TrimSpace(page.Title),
+		Version:      page.Version,
+		LastModified: page.LastModified,
+	}
+}
+
+func mergeChangedPage(existing, incoming confluence.Change) confluence.Change {
+	if strings.TrimSpace(existing.PageID) == "" {
+		existing.PageID = strings.TrimSpace(incoming.PageID)
+	}
+	if strings.TrimSpace(existing.SpaceKey) == "" {
+		existing.SpaceKey = strings.TrimSpace(incoming.SpaceKey)
+	}
+	if strings.TrimSpace(existing.Title) == "" {
+		existing.Title = strings.TrimSpace(incoming.Title)
+	}
+	if incoming.Version > existing.Version {
+		existing.Version = incoming.Version
+	}
+	if incoming.LastModified.After(existing.LastModified) {
+		existing.LastModified = incoming.LastModified
+	}
+	return existing
+}
+
+func loadTrackedPageVersions(spaceDir string, pagePathIndex map[string]string) map[string]int {
+	versions := map[string]int{}
+	for relPath, pageID := range pagePathIndex {
+		pageID = strings.TrimSpace(pageID)
+		if pageID == "" {
+			continue
+		}
+		absPath := filepath.Join(spaceDir, filepath.FromSlash(normalizeRelPath(relPath)))
+		raw, err := os.ReadFile(absPath) //nolint:gosec // path is derived from tracked workspace state
+		if err != nil {
+			continue
+		}
+		doc, err := fs.ParseMarkdownDocument(raw)
+		if err != nil {
+			continue
+		}
+		versions[pageID] = doc.Frontmatter.Version
+	}
+	return versions
+}
+
+func fetchChangedPageWithRetry(
+	ctx context.Context,
+	remote PullRemote,
+	pageID string,
+	listedPage confluence.Page,
+	changedPage confluence.Change,
+) (confluence.Page, error) {
+	expectedVersion := listedPage.Version
+	if changedPage.Version > expectedVersion {
+		expectedVersion = changedPage.Version
+	}
+	expectedModified := listedPage.LastModified
+	if changedPage.LastModified.After(expectedModified) {
+		expectedModified = changedPage.LastModified
+	}
+
+	var lastErr error
+	for attempt := 0; attempt < 5; attempt++ {
+		page, err := remote.GetPage(ctx, pageID)
+		if err == nil {
+			if pageMatchesExpectedState(page, expectedVersion, expectedModified) {
+				return page, nil
+			}
+			lastErr = fmt.Errorf(
+				"page %s did not reach expected remote state yet (got version %d, want at least %d)",
+				pageID,
+				page.Version,
+				expectedVersion,
+			)
+		} else if errors.Is(err, confluence.ErrNotFound) || errors.Is(err, confluence.ErrArchived) {
+			lastErr = fmt.Errorf("page %s was listed as changed but is not readable yet: %w", pageID, err)
+		} else {
+			return confluence.Page{}, fmt.Errorf("fetch page %s: %w", pageID, err)
+		}
+
+		if attempt == 4 {
+			break
+		}
+		if err := contextSleep(ctx, time.Duration(attempt+1)*200*time.Millisecond); err != nil {
+			return confluence.Page{}, err
+		}
+	}
+
+	return confluence.Page{}, fmt.Errorf("fetch page %s: %w", pageID, lastErr)
+}
+
+func pageMatchesExpectedState(page confluence.Page, expectedVersion int, expectedModified time.Time) bool {
+	if expectedVersion > 0 && page.Version < expectedVersion {
+		return false
+	}
+	if !expectedModified.IsZero() && !page.LastModified.IsZero() && page.LastModified.Before(expectedModified) {
+		return false
+	}
+	return true
 }
 
 func shouldIgnoreFolderHierarchyError(err error) bool {

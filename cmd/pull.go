@@ -73,6 +73,9 @@ func runPullWithReport(cmd *cobra.Command, target config.Target, emitJSONReport 
 	ctx := getCommandContext(cmd)
 	actualOut := ensureSynchronizedCmdOutput(cmd)
 	out := reportWriter(cmd, actualOut)
+	forceFull := flagPullForce
+	discardLocal := flagPullDiscardLocal
+	relinkAfterPull := flagPullRelink
 	runID, restoreLogger := beginCommandRun("pull")
 	defer restoreLogger()
 	startedAt := time.Now()
@@ -123,7 +126,7 @@ func runPullWithReport(cmd *cobra.Command, target config.Target, emitJSONReport 
 	if err != nil {
 		return report, err
 	}
-	if flagPullForce && strings.TrimSpace(initialCtx.targetPageID) != "" {
+	if forceFull && strings.TrimSpace(initialCtx.targetPageID) != "" {
 		return report, errors.New("--force is only supported for space targets")
 	}
 
@@ -181,7 +184,7 @@ func runPullWithReport(cmd *cobra.Command, target config.Target, emitJSONReport 
 		progress = newConsoleProgress(out, "Syncing from Confluence")
 	}
 
-	impact, err := estimatePullImpactWithSpace(ctx, remote, space, pullCtx.targetPageID, state, syncflow.DefaultPullOverlapWindow, flagPullForce, progress)
+	impact, err := estimatePullImpactWithSpace(ctx, remote, space, pullCtx.targetPageID, state, syncflow.DefaultPullOverlapWindow, forceFull, progress)
 	if err != nil {
 		return report, err
 	}
@@ -194,13 +197,22 @@ func runPullWithReport(cmd *cobra.Command, target config.Target, emitJSONReport 
 	if err != nil {
 		return report, err
 	}
+	lock, err := acquireWorkspaceLock("pull")
+	if err != nil {
+		return report, err
+	}
+	defer func() {
+		if releaseErr := lock.Release(); runErr == nil && releaseErr != nil {
+			runErr = releaseErr
+		}
+	}()
 	scopePath, err := gitScopePath(repoRoot, pullCtx.spaceDir)
 	if err != nil {
 		return report, err
 	}
 
 	dirtyMarkdownBeforePull := map[string]struct{}{}
-	if !flagPullDiscardLocal {
+	if !discardLocal {
 		dirtyMarkdownBeforePull, err = listDirtyMarkdownPathsForScope(repoRoot, scopePath)
 		if err != nil {
 			return report, fmt.Errorf("inspect local markdown changes: %w", err)
@@ -217,12 +229,12 @@ func runPullWithReport(cmd *cobra.Command, target config.Target, emitJSONReport 
 		}
 		if stashRef != "" {
 			defer func() {
-				if flagPullDiscardLocal && runErr == nil {
+				if discardLocal && runErr == nil {
 					_, _ = fmt.Fprintf(out, "Discarding local changes (dropped stash %s)\n", stashRef)
 					_, _ = runGit(repoRoot, "stash", "drop", stashRef)
 					return
 				}
-				if flagPullDiscardLocal && runErr != nil {
+				if discardLocal && runErr != nil {
 					_, _ = fmt.Fprintf(out, "Pull failed; preserving local changes from stash %s\n", stashRef)
 				}
 
@@ -282,7 +294,7 @@ func runPullWithReport(cmd *cobra.Command, target config.Target, emitJSONReport 
 		PullStartedAt:     pullStartedAt,
 		OverlapWindow:     syncflow.DefaultPullOverlapWindow,
 		TargetPageID:      pullCtx.targetPageID,
-		ForceFull:         flagPullForce,
+		ForceFull:         forceFull,
 		SkipMissingAssets: flagSkipMissingAssets,
 		PrefetchedPages:   impact.prefetchedPages,
 		OnDownloadError: func(attachmentID string, pageID string, err error) bool {
@@ -308,7 +320,7 @@ func runPullWithReport(cmd *cobra.Command, target config.Target, emitJSONReport 
 	report.AttachmentOperations = append(report.AttachmentOperations, reportAttachmentOpsFromPull(result, pullCtx.spaceDir)...)
 	report.FallbackModes = append(report.FallbackModes, fallbackModesFromPullDiagnostics(result.Diagnostics)...)
 
-	if !flagPullDiscardLocal {
+	if !discardLocal {
 		warnSkippedDirtyDeletions(out, result.DeletedMarkdown, dirtyMarkdownBeforePull)
 	}
 
@@ -379,7 +391,7 @@ func runPullWithReport(cmd *cobra.Command, target config.Target, emitJSONReport 
 		_, _ = fmt.Fprintf(out, "warning: search index update failed: %v\n", err)
 	}
 
-	if flagPullRelink {
+	if relinkAfterPull {
 		index, err := syncflow.BuildGlobalPageIndex(repoRoot)
 		if err != nil {
 			return report, fmt.Errorf("build global index for relink: %w", err)

@@ -43,11 +43,8 @@ func runPushInWorktree(
 	}
 
 	if strings.TrimSpace(*stashRef) != "" {
-		if err := wtClient.StashApply(snapshotRefName); err != nil {
+		if err := materializeSnapshotInWorktree(wtClient, snapshotRefName, spaceScopePath); err != nil {
 			return outcome, fmt.Errorf("materialize snapshot in worktree: %w", err)
-		}
-		if err := restoreUntrackedFromStashParent(wtClient, snapshotRefName, spaceScopePath); err != nil {
-			return outcome, err
 		}
 	}
 	if err := os.MkdirAll(wtSpaceDir, 0o750); err != nil {
@@ -76,16 +73,9 @@ func runPushInWorktree(
 		return outcome, err
 	}
 
-	// 4. Validate (in worktree) — only the changed files for space targets
-	if target.IsFile() {
-		if err := runValidateTargetWithContext(ctx, out, wtTarget); err != nil {
-			return outcome, fmt.Errorf("pre-push validate failed: %w", err)
-		}
-	} else {
-		changedAbsPaths := pushChangedAbsPaths(wtSpaceDir, syncChanges)
-		if err := runValidateChangedPushFiles(ctx, out, wtSpaceDir, changedAbsPaths); err != nil {
-			return outcome, fmt.Errorf("pre-push validate failed: %w", err)
-		}
+	// 4. Validate (in worktree) using the same scope as preflight and dry-run.
+	if err := runPushValidation(ctx, out, wtTarget, wtSpaceDir, "pre-push validate failed"); err != nil {
+		return outcome, err
 	}
 
 	if len(syncChanges) == 0 {
@@ -161,16 +151,14 @@ func runPushInWorktree(
 				slog.Info("push_conflict_resolution", "strategy", OnConflictPullMerge, "action", "run_pull")
 				_, _ = fmt.Fprintf(out, "conflict detected for %s; policy is %s, attempting automatic pull-merge...\n", conflictErr.Path, onConflict)
 				if strings.TrimSpace(*stashRef) != "" {
-					if err := gitClient.StashPop(*stashRef); err != nil {
+					if err := restorePushStash(gitClient, *stashRef, spaceScopePath, nil); err != nil {
 						return outcome, fmt.Errorf("restore local workspace before automatic pull-merge: %w", err)
 					}
 					*stashRef = ""
 				}
-				// During pull-merge, automatically discard local changes for files
-				// that were deleted remotely, so pull can apply those deletions cleanly
-				// instead of warning and skipping them.
+				backupRepoPath, backupContent := captureAutoPullMergeBackup(gitClient.RootDir, target)
 				prevDiscardLocal := flagPullDiscardLocal
-				flagPullDiscardLocal = true
+				flagPullDiscardLocal = false
 				pullReport, pullErr := runPullForPush(cmd, target)
 				outcome.ConflictResolution = &commandRunReportConflictResolution{
 					Policy:               OnConflictPullMerge,
@@ -182,7 +170,13 @@ func runPushInWorktree(
 				flagPullDiscardLocal = prevDiscardLocal
 				if pullErr != nil {
 					outcome.ConflictResolution.Status = "failed"
+					printAutoPullMergeNextSteps(out, target)
 					return outcome, fmt.Errorf("automatic pull-merge failed: %w", pullErr)
+				}
+				if strings.TrimSpace(backupRepoPath) != "" && len(backupContent) > 0 {
+					if writtenBackup, writeErr := writeAutoPullMergeBackup(gitClient.RootDir, backupRepoPath, backupContent); writeErr == nil && strings.TrimSpace(writtenBackup) != "" {
+						_, _ = fmt.Fprintf(out, "saved local edits from before automatic pull-merge as %q\n", writtenBackup)
+					}
 				}
 				outcome.ConflictResolution.Status = "completed"
 				retryCmd := "conf push"
@@ -190,6 +184,7 @@ func runPushInWorktree(
 					retryCmd = fmt.Sprintf("conf push %q", target.Value)
 				}
 				_, _ = fmt.Fprintf(out, "automatic pull-merge completed. If there were no content conflicts, rerun `%s` to resume the push.\n", retryCmd)
+				printAutoPullMergeNextSteps(out, target)
 				return outcome, nil
 			}
 			return outcome, formatPushConflictError(conflictErr)
@@ -301,6 +296,56 @@ func runPushInWorktree(
 	slog.Info("push_sync_result", "space_key", spaceKey, "commit_count", len(result.Commits), "diagnostics", len(result.Diagnostics))
 	outcome.Warnings = append(outcome.Warnings, warnings...)
 	return outcome, nil
+}
+
+func printAutoPullMergeNextSteps(out io.Writer, target config.Target) {
+	_, _ = fmt.Fprintln(out, "Next steps:")
+	_, _ = fmt.Fprintln(out, "  1. Review any conflict markers or preserved backup files.")
+	_, _ = fmt.Fprintln(out, "  2. Resolve the affected markdown files and run `git add <file>` for each resolved file.")
+	if target.IsFile() {
+		_, _ = fmt.Fprintf(out, "  3. Rerun `conf push %q --on-conflict=cancel` once the file is resolved.\n", target.Value)
+		return
+	}
+	_, _ = fmt.Fprintln(out, "  3. Rerun `conf push <SPACE_KEY> --on-conflict=cancel` once the files are resolved.")
+}
+
+func captureAutoPullMergeBackup(repoRoot string, target config.Target) (string, []byte) {
+	if !target.IsFile() {
+		return "", nil
+	}
+
+	absPath, err := filepath.Abs(target.Value)
+	if err != nil {
+		return "", nil
+	}
+	raw, err := os.ReadFile(absPath) //nolint:gosec // target.Value is an explicit user-selected markdown path
+	if err != nil {
+		return "", nil
+	}
+	repoPath, err := filepath.Rel(repoRoot, absPath)
+	if err != nil {
+		return "", nil
+	}
+	return filepath.ToSlash(repoPath), raw
+}
+
+func writeAutoPullMergeBackup(repoRoot, repoPath string, raw []byte) (string, error) {
+	if strings.TrimSpace(repoPath) == "" || len(raw) == 0 {
+		return "", nil
+	}
+
+	backupRepoPath, err := makeConflictBackupPath(repoRoot, repoPath, "My Local Changes")
+	if err != nil {
+		return "", err
+	}
+	backupAbsPath := filepath.Join(repoRoot, filepath.FromSlash(backupRepoPath))
+	if err := os.MkdirAll(filepath.Dir(backupAbsPath), 0o750); err != nil {
+		return "", err
+	}
+	if err := os.WriteFile(backupAbsPath, raw, 0o600); err != nil {
+		return "", err
+	}
+	return backupRepoPath, nil
 }
 
 func resolvePushScopePath(client *git.Client, spaceDir string, target config.Target, targetCtx validateTargetContext) (string, error) {

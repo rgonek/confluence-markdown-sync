@@ -23,9 +23,13 @@ type Service interface {
 	ListSpaces(ctx context.Context, opts SpaceListOptions) (SpaceListResult, error)
 	GetSpace(ctx context.Context, spaceKey string) (Space, error)
 	ListPages(ctx context.Context, opts PageListOptions) (PageListResult, error)
+	ListContentStates(ctx context.Context) ([]ContentState, error)
+	ListSpaceContentStates(ctx context.Context, spaceKey string) ([]ContentState, error)
+	GetAvailableContentStates(ctx context.Context, pageID string) ([]ContentState, error)
 	GetFolder(ctx context.Context, folderID string) (Folder, error)
 	GetPage(ctx context.Context, pageID string) (Page, error)
 	ListAttachments(ctx context.Context, pageID string) ([]Attachment, error)
+	GetAttachment(ctx context.Context, attachmentID string) (Attachment, error)
 	DownloadAttachment(ctx context.Context, attachmentID string, pageID string, out io.Writer) error
 	UploadAttachment(ctx context.Context, input AttachmentUploadInput) (Attachment, error)
 
@@ -40,6 +44,13 @@ type Service interface {
 	ListFolders(ctx context.Context, opts FolderListOptions) (FolderListResult, error)
 	DeleteFolder(ctx context.Context, folderID string) error
 	MovePage(ctx context.Context, pageID string, targetID string) error
+}
+
+// ContentState is a Confluence content-status definition.
+type ContentState struct {
+	ID    int
+	Name  string
+	Color string
 }
 
 // Space is a Confluence space.
@@ -193,6 +204,7 @@ type ArchiveTaskWaitOptions struct {
 // Attachment represents a Confluence attachment.
 type Attachment struct {
 	ID        string
+	FileID    string
 	PageID    string
 	Filename  string
 	MediaType string

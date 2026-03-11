@@ -9,7 +9,7 @@ import (
 // If the branch doesn't exist, it creates a new orphan branch if specified or checkouts an existing one.
 // Actually, usually we want `git worktree add <path> <branch>`.
 func (c *Client) AddWorktree(path, branch string) error {
-	_, err := c.Run("worktree", "add", path, branch)
+	_, err := c.Run("-c", "core.longpaths=true", "worktree", "add", path, branch)
 	if err != nil {
 		return fmt.Errorf("worktree add %s %s: %w", path, branch, err)
 	}

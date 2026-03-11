@@ -37,11 +37,6 @@ type tenantCapabilityCache struct {
 		mode     tenantContentStatusMode
 		diags    []PullDiagnostic
 	}
-	pushFolderMode struct {
-		resolved bool
-		mode     tenantFolderMode
-		diags    []PushDiagnostic
-	}
 	pushContentStatusMode struct {
 		resolved bool
 		mode     tenantContentStatusMode
@@ -77,7 +72,7 @@ func (c *tenantCapabilityCache) detectPullFolderMode(ctx context.Context, remote
 			diags = append(diags, PullDiagnostic{
 				Path:    folderLookupUnavailablePath,
 				Code:    "FOLDER_LOOKUP_UNAVAILABLE",
-				Message: "compatibility mode active: folder lookup unavailable, falling back to page-only hierarchy for affected pages",
+				Message: folderLookupUnavailableMessage(err),
 			})
 		default:
 			return "", nil, err
@@ -117,28 +112,6 @@ func (c *tenantCapabilityCache) detectPullContentStatusMode(ctx context.Context,
 	c.pullContentStatusMode.resolved = true
 	c.pullContentStatusMode.mode = mode
 	c.pullContentStatusMode.diags = append([]PullDiagnostic(nil), diags...)
-	return mode, diags
-}
-
-func (c *tenantCapabilityCache) detectPushFolderMode(changes []PushFileChange, listErr error) (tenantFolderMode, []PushDiagnostic) {
-	if c.pushFolderMode.resolved {
-		return c.pushFolderMode.mode, append([]PushDiagnostic(nil), c.pushFolderMode.diags...)
-	}
-
-	mode := tenantFolderModeNative
-	diags := []PushDiagnostic{}
-	if listErr != nil && pushChangesNeedFolderHierarchy(changes) && shouldIgnoreFolderHierarchyError(listErr) {
-		mode = tenantFolderModePageFallback
-		diags = append(diags, PushDiagnostic{
-			Path:    "",
-			Code:    "FOLDER_COMPATIBILITY_MODE",
-			Message: "compatibility mode active: folder API unavailable; using page-based hierarchy mode for this push",
-		})
-	}
-
-	c.pushFolderMode.resolved = true
-	c.pushFolderMode.mode = mode
-	c.pushFolderMode.diags = append([]PushDiagnostic(nil), diags...)
 	return mode, diags
 }
 
@@ -214,23 +187,6 @@ func isCompatibilityProbeError(err error) bool {
 	default:
 		return false
 	}
-}
-
-func pushChangesNeedFolderHierarchy(changes []PushFileChange) bool {
-	for _, change := range changes {
-		if change.Type == PushChangeDelete {
-			continue
-		}
-		dirPath := normalizeRelPath(strings.TrimSpace(filepathDirFromRel(change.Path)))
-		if dirPath != "" && dirPath != "." {
-			return true
-		}
-	}
-	return false
-}
-
-func filepathDirFromRel(relPath string) string {
-	return filepath.ToSlash(filepath.Dir(filepath.FromSlash(strings.TrimSpace(relPath))))
 }
 
 func pushContentStatusProbeTarget(spaceDir string, pages []confluence.Page, changes []PushFileChange) (string, string, bool) {

@@ -10,26 +10,43 @@ import (
 	syncflow "github.com/rgonek/confluence-markdown-sync/internal/sync"
 )
 
-func restoreUntrackedFromStashParent(client *git.Client, stashRef, scopePath string) error {
-	stashRef = strings.TrimSpace(stashRef)
-	if stashRef == "" {
+func materializeSnapshotInWorktree(client *git.Client, snapshotRef, scopePath string) error {
+	snapshotRef = strings.TrimSpace(snapshotRef)
+	if snapshotRef == "" {
 		return nil
 	}
 
-	untrackedRef := stashRef + "^3"
-	if _, err := client.Run("rev-parse", "--verify", "--quiet", untrackedRef); err != nil {
-		return nil
+	stashPaths, err := listStashPaths(client, snapshotRef, scopePath)
+	if err != nil {
+		return fmt.Errorf("list snapshot paths: %w", err)
 	}
-	untrackedPaths, err := client.Run("ls-tree", "-r", "--name-only", untrackedRef, "--", scopePath)
-	if err != nil || strings.TrimSpace(untrackedPaths) == "" {
+	if len(stashPaths) == 0 {
 		return nil
 	}
 
-	if _, err := client.Run("checkout", untrackedRef, "--", scopePath); err != nil {
-		return fmt.Errorf("restore untracked files from stash: %w", err)
+	untrackedSet, err := listStashUntrackedPathSet(client, snapshotRef, scopePath)
+	if err != nil {
+		return fmt.Errorf("identify snapshot untracked paths: %w", err)
 	}
-	if _, err := client.Run("reset", "--", scopePath); err != nil {
-		return fmt.Errorf("unstage restored untracked files: %w", err)
+
+	trackedPaths := make([]string, 0, len(stashPaths))
+	untrackedPaths := make([]string, 0, len(stashPaths))
+	for _, path := range stashPaths {
+		if _, isUntracked := untrackedSet[path]; isUntracked {
+			untrackedPaths = append(untrackedPaths, path)
+			continue
+		}
+		trackedPaths = append(trackedPaths, path)
+	}
+
+	sort.Strings(trackedPaths)
+	sort.Strings(untrackedPaths)
+
+	if err := restoreTrackedPathsFromStash(client, snapshotRef, trackedPaths); err != nil {
+		return fmt.Errorf("restore tracked snapshot paths: %w", err)
+	}
+	if err := restoreUntrackedPathsFromStashParent(client, snapshotRef, untrackedPaths); err != nil {
+		return fmt.Errorf("restore untracked snapshot paths: %w", err)
 	}
 
 	return nil

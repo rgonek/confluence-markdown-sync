@@ -15,3 +15,4 @@ How to use this folder:
 - Treat these docs as narrative summaries for humans who want a higher-level walkthrough.
 - Update the OpenSpec files first when product behavior or invariants change.
 - Keep operator-facing docs (`README.md`, `docs/usage.md`, `docs/automation.md`, `docs/compatibility.md`) aligned with the OpenSpec files.
+- For release operations, treat `docs/automation.md` as the maintained checklist for the live sandbox gate, baseline warning policy, and cleanup verification.

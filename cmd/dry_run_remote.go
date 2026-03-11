@@ -19,6 +19,8 @@ type dryRunPushRemote struct {
 	out            io.Writer
 	domain         string
 	emitOperations bool
+	pageSequence   int
+	folderSequence int
 }
 
 func (d *dryRunPushRemote) GetSpace(ctx context.Context, spaceKey string) (confluence.Space, error) {
@@ -27,6 +29,18 @@ func (d *dryRunPushRemote) GetSpace(ctx context.Context, spaceKey string) (confl
 
 func (d *dryRunPushRemote) ListPages(ctx context.Context, opts confluence.PageListOptions) (confluence.PageListResult, error) {
 	return d.inner.ListPages(ctx, opts)
+}
+
+func (d *dryRunPushRemote) ListContentStates(ctx context.Context) ([]confluence.ContentState, error) {
+	return d.inner.ListContentStates(ctx)
+}
+
+func (d *dryRunPushRemote) ListSpaceContentStates(ctx context.Context, spaceKey string) ([]confluence.ContentState, error) {
+	return d.inner.ListSpaceContentStates(ctx, spaceKey)
+}
+
+func (d *dryRunPushRemote) GetAvailableContentStates(ctx context.Context, pageID string) ([]confluence.ContentState, error) {
+	return d.inner.GetAvailableContentStates(ctx, pageID)
 }
 
 func (d *dryRunPushRemote) GetPage(ctx context.Context, pageID string) (confluence.Page, error) {
@@ -40,9 +54,9 @@ func (d *dryRunPushRemote) GetContentStatus(ctx context.Context, pageID string, 
 	return d.inner.GetContentStatus(ctx, pageID, pageStatus)
 }
 
-func (d *dryRunPushRemote) SetContentStatus(ctx context.Context, pageID string, pageStatus string, statusName string) error {
+func (d *dryRunPushRemote) SetContentStatus(ctx context.Context, pageID string, pageStatus string, state confluence.ContentState) error {
 	d.printf("[DRY-RUN] SET CONTENT STATUS (PUT %s/wiki/rest/api/content/%s/state?status=%s)\n", d.domain, pageID, pageStatus)
-	d.printf("  Name: %s\n\n", statusName)
+	d.printf("  Name: %s\n\n", state.Name)
 	return nil
 }
 
@@ -70,6 +84,7 @@ func (d *dryRunPushRemote) RemoveLabel(ctx context.Context, pageID string, label
 }
 
 func (d *dryRunPushRemote) CreatePage(ctx context.Context, input confluence.PageUpsertInput) (confluence.Page, error) {
+	pageID := d.nextSyntheticPageID()
 	d.printf("[DRY-RUN] CREATE PAGE (POST %s/wiki/api/v2/pages)\n", d.domain)
 	d.printf("  Title: %s\n", input.Title)
 	if input.ParentPageID != "" {
@@ -80,13 +95,13 @@ func (d *dryRunPushRemote) CreatePage(ctx context.Context, input confluence.Page
 	d.println()
 
 	return confluence.Page{
-		ID:           "dry-run-new-page-id",
+		ID:           pageID,
 		SpaceID:      input.SpaceID,
 		Title:        input.Title,
 		Status:       input.Status,
 		ParentPageID: input.ParentPageID,
 		Version:      1,
-		WebURL:       fmt.Sprintf("%s/spaces/%s/pages/%s", d.domain, input.SpaceID, "dry-run-new-page-id"),
+		WebURL:       fmt.Sprintf("%s/spaces/%s/pages/%s", d.domain, input.SpaceID, pageID),
 	}, nil
 }
 
@@ -171,6 +186,20 @@ func (d *dryRunPushRemote) DeletePage(ctx context.Context, pageID string, opts c
 	return nil
 }
 
+func (d *dryRunPushRemote) ListAttachments(ctx context.Context, pageID string) ([]confluence.Attachment, error) {
+	if strings.HasPrefix(pageID, "dry-run-") {
+		return nil, nil
+	}
+	return d.inner.ListAttachments(ctx, pageID)
+}
+
+func (d *dryRunPushRemote) GetAttachment(ctx context.Context, attachmentID string) (confluence.Attachment, error) {
+	if strings.HasPrefix(attachmentID, "dry-run-") {
+		return confluence.Attachment{ID: attachmentID, FileID: attachmentID}, nil
+	}
+	return d.inner.GetAttachment(ctx, attachmentID)
+}
+
 func (d *dryRunPushRemote) UploadAttachment(ctx context.Context, input confluence.AttachmentUploadInput) (confluence.Attachment, error) {
 	d.printf("[DRY-RUN] UPLOAD ATTACHMENT (POST %s/wiki/rest/api/content/%s/child/attachment)\n", d.domain, input.PageID)
 	d.printf("  Filename: %s\n", input.Filename)
@@ -179,6 +208,7 @@ func (d *dryRunPushRemote) UploadAttachment(ctx context.Context, input confluenc
 
 	return confluence.Attachment{
 		ID:        "dry-run-attachment-id-" + input.Filename,
+		FileID:    "dry-run-file-id-" + input.Filename,
 		PageID:    input.PageID,
 		Filename:  input.Filename,
 		MediaType: input.ContentType,
@@ -192,6 +222,7 @@ func (d *dryRunPushRemote) DeleteAttachment(ctx context.Context, attachmentID st
 }
 
 func (d *dryRunPushRemote) CreateFolder(ctx context.Context, input confluence.FolderCreateInput) (confluence.Folder, error) {
+	folderID := d.nextSyntheticFolderID()
 	d.printf("[DRY-RUN] CREATE FOLDER (POST %s/wiki/api/v2/folders)\n", d.domain)
 	d.printf("  Title: %s\n", input.Title)
 	d.printf("  SpaceID: %s\n", input.SpaceID)
@@ -202,7 +233,7 @@ func (d *dryRunPushRemote) CreateFolder(ctx context.Context, input confluence.Fo
 	d.println()
 
 	return confluence.Folder{
-		ID:         "dry-run-folder-id",
+		ID:         folderID,
 		SpaceID:    input.SpaceID,
 		Title:      input.Title,
 		ParentID:   input.ParentID,
@@ -243,4 +274,14 @@ func (d *dryRunPushRemote) printBodyPreview(ctx context.Context, adfJSON []byte)
 		return
 	}
 	printDryRunBodyPreview(ctx, d.out, adfJSON)
+}
+
+func (d *dryRunPushRemote) nextSyntheticPageID() string {
+	d.pageSequence++
+	return fmt.Sprintf("dry-run-page-%d", d.pageSequence)
+}
+
+func (d *dryRunPushRemote) nextSyntheticFolderID() string {
+	d.folderSequence++
+	return fmt.Sprintf("dry-run-folder-%d", d.folderSequence)
 }

@@ -177,6 +177,15 @@ func runPush(cmd *cobra.Command, target config.Target, onConflict string, dryRun
 	if err != nil {
 		return err
 	}
+	lock, err := acquireWorkspaceLock("push")
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if releaseErr := lock.Release(); runErr == nil && releaseErr != nil {
+			runErr = releaseErr
+		}
+	}()
 	currentBranch, err := gitClient.CurrentBranch()
 	if err != nil {
 		return err
@@ -252,6 +261,7 @@ func runPush(cmd *cobra.Command, target config.Target, onConflict string, dryRun
 	// Sanitize key for git refs (no spaces allowed)
 	// We MUST use the actual SpaceKey for refs, not sanitized space name
 	refKey := fs.SanitizePathSegment(spaceKey)
+	syncBranchName := ""
 
 	snapshotName := fmt.Sprintf("refs/confluence-sync/snapshots/%s/%s", refKey, tsStr)
 	if err := gitClient.UpdateRef(snapshotName, snapshotCommit, "create snapshot"); err != nil {
@@ -270,11 +280,12 @@ func runPush(cmd *cobra.Command, target config.Target, onConflict string, dryRun
 		} else {
 			report.setRecoveryArtifactStatus("snapshot_ref", snapshotName, "retained")
 			_, _ = fmt.Fprintf(out, "\nSnapshot retained for recovery: %s\n", snapshotName)
+			printPushRecoveryGuidance(out, refKey, tsStr, syncBranchName, snapshotName)
 		}
 	}()
 
 	// 2. Create Sync Branch
-	syncBranchName := fmt.Sprintf("sync/%s/%s", refKey, tsStr)
+	syncBranchName = fmt.Sprintf("sync/%s/%s", refKey, tsStr)
 	if err := gitClient.CreateBranch(syncBranchName, headCommit); err != nil {
 		return fmt.Errorf("create sync branch: %w", err)
 	}

@@ -1,6 +1,7 @@
 package sync
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"mime"
@@ -10,9 +11,19 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
+	"github.com/rgonek/confluence-markdown-sync/internal/confluence"
 	"github.com/rgonek/confluence-markdown-sync/internal/fs"
 )
+
+type publishedAttachmentRef struct {
+	AttachmentID string
+	MediaID      string
+	PageID       string
+	Filename     string
+	MediaType    string
+}
 
 func BuildStrictAttachmentIndex(spaceDir, sourcePath, body string, attachmentIndex map[string]string) (map[string]string, []string, error) {
 	referencedAssetPaths, err := CollectReferencedAssetPaths(spaceDir, sourcePath, body)
@@ -698,4 +709,149 @@ func detectAssetContentType(filename string, raw []byte) string {
 		sniffLen = 512
 	}
 	return http.DetectContentType(raw[:sniffLen])
+}
+
+func resolvePublishedAttachmentRefs(
+	ctx context.Context,
+	remote PushRemote,
+	pageID string,
+	referencedAssetPaths []string,
+	attachmentIDByPath map[string]string,
+	uploadedAttachmentsByPath map[string]confluence.Attachment,
+) (map[string]publishedAttachmentRef, map[string]string, error) {
+	if len(referencedAssetPaths) == 0 {
+		return map[string]publishedAttachmentRef{}, map[string]string{}, nil
+	}
+
+	remoteAttachments, err := remote.ListAttachments(ctx, pageID)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	remoteAttachmentByID := buildAttachmentMapByID(remoteAttachments)
+	for attempt := 0; attempt < 5 && attachmentRefsNeedResolvedFileIDs(referencedAssetPaths, attachmentIDByPath, uploadedAttachmentsByPath, remoteAttachmentByID); attempt++ {
+		if err := contextSleep(ctx, 500*time.Millisecond); err != nil {
+			return nil, nil, err
+		}
+		remoteAttachments, err = remote.ListAttachments(ctx, pageID)
+		if err != nil {
+			return nil, nil, err
+		}
+		remoteAttachmentByID = buildAttachmentMapByID(remoteAttachments)
+	}
+
+	refsByPath := make(map[string]publishedAttachmentRef, len(referencedAssetPaths))
+	mediaIDByPath := make(map[string]string, len(referencedAssetPaths))
+	for _, assetRelPath := range referencedAssetPaths {
+		attachmentID := strings.TrimSpace(attachmentIDByPath[assetRelPath])
+		if attachmentID == "" {
+			return nil, nil, fmt.Errorf("attachment mapping missing for %s", assetRelPath)
+		}
+
+		attachment, ok := remoteAttachmentByID[attachmentID]
+		uploaded := uploadedAttachmentsByPath[assetRelPath]
+		if !ok {
+			attachment = uploaded
+		} else {
+			if strings.TrimSpace(attachment.FileID) == "" && strings.TrimSpace(uploaded.FileID) != "" {
+				attachment.FileID = uploaded.FileID
+			}
+			if strings.TrimSpace(attachment.Filename) == "" && strings.TrimSpace(uploaded.Filename) != "" {
+				attachment.Filename = uploaded.Filename
+			}
+			if strings.TrimSpace(attachment.PageID) == "" && strings.TrimSpace(uploaded.PageID) != "" {
+				attachment.PageID = uploaded.PageID
+			}
+		}
+		if strings.TrimSpace(attachment.FileID) == "" {
+			if fetched, fetchErr := remote.GetAttachment(ctx, attachmentID); fetchErr == nil {
+				if strings.TrimSpace(fetched.FileID) != "" {
+					attachment.FileID = strings.TrimSpace(fetched.FileID)
+				}
+				if strings.TrimSpace(attachment.Filename) == "" && strings.TrimSpace(fetched.Filename) != "" {
+					attachment.Filename = strings.TrimSpace(fetched.Filename)
+				}
+				if strings.TrimSpace(attachment.PageID) == "" && strings.TrimSpace(fetched.PageID) != "" {
+					attachment.PageID = strings.TrimSpace(fetched.PageID)
+				}
+			}
+		}
+
+		filename := publishedAttachmentFilename(assetRelPath, attachment)
+		mediaID := strings.TrimSpace(attachment.FileID)
+		if mediaID == "" {
+			mediaID = attachmentID
+		}
+
+		ref := publishedAttachmentRef{
+			AttachmentID: attachmentID,
+			MediaID:      mediaID,
+			PageID:       firstPopulatedString(strings.TrimSpace(attachment.PageID), strings.TrimSpace(pageID)),
+			Filename:     filename,
+			MediaType:    mediaTypeForDestination(filename),
+		}
+		refsByPath[assetRelPath] = ref
+		mediaIDByPath[assetRelPath] = ref.MediaID
+	}
+
+	return refsByPath, mediaIDByPath, nil
+}
+
+func buildAttachmentMapByID(attachments []confluence.Attachment) map[string]confluence.Attachment {
+	attachmentByID := make(map[string]confluence.Attachment, len(attachments))
+	for _, attachment := range attachments {
+		attachmentID := strings.TrimSpace(attachment.ID)
+		if attachmentID == "" {
+			continue
+		}
+		attachmentByID[attachmentID] = attachment
+	}
+	return attachmentByID
+}
+
+func attachmentRefsNeedResolvedFileIDs(
+	referencedAssetPaths []string,
+	attachmentIDByPath map[string]string,
+	uploadedAttachmentsByPath map[string]confluence.Attachment,
+	remoteAttachmentByID map[string]confluence.Attachment,
+) bool {
+	for _, assetRelPath := range referencedAssetPaths {
+		attachmentID := strings.TrimSpace(attachmentIDByPath[assetRelPath])
+		if attachmentID == "" {
+			continue
+		}
+		remoteAttachment, ok := remoteAttachmentByID[attachmentID]
+		if !ok {
+			continue
+		}
+		if strings.TrimSpace(remoteAttachment.FileID) != "" {
+			continue
+		}
+		if strings.TrimSpace(uploadedAttachmentsByPath[assetRelPath].FileID) == "" {
+			return true
+		}
+	}
+	return false
+}
+
+func publishedAttachmentFilename(assetRelPath string, attachment confluence.Attachment) string {
+	filename := strings.TrimSpace(attachment.Filename)
+	if filename != "" {
+		return filename
+	}
+	filename = strings.TrimSpace(filepath.Base(assetRelPath))
+	if filename == "" || filename == "." {
+		return "attachment"
+	}
+	return filename
+}
+
+func firstPopulatedString(values ...string) string {
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value != "" {
+			return value
+		}
+	}
+	return ""
 }

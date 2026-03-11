@@ -308,7 +308,19 @@ func renderRecoveryRuns(out io.Writer, runs []recoveryRun) {
 		} else {
 			_, _ = fmt.Fprintln(out, "    Status: safe to discard")
 		}
+		if inspect := recoveryInspectBranchCommand(run.SyncBranch); inspect != "" {
+			_, _ = fmt.Fprintf(out, "    Inspect: %s\n", inspect)
+		}
+		if inspectDiff := recoveryInspectDiffCommand(run.SnapshotRef, run.SyncBranch); inspectDiff != "" {
+			_, _ = fmt.Fprintf(out, "    Diff: %s\n", inspectDiff)
+		}
+		if discard := recoveryDiscardCommand(run.SpaceKey, run.Timestamp); discard != "" {
+			_, _ = fmt.Fprintf(out, "    Discard: %s\n", discard)
+		}
 	}
+
+	_, _ = fmt.Fprintln(out, "\nCleanup all safe runs:")
+	_, _ = fmt.Fprintln(out, "  conf recover --discard-all --yes")
 }
 
 func confirmRecoverDiscard(in io.Reader, out io.Writer, runCount int) error {

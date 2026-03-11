@@ -73,6 +73,15 @@ func TestNormalizeForwardMarkdown_UnescapesPlainParentheses(t *testing.T) {
 	}
 }
 
+func TestNormalizeForwardMarkdown_StripsInvisibleDateGuards(t *testing.T) {
+	input := "Release date: 2026\u201103\u201109\n"
+	want := "Release date: 2026-03-09\n"
+
+	if got := normalizeForwardMarkdown(input); got != want {
+		t.Fatalf("normalizeForwardMarkdown() = %q, want %q", got, want)
+	}
+}
+
 func TestNormalizeForwardMarkdown_KeepsEscapedParenthesesInLinkDestinations(t *testing.T) {
 	input := "[Spec](https://example.com/a\\(b\\)) and \\(User\\).\n"
 	want := "[Spec](https://example.com/a\\(b\\)) and (User).\n"

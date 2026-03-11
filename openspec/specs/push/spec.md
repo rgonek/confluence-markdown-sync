@@ -44,6 +44,14 @@ The system SHALL isolate real push execution from the active user workspace.
 - AND the system SHALL create a sync branch `sync/<space>/<timestamp>`
 - AND the system SHALL create a temporary worktree for the sync run
 
+#### Scenario: Snapshot materialization tolerates long Windows workspace paths
+
+- GIVEN `conf push` captured in-scope tracked and untracked workspace state in a snapshot ref
+- AND the target workspace contains long nested Markdown or attachment paths on Windows
+- WHEN push materializes the snapshot into the isolated worktree
+- THEN the system SHALL restore the snapshot without relying on a Git path that replays untracked files through a failing long-path stash apply
+- AND the system SHALL fail only if the snapshot cannot be restored through the long-path-safe restore path
+
 #### Scenario: No-op push creates no recovery artifacts
 
 - GIVEN push detects no in-scope Markdown changes
@@ -74,6 +82,23 @@ The system SHALL make remote-ahead conflict handling explicit.
 - THEN the system SHALL run pull for the target scope
 - AND the system SHALL stop so the user can review and rerun push
 
+#### Scenario: Pull-merge prints concrete non-interactive recovery guidance
+
+- GIVEN push detects a remote-ahead conflict
+- AND the policy is `pull-merge`
+- WHEN the automatic pull stops with unresolved file conflicts or preserved local edits
+- THEN the system SHALL state that the local edits were preserved
+- AND the system SHALL print explicit next steps to resolve files, stage them, and rerun push
+
+#### Scenario: Pull-merge never silently discards local edits
+
+- GIVEN push detects a remote-ahead conflict
+- AND the policy is `pull-merge`
+- AND the target scope contains unpushed local edits
+- WHEN push handles the conflict
+- THEN the system SHALL preserve the local edits via a clean merge, conflict markers, or explicit recoverable state
+- AND the system SHALL not silently discard local edits
+
 ### Requirement: Strict remote publishing
 
 The system SHALL publish Markdown to Confluence using strict conversion and explicit attachment/link resolution.
@@ -83,7 +108,28 @@ The system SHALL publish Markdown to Confluence using strict conversion and expl
 - GIVEN a changed Markdown file validates successfully
 - WHEN push processes the file
 - THEN the system SHALL resolve page identity, links, and attachments
-- AND the system SHALL create, update, archive, or delete remote content as required
+- AND the system SHALL create or update remote content as required
+
+#### Scenario: Removing a tracked Markdown page archives the remote page
+
+- GIVEN a tracked Markdown page is removed locally and is in push scope
+- WHEN push applies the deletion
+- THEN the system SHALL archive the corresponding remote page
+- AND the archived page SHALL be treated as removed from tracked local state after reconciliation
+
+#### Scenario: Archive timeout is verified before classifying the delete as failed
+
+- GIVEN a push archives a tracked remote page
+- AND Confluence long-task polling times out or returns an inconclusive in-progress result
+- WHEN push evaluates the delete outcome
+- THEN the system SHALL perform a follow-up verification read before classifying the operation as failed
+- AND the operator diagnostics SHALL distinguish "still running remotely" from a definite failure
+
+#### Scenario: Removing tracked attachments deletes remote attachments
+
+- GIVEN a push would remove tracked remote attachments
+- WHEN push reconciles attachments
+- THEN the system SHALL delete those remote attachments unless `--keep-orphan-assets` suppresses the deletion
 
 #### Scenario: Orphan attachment deletion can be suppressed
 
@@ -101,6 +147,24 @@ The system SHALL provide safe non-write inspection modes for push.
 - WHEN the command evaluates the target scope
 - THEN the system SHALL show the planned changes and validation outcome
 - AND the system SHALL not modify remote content or local Git state
+
+#### Scenario: Preflight uses the same validation scope as real push
+
+- GIVEN the target scope contains a validation failure, including one introduced by planned deletions outside the directly changed file set
+- WHEN the user runs `conf push --preflight`
+- THEN the system SHALL surface the same validation failure a real push would surface before any remote write
+
+#### Scenario: Space-scoped push validates the full space target
+
+- GIVEN a space-scoped push has one or more in-scope Markdown changes
+- WHEN the system performs preflight, dry-run, or real push validation
+- THEN the system SHALL validate the full target space with the same strict profile before any remote write
+
+#### Scenario: Content-status metadata is preflighted before write-path mutation
+
+- GIVEN a push target contains frontmatter `status`
+- WHEN push completes preflight for remote metadata writes
+- THEN the system SHALL resolve or reject the target content-status value before creating or mutating remote page content
 
 #### Scenario: Dry-run simulates remote work without mutation
 
@@ -142,6 +206,15 @@ The system SHALL retain enough information to inspect and clean up failed push r
 - WHEN the command exits
 - THEN the system SHALL retain the snapshot ref and sync branch
 - AND the system SHALL record recovery metadata under `.git/confluence-recovery/`
+
+#### Scenario: Failed push prints concrete recovery commands
+
+- GIVEN a real push fails after snapshot creation
+- WHEN the command exits with retained recovery artifacts
+- THEN the system SHALL print the retained snapshot ref and sync branch
+- AND the system SHALL print concrete next-step commands for `conf recover`
+- AND the system SHALL print a concrete branch-inspection command
+- AND the system SHALL print a concrete cleanup command for the retained recovery run
 
 #### Scenario: Successful push cleans recovery artifacts
 

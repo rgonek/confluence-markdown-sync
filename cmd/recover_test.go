@@ -171,6 +171,18 @@ func TestRunRecover_SectionedOutputFormat(t *testing.T) {
 	if !strings.Contains(out, "simulated update failure") {
 		t.Fatalf("expected failure reason in Failed runs section, got:\n%s", out)
 	}
+	if !strings.Contains(out, "Inspect: git switch "+syncBranch) {
+		t.Fatalf("expected inspect command in Failed runs section, got:\n%s", out)
+	}
+	if !strings.Contains(out, "Diff: git diff "+snapshotRef+".."+syncBranch) {
+		t.Fatalf("expected diff command in Failed runs section, got:\n%s", out)
+	}
+	if !strings.Contains(out, "Discard: conf recover --discard ENG/") {
+		t.Fatalf("expected discard command in Failed runs section, got:\n%s", out)
+	}
+	if !strings.Contains(out, "Cleanup all safe runs:") || !strings.Contains(out, "conf recover --discard-all --yes") {
+		t.Fatalf("expected cleanup-all guidance, got:\n%s", out)
+	}
 }
 
 func createFailedPushRecoveryRun(t *testing.T) (repo string, spaceDir string, syncBranch string, snapshotRef string) {

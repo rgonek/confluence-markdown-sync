@@ -9,7 +9,7 @@ Write docs like code. Publish to Confluence with confidence. ✍️
 ## Why teams use `conf` ✨
 - 📝 Markdown-first authoring with Confluence as the destination.
 - 🛡️ Safe sync model with validation before remote writes.
-- 👀 Clear preview step via `conf diff` before push.
+- 👀 Clear preview step via `conf diff` for tracked pages and `conf push --preflight` for brand-new files.
 - 🔎 Local full-text search across synced Markdown with SQLite or Bleve backends.
 - 🤖 Works in local repos and automation pipelines.
 
@@ -38,7 +38,7 @@ conf init
 `conf init` prepares Git metadata, `.gitignore`, and `.env` scaffolding, and creates an initial commit when it initializes a new Git repository.
 If `ATLASSIAN_*` or legacy `CONFLUENCE_*` credentials are already set in the environment, `conf init` writes `.env` from them without prompting.
 
-`conf pull` mirrors Confluence hierarchy locally by placing folders and child pages in nested directories. Pages with children use `<Page>/<Page>.md` so they are distinct from pure folders. Leaf-page title renames can keep the existing Markdown path when the effective parent directory is unchanged, but pages that own subtree directories move when their self-owned directory segment changes. Hierarchy moves and ancestor/path-segment sanitization changes are surfaced as `PAGE_PATH_MOVED` notes in `conf pull`/`conf diff`, and `conf status` previews tracked moves before the next pull.
+`conf pull` mirrors Confluence hierarchy locally by placing folders and child pages in nested directories. Pages with children use `<Page>/<Page>.md` so they are distinct from pure folders. Incremental pulls reconcile remote creates, updates, and deletes without requiring `--force`. Leaf-page title renames can keep the existing Markdown path when the effective parent directory is unchanged, but pages that own subtree directories move when their self-owned directory segment changes. Hierarchy moves and ancestor/path-segment sanitization changes are surfaced as `PAGE_PATH_MOVED` notes in `conf pull`/`conf diff`, and `conf status` previews tracked moves before the next pull.
 
 ## Quick flow 🔄
 > ⚠️ **IMPORTANT**: If you are developing `conf` itself, NEVER run sync commands against real Confluence spaces in the repository root. This prevents accidental commits of synced documentation. Use a separate sandbox folder.
@@ -56,6 +56,9 @@ conf validate ENG
 # 3) Preview local vs remote
 conf diff ENG
 
+# Preview a brand-new file before its first push
+conf push .\ENG\New-Page.md --preflight
+
 # 4) Push local changes
 conf push ENG --on-conflict=cancel
 ```
@@ -66,7 +69,11 @@ conf push ENG --on-conflict=cancel
 - Target rule: `.md` suffix means file mode; otherwise space mode (`SPACE_KEY`)
 - Required auth: `ATLASSIAN_DOMAIN`, `ATLASSIAN_EMAIL`, `ATLASSIAN_API_TOKEN`
 - Extension support: PlantUML is the only first-class rendered extension handler; Mermaid is preserved as code, and raw `adf:extension` / unknown macro handling is best-effort and should be sandbox-validated before relying on it
-- Status scope: `conf status` reports Markdown page drift only; use `git status` or `conf diff` for attachment-only changes
+- Cross-space links are preserved as readable remote links rather than rewritten to local Markdown paths
+- Removing tracked Markdown pages archives the corresponding remote page; follow-up pull removes the archived page from tracked local state
+- `pull` and `push` are serialized per repository with a workspace lock, so concurrent mutating runs fail fast with a clear lock message
+- `push` failures retain recovery refs and print exact `conf recover`, `git switch`, and cleanup commands for the retained run
+- Status scope: `conf status` reports Markdown page drift only; use `git status` for local asset changes or `conf diff` for attachment-aware remote inspection. There is no attachment-aware `conf status` mode yet
 - Label rules: labels are trimmed, lowercased, deduplicated, and sorted; empty labels and labels containing whitespace are rejected
 - Search filters: `--space`, repeatable `--label`, `--heading`, `--created-by`, `--updated-by`, date bounds, and `--result-detail`
 - Git remote is optional (local Git is enough)
@@ -74,7 +81,7 @@ conf push ENG --on-conflict=cancel
 ## Docs 📚
 - Usage and command reference: `docs/usage.md`
 - Feature and tenant compatibility matrix: `docs/compatibility.md`
-- Automation, CI behavior, and live sandbox smoke-test runbook: `docs/automation.md`
+- Automation, CI behavior, live sandbox release checklist, and smoke-test runbook: `docs/automation.md`
 - Changelog: `CHANGELOG.md`
 - Security policy: `SECURITY.md`
 - Support policy: `SUPPORT.md`
@@ -92,5 +99,7 @@ conf push ENG --on-conflict=cancel
 ## Development 🧑‍💻
 - `make build`
 - `make test`
+- `make test-e2e` (requires explicit `CONF_E2E_*` sandbox environment)
+- `make release-check` (runs `fmt-check`, `lint`, `test`, and live sandbox E2E as the release gate)
 - `make fmt`
 - `make lint`

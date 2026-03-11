@@ -2,6 +2,8 @@ package sync
 
 import (
 	"context"
+	"errors"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -108,6 +110,53 @@ func TestPush_DeleteAlreadyArchivedPageTreatsArchiveAsNoOp(t *testing.T) {
 	}
 }
 
+func TestPush_DeletePageRemovesLocalTrackedAssets(t *testing.T) {
+	spaceDir := t.TempDir()
+	assetPath := filepath.Join(spaceDir, "assets", "1", "att-1-file.png")
+	if err := os.MkdirAll(filepath.Dir(assetPath), 0o750); err != nil {
+		t.Fatalf("mkdir asset dir: %v", err)
+	}
+	if err := os.WriteFile(assetPath, []byte("asset"), 0o600); err != nil {
+		t.Fatalf("write asset: %v", err)
+	}
+
+	remote := newRollbackPushRemote()
+	remote.pagesByID["1"] = confluence.Page{
+		ID:      "1",
+		SpaceID: "space-1",
+		Title:   "Old",
+		Version: 5,
+		WebURL:  "https://example.atlassian.net/wiki/pages/1",
+	}
+	remote.pages = append(remote.pages, remote.pagesByID["1"])
+	remote.archiveTaskStatus = confluence.ArchiveTaskStatus{TaskID: "task-1", State: confluence.ArchiveTaskStateSucceeded}
+
+	result, err := Push(context.Background(), remote, PushOptions{
+		SpaceKey: "ENG",
+		SpaceDir: spaceDir,
+		State: fs.SpaceState{
+			SpaceKey: "ENG",
+			PagePathIndex: map[string]string{
+				"old.md": "1",
+			},
+			AttachmentIndex: map[string]string{
+				"assets/1/att-1-file.png": "att-1",
+			},
+		},
+		Changes: []PushFileChange{{Type: PushChangeDelete, Path: "old.md"}},
+	})
+	if err != nil {
+		t.Fatalf("Push() unexpected error: %v", err)
+	}
+
+	if _, err := os.Stat(assetPath); !os.IsNotExist(err) {
+		t.Fatalf("expected local asset to be removed during page delete, stat=%v", err)
+	}
+	if _, exists := result.State.AttachmentIndex["assets/1/att-1-file.png"]; exists {
+		t.Fatalf("expected deleted asset to be removed from state")
+	}
+}
+
 func TestPush_ArchivedRemotePageReturnsActionableError(t *testing.T) {
 	spaceDir := t.TempDir()
 	mdPath := filepath.Join(spaceDir, "root.md")
@@ -202,13 +251,191 @@ func TestPush_DeleteBlocksLocalStateWhenArchiveTaskDoesNotComplete(t *testing.T)
 
 	hasTimeoutDiagnostic := false
 	for _, diag := range result.Diagnostics {
-		if diag.Code == "ARCHIVE_TASK_TIMEOUT" {
+		if diag.Code == "ARCHIVE_TASK_TIMEOUT" || diag.Code == "ARCHIVE_TASK_STILL_RUNNING" {
 			hasTimeoutDiagnostic = true
 			break
 		}
 	}
 	if !hasTimeoutDiagnostic {
-		t.Fatalf("expected ARCHIVE_TASK_TIMEOUT diagnostic, got %+v", result.Diagnostics)
+		t.Fatalf("expected archive timeout diagnostic, got %+v", result.Diagnostics)
+	}
+}
+
+func TestPush_DeleteTreatsArchiveAsSuccessfulWhenVerificationShowsArchived(t *testing.T) {
+	remote := newRollbackPushRemote()
+	remote.pagesByID["1"] = confluence.Page{
+		ID:      "1",
+		SpaceID: "space-1",
+		Title:   "Old",
+		Status:  "current",
+		Version: 5,
+		WebURL:  "https://example.atlassian.net/wiki/pages/1",
+	}
+	remote.pages = append(remote.pages, remote.pagesByID["1"])
+	remote.archiveTaskStatus = confluence.ArchiveTaskStatus{TaskID: "task-1", State: confluence.ArchiveTaskStateInProgress, RawStatus: "ENQUEUED"}
+	remote.archiveTaskWaitErr = confluence.ErrArchiveTaskTimeout
+	remote.waitForArchiveTaskHook = func(f *rollbackPushRemote, _ string) {
+		page := f.pagesByID["1"]
+		page.Status = "archived"
+		f.pagesByID["1"] = page
+	}
+
+	result, err := Push(context.Background(), remote, PushOptions{
+		SpaceKey: "ENG",
+		SpaceDir: t.TempDir(),
+		State: fs.SpaceState{
+			SpaceKey: "ENG",
+			PagePathIndex: map[string]string{
+				"old.md": "1",
+			},
+		},
+		Changes: []PushFileChange{{Type: PushChangeDelete, Path: "old.md"}},
+	})
+	if err != nil {
+		t.Fatalf("Push() unexpected error: %v", err)
+	}
+	if len(result.Commits) != 1 {
+		t.Fatalf("commits = %d, want 1", len(result.Commits))
+	}
+
+	found := false
+	for _, diag := range result.Diagnostics {
+		if diag.Code == "ARCHIVE_CONFIRMED_AFTER_WAIT_FAILURE" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected ARCHIVE_CONFIRMED_AFTER_WAIT_FAILURE diagnostic, got %+v", result.Diagnostics)
+	}
+}
+
+func TestPush_NewPageContentStatusPreflightFailsBeforeRemoteMutation(t *testing.T) {
+	spaceDir := t.TempDir()
+	mdPath := filepath.Join(spaceDir, "new.md")
+	if err := fs.WriteMarkdownDocument(mdPath, fs.MarkdownDocument{
+		Frontmatter: fs.Frontmatter{
+			Title:  "New",
+			Status: "Unknown Status",
+		},
+		Body: "content\n",
+	}); err != nil {
+		t.Fatalf("write markdown: %v", err)
+	}
+
+	remote := newRollbackPushRemote()
+	remote.contentStates = []confluence.ContentState{{ID: 80, Name: "Ready to review", Color: "FFAB00"}}
+
+	_, err := Push(context.Background(), remote, PushOptions{
+		SpaceKey:       "ENG",
+		SpaceDir:       spaceDir,
+		Domain:         "https://example.atlassian.net",
+		State:          fs.SpaceState{SpaceKey: "ENG"},
+		ConflictPolicy: PushConflictPolicyCancel,
+		Changes: []PushFileChange{{
+			Type: PushChangeAdd,
+			Path: "new.md",
+		}},
+	})
+	if err == nil {
+		t.Fatal("expected content status preflight failure")
+	}
+	if !strings.Contains(err.Error(), "content status preflight failed") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if remote.createPageCalls != 0 {
+		t.Fatalf("create page calls = %d, want 0 after preflight failure", remote.createPageCalls)
+	}
+	if remote.updatePageCalls != 0 {
+		t.Fatalf("update page calls = %d, want 0 after preflight failure", remote.updatePageCalls)
+	}
+}
+
+func TestPush_NewPageContentStatusFallsBackWhenCatalogEndpointsUnsupported(t *testing.T) {
+	spaceDir := t.TempDir()
+	mdPath := filepath.Join(spaceDir, "new.md")
+	if err := fs.WriteMarkdownDocument(mdPath, fs.MarkdownDocument{
+		Frontmatter: fs.Frontmatter{
+			Title:  "New",
+			Status: "Unlisted Status",
+		},
+		Body: "content\n",
+	}); err != nil {
+		t.Fatalf("write markdown: %v", err)
+	}
+
+	compatErr := &confluence.APIError{
+		StatusCode: 501,
+		Method:     "GET",
+		URL:        "/wiki/rest/api/content-states",
+		Message:    "Not Implemented",
+	}
+
+	remote := newRollbackPushRemote()
+	remote.listContentStatesErr = compatErr
+	remote.listSpaceContentStatesErr = compatErr
+	remote.getAvailableStatesErr = compatErr
+
+	result, err := Push(context.Background(), remote, PushOptions{
+		SpaceKey:       "ENG",
+		SpaceDir:       spaceDir,
+		Domain:         "https://example.atlassian.net",
+		State:          fs.SpaceState{SpaceKey: "ENG"},
+		ConflictPolicy: PushConflictPolicyCancel,
+		Changes: []PushFileChange{{
+			Type: PushChangeAdd,
+			Path: "new.md",
+		}},
+	})
+	if err != nil {
+		t.Fatalf("Push() unexpected error: %v", err)
+	}
+	if remote.createPageCalls != 1 {
+		t.Fatalf("create page calls = %d, want 1", remote.createPageCalls)
+	}
+	if len(remote.setContentStatusArgs) != 1 {
+		t.Fatalf("set content status args = %d, want 1", len(remote.setContentStatusArgs))
+	}
+	if got := remote.setContentStatusArgs[0].StatusName; got != "Unlisted Status" {
+		t.Fatalf("status name = %q, want %q", got, "Unlisted Status")
+	}
+	if result.State.PagePathIndex["new.md"] == "" {
+		t.Fatalf("expected pushed page to be tracked, got state %+v", result.State.PagePathIndex)
+	}
+}
+
+func TestPush_NewPageDuplicateTitleErrorIncludesNonCurrentCollision(t *testing.T) {
+	spaceDir := t.TempDir()
+	mdPath := filepath.Join(spaceDir, "new.md")
+	if err := fs.WriteMarkdownDocument(mdPath, fs.MarkdownDocument{
+		Frontmatter: fs.Frontmatter{Title: "Collision"},
+		Body:        "content\n",
+	}); err != nil {
+		t.Fatalf("write markdown: %v", err)
+	}
+
+	remote := newRollbackPushRemote()
+	remote.failCreatePageErr = errors.New("A page with this title already exists")
+	remote.pages = []confluence.Page{
+		{ID: "draft-1", SpaceID: "space-1", Title: "Collision", Status: "draft"},
+	}
+
+	_, err := Push(context.Background(), remote, PushOptions{
+		SpaceKey:       "ENG",
+		SpaceDir:       spaceDir,
+		Domain:         "https://example.atlassian.net",
+		State:          fs.SpaceState{SpaceKey: "ENG"},
+		ConflictPolicy: PushConflictPolicyCancel,
+		Changes: []PushFileChange{{
+			Type: PushChangeAdd,
+			Path: "new.md",
+		}},
+	})
+	if err == nil {
+		t.Fatal("expected duplicate title error")
+	}
+	if !strings.Contains(err.Error(), "status=draft") || !strings.Contains(err.Error(), "id=draft-1") {
+		t.Fatalf("expected actionable duplicate title error, got: %v", err)
 	}
 }
 

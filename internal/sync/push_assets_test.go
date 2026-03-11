@@ -61,10 +61,14 @@ func idsFromStateAttachmentIndex(state fs.SpaceState, prefix string) []string {
 	return ids
 }
 
-func mediaNodeID(attrs map[string]any) string {
+func mediaNodeRenderID(attrs map[string]any) string {
 	if id, ok := attrs["id"].(string); ok && strings.TrimSpace(id) != "" {
 		return strings.TrimSpace(id)
 	}
+	return ""
+}
+
+func mediaNodeAttachmentID(attrs map[string]any) string {
 	if id, ok := attrs["attachmentId"].(string); ok && strings.TrimSpace(id) != "" {
 		return strings.TrimSpace(id)
 	}
@@ -257,8 +261,8 @@ func TestPush_UploadsLocalFileLinksAsAttachments(t *testing.T) {
 	if !strings.Contains(body, `"type":"mediaInline"`) {
 		t.Fatalf("expected update ADF to include mediaInline node for linked file, body=%s", body)
 	}
-	if !strings.Contains(body, `"id":"att-1"`) {
-		t.Fatalf("expected linked file to resolve to uploaded attachment id, body=%s", body)
+	if !strings.Contains(body, `"id":"file-1"`) || !strings.Contains(body, `"attachmentId":"att-1"`) {
+		t.Fatalf("expected linked file to publish file id plus attachment id metadata, body=%s", body)
 	}
 
 	updatedDoc, err := fs.ReadMarkdownDocument(mdPath)
@@ -271,6 +275,44 @@ func TestPush_UploadsLocalFileLinksAsAttachments(t *testing.T) {
 
 	if got := strings.TrimSpace(result.State.AttachmentIndex["assets/1/manual.pdf"]); got != "att-1" {
 		t.Fatalf("attachment index value = %q, want att-1", got)
+	}
+}
+
+type publishedAttachmentRefRemote struct {
+	rollbackPushRemote
+	attachments []confluence.Attachment
+}
+
+func (r *publishedAttachmentRefRemote) ListAttachments(_ context.Context, _ string) ([]confluence.Attachment, error) {
+	return append([]confluence.Attachment(nil), r.attachments...), nil
+}
+
+func TestResolvePublishedAttachmentRefs_PrefersUploadFileIDWhenListResultOmitsIt(t *testing.T) {
+	remote := &publishedAttachmentRefRemote{
+		attachments: []confluence.Attachment{
+			{ID: "att-1", PageID: "1", Filename: "manual.pdf"},
+		},
+	}
+
+	refsByPath, mediaIDByPath, err := resolvePublishedAttachmentRefs(
+		context.Background(),
+		remote,
+		"1",
+		[]string{"assets/1/manual.pdf"},
+		map[string]string{"assets/1/manual.pdf": "att-1"},
+		map[string]confluence.Attachment{
+			"assets/1/manual.pdf": {ID: "att-1", FileID: "file-1", PageID: "1", Filename: "manual.pdf"},
+		},
+	)
+	if err != nil {
+		t.Fatalf("resolvePublishedAttachmentRefs() error: %v", err)
+	}
+
+	if got := mediaIDByPath["assets/1/manual.pdf"]; got != "file-1" {
+		t.Fatalf("mediaIDByPath = %q, want file-1", got)
+	}
+	if got := refsByPath["assets/1/manual.pdf"].MediaID; got != "file-1" {
+		t.Fatalf("published media id = %q, want file-1", got)
 	}
 }
 
@@ -426,13 +468,18 @@ func TestPush_UploadsImageAndFileAttachmentsWithResolvedIDs(t *testing.T) {
 	}
 
 	mediaNodes := mustCollectADFMediaNodes(t, payload.BodyADF)
-	seenIDs := map[string]struct{}{}
+	seenRenderIDs := map[string]struct{}{}
+	seenAttachmentIDs := map[string]struct{}{}
 	seenPng := false
 	seenPdf := false
 	for _, attrs := range mediaNodes {
-		id := mediaNodeID(attrs)
+		id := mediaNodeRenderID(attrs)
 		if strings.TrimSpace(id) != "" {
-			seenIDs[strings.TrimSpace(id)] = struct{}{}
+			seenRenderIDs[strings.TrimSpace(id)] = struct{}{}
+		}
+		attachmentID := mediaNodeAttachmentID(attrs)
+		if strings.TrimSpace(attachmentID) != "" {
+			seenAttachmentIDs[strings.TrimSpace(attachmentID)] = struct{}{}
 		}
 		if mediaType := strings.TrimSpace(mediaNodeType(attrs)); mediaType != "" {
 			switch mediaType {
@@ -445,8 +492,12 @@ func TestPush_UploadsImageAndFileAttachmentsWithResolvedIDs(t *testing.T) {
 	}
 
 	for _, expectedID := range uploadedIDs {
-		if _, ok := seenIDs[expectedID]; !ok {
-			t.Fatalf("pushed ADF missing media id %q, media nodes: %#v, body=%s", expectedID, mediaNodes, string(payload.BodyADF))
+		if _, ok := seenAttachmentIDs[expectedID]; !ok {
+			t.Fatalf("pushed ADF missing attachment id %q, media nodes: %#v, body=%s", expectedID, mediaNodes, string(payload.BodyADF))
+		}
+		expectedRenderID := strings.Replace(expectedID, "att-", "file-", 1)
+		if _, ok := seenRenderIDs[expectedRenderID]; !ok {
+			t.Fatalf("pushed ADF missing render id %q, media nodes: %#v, body=%s", expectedRenderID, mediaNodes, string(payload.BodyADF))
 		}
 	}
 	if !seenPng {

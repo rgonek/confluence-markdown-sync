@@ -22,6 +22,19 @@ The system SHALL use the per-space watermark to plan incremental pulls, with a b
 - WHEN pull planning begins
 - THEN the system SHALL refresh the full tracked space rather than relying on incremental change detection
 
+#### Scenario: Incremental pull materializes remote page creation
+
+- GIVEN a new remote page appears in the managed space after the previous pull watermark
+- WHEN the user runs `conf pull` without `--force`
+- THEN the system SHALL write the new Markdown file locally
+- AND the system SHALL update tracked state only after the file write succeeds
+
+#### Scenario: Incremental pull reconciles remote page updates
+
+- GIVEN an existing tracked remote page changes after the previous pull watermark
+- WHEN the user runs `conf pull` without `--force`
+- THEN the system SHALL update the local Markdown body and sync-managed metadata without requiring `--force`
+
 ### Requirement: Best-effort forward conversion
 
 The system SHALL convert Confluence ADF to Markdown in best-effort mode for `pull` and `diff`.
@@ -66,6 +79,21 @@ The system SHALL rewrite same-space references to local Markdown and asset paths
 - WHEN pull downloads the attachment
 - THEN the system SHALL store it under `assets/<page-id>/<attachment-id>-<filename>`
 - AND the converted Markdown SHALL point to the local relative asset path
+
+#### Scenario: Cross-space page link remains a readable remote link
+
+- GIVEN a Confluence page link points outside the current space scope
+- WHEN pull converts the source page
+- THEN the system SHALL preserve a usable remote URL or reference in Markdown
+- AND the system SHALL emit a preserved cross-space diagnostic instead of a generic unresolved-reference failure
+
+#### Scenario: Absolute Confluence page URL outside local resolution scope is preserved as a note
+
+- GIVEN pull encounters an absolute Confluence page URL with a page ID
+- AND the target cannot be rewritten to a local same-space Markdown path
+- WHEN pull converts the source page
+- THEN the system SHALL preserve the absolute URL in Markdown
+- AND the system SHALL emit a preserved-link diagnostic instead of `unresolved_reference`
 
 ### Requirement: Delete reconciliation
 
@@ -138,3 +166,26 @@ The system SHALL validate local Markdown with the same strict reverse-conversion
 - GIVEN a Markdown file contains a Mermaid fenced code block
 - WHEN `conf validate` runs
 - THEN the system SHALL emit a warning indicating the content will be preserved as a code block on push
+
+#### Scenario: Space-scoped push validation evaluates the full space target
+
+- GIVEN a space-scoped push has one or more in-scope Markdown changes
+- WHEN push or `push --preflight` reuses the strict validation profile
+- THEN the system SHALL validate the full target space rather than only the directly changed files
+
+### Requirement: Structured content round-trip fidelity
+
+The system SHALL preserve supported structured Markdown content across push/pull round-trips.
+
+#### Scenario: Markdown task lists preserve checkbox state
+
+- GIVEN Markdown content contains checked and unchecked task list items
+- WHEN the content is pushed and later pulled
+- THEN the system SHALL preserve the task-list structure and checkbox states
+
+#### Scenario: Plain ISO-like date text remains plain text
+
+- GIVEN Markdown body text contains an ISO-like date string such as `2026-03-09` as ordinary text
+- WHEN the content is pushed and later pulled
+- THEN the system SHALL preserve the same visible date text
+- AND the system SHALL not coerce the text into a different calendar date or an implicit date macro unless the source explicitly requested date markup

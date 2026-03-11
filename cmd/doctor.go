@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/rgonek/confluence-markdown-sync/internal/config"
 	"github.com/rgonek/confluence-markdown-sync/internal/fs"
@@ -89,6 +90,7 @@ func runDoctor(cmd *cobra.Command, target config.Target, repair bool) error {
 		return err
 	}
 	appendDoctorGitIssues(&report)
+	appendDoctorWorkspaceLockIssue(&report)
 
 	if len(report.Issues) == 0 {
 		_, _ = fmt.Fprintln(out, "No issues found.")
@@ -482,6 +484,34 @@ func appendDoctorGitIssues(report *DoctorReport) {
 			true,
 		))
 	}
+	sortDoctorIssues(report.Issues)
+}
+
+func appendDoctorWorkspaceLockIssue(report *DoctorReport) {
+	lockPath, meta, err := workspaceLockInfo()
+	if err != nil || meta == nil {
+		return
+	}
+
+	var message string
+	repairable := false
+	severity := "warning"
+	age := workspaceLockAge(meta)
+	if age >= workspaceLockStaleAfter {
+		message = fmt.Sprintf("repository sync lock appears stale (command=%s pid=%d age=%s); remove it only after confirming no pull or push is still running", strings.TrimSpace(meta.Command), meta.PID, age.Round(time.Second))
+		repairable = false
+	} else {
+		message = fmt.Sprintf("repository sync lock is active or recent (command=%s pid=%d started=%s)", strings.TrimSpace(meta.Command), meta.PID, strings.TrimSpace(meta.CreatedAt))
+		severity = "note"
+	}
+
+	report.Issues = append(report.Issues, newDoctorIssue(
+		"workspace-sync-lock",
+		lockPath,
+		message,
+		severity,
+		repairable,
+	))
 	sortDoctorIssues(report.Issues)
 }
 

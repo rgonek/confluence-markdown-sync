@@ -30,6 +30,8 @@ type fakePullRemote struct {
 	getStatusCalls    []string
 	lastChangeSince   time.Time
 	getPageHook       func(pageID string)
+	getPageFunc       func(pageID string) (confluence.Page, error)
+	getPageCallCount  map[string]int
 }
 
 func (f *fakePullRemote) GetUser(_ context.Context, accountID string) (confluence.User, error) {
@@ -74,8 +76,18 @@ func (f *fakePullRemote) ListChanges(_ context.Context, opts confluence.ChangeLi
 }
 
 func (f *fakePullRemote) GetPage(_ context.Context, pageID string) (confluence.Page, error) {
+	f.mu.Lock()
+	if f.getPageCallCount == nil {
+		f.getPageCallCount = map[string]int{}
+	}
+	f.getPageCallCount[pageID]++
+	f.mu.Unlock()
+
 	if f.getPageHook != nil {
 		f.getPageHook(pageID)
+	}
+	if f.getPageFunc != nil {
+		return f.getPageFunc(pageID)
 	}
 	page, ok := f.pagesByID[pageID]
 	if !ok {

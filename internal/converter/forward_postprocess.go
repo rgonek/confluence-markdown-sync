@@ -6,8 +6,10 @@ import (
 )
 
 var escapedInlineMarkdownLinkPattern = regexp.MustCompile(`\\\[((?:\\.|[^\\\]\n])+?)\\\]\\\(((?:\\.|[^\\\n])+?)\\\)`)
+var invisibleDateGuardPattern = strings.NewReplacer("\u2060", "", "\u2011", "-")
 
 func normalizeForwardMarkdown(markdown string) string {
+	markdown = invisibleDateGuardPattern.Replace(markdown)
 	if !strings.Contains(markdown, `\[`) || !strings.Contains(markdown, `\]`) || !strings.Contains(markdown, `\(`) {
 		return normalizeEscapedParentheses(markdown)
 	}

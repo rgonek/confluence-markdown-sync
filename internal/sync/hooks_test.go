@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/rgonek/confluence-markdown-sync/internal/fs"
 	adfconv "github.com/rgonek/jira-adf-converter/converter"
 	mdconv "github.com/rgonek/jira-adf-converter/mdconverter"
 )
@@ -88,6 +89,80 @@ func TestForwardLinkHookWithGlobalIndex_PreservesAbsoluteCrossSpaceLink(t *testi
 	out, err := hook(context.Background(), adfconv.LinkRenderInput{
 		Href:  "https://example.atlassian.net/wiki/pages/viewpage.action?pageId=77",
 		Title: "Cross Space",
+		Meta: adfconv.LinkMetadata{
+			PageID: "77",
+			Anchor: "section-a",
+		},
+	})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	if !out.Handled {
+		t.Fatal("Expected Handled=true")
+	}
+	if got, want := out.Href, "https://example.atlassian.net/wiki/pages/viewpage.action?pageId=77#section-a"; got != want {
+		t.Fatalf("Href = %q, want %q", got, want)
+	}
+	if len(notices) != 1 || notices[0].Code != "CROSS_SPACE_LINK_PRESERVED" {
+		t.Fatalf("expected preserved-link notice, got %+v", notices)
+	}
+}
+
+func TestForwardLinkHook_PreservesAbsoluteCrossSpaceLinkWithSpaceQualifiedURL(t *testing.T) {
+	sourcePath, _ := filepath.Abs("myspace/index.md")
+
+	notices := make([]ForwardLinkNotice, 0, 1)
+	hook := NewForwardLinkHookWithGlobalIndex(
+		sourcePath,
+		filepath.Dir(sourcePath),
+		PageIndex{"index.md": "1"},
+		nil,
+		"MYSPACE",
+		func(notice ForwardLinkNotice) {
+			notices = append(notices, notice)
+		},
+	)
+
+	out, err := hook(context.Background(), adfconv.LinkRenderInput{
+		Href:  "https://example.atlassian.net/wiki/spaces/OTHER/pages/77/Target",
+		Title: "Cross Space",
+		Meta: adfconv.LinkMetadata{
+			PageID: "77",
+			Anchor: "section-a",
+		},
+	})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	if !out.Handled {
+		t.Fatal("Expected Handled=true")
+	}
+	if got, want := out.Href, "https://example.atlassian.net/wiki/spaces/OTHER/pages/77/Target#section-a"; got != want {
+		t.Fatalf("Href = %q, want %q", got, want)
+	}
+	if len(notices) != 1 || notices[0].Code != "CROSS_SPACE_LINK_PRESERVED" {
+		t.Fatalf("expected preserved-link notice, got %+v", notices)
+	}
+}
+
+func TestForwardLinkHook_PreservesAbsoluteConfluencePageURLWithoutGlobalIndex(t *testing.T) {
+	sourcePath, _ := filepath.Abs("myspace/index.md")
+
+	notices := make([]ForwardLinkNotice, 0, 1)
+	hook := NewForwardLinkHookWithGlobalIndex(
+		sourcePath,
+		filepath.Dir(sourcePath),
+		PageIndex{"index.md": "1"},
+		nil,
+		"MYSPACE",
+		func(notice ForwardLinkNotice) {
+			notices = append(notices, notice)
+		},
+	)
+
+	out, err := hook(context.Background(), adfconv.LinkRenderInput{
+		Href:  "https://example.atlassian.net/wiki/pages/viewpage.action?pageId=77",
+		Title: "Remote Page",
 		Meta: adfconv.LinkMetadata{
 			PageID: "77",
 			Anchor: "section-a",
@@ -301,6 +376,12 @@ func TestReverseLinkHookWithGlobalIndex_ResolvesCrossSpaceLink(t *testing.T) {
 	if err := os.MkdirAll(tdDir, 0o750); err != nil {
 		t.Fatalf("mkdir td dir: %v", err)
 	}
+	if err := os.WriteFile(filepath.Join(engDir, fs.StateFileName), []byte("{\"space_key\":\"ENG\"}\n"), 0o600); err != nil {
+		t.Fatalf("write ENG state file: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(tdDir, fs.StateFileName), []byte("{\"space_key\":\"TD\"}\n"), 0o600); err != nil {
+		t.Fatalf("write TD state file: %v", err)
+	}
 
 	targetPath := filepath.Join(tdDir, "Target Page.md")
 	if err := os.WriteFile(targetPath, []byte("target"), 0o600); err != nil {
@@ -323,7 +404,7 @@ func TestReverseLinkHookWithGlobalIndex_ResolvesCrossSpaceLink(t *testing.T) {
 	if !out.Handled {
 		t.Fatal("expected cross-space destination to be handled")
 	}
-	if got, want := out.Destination, "https://example.atlassian.net/wiki/pages/viewpage.action?pageId=77#section-a"; got != want {
+	if got, want := out.Destination, "https://example.atlassian.net/wiki/spaces/TD/pages/77#section-a"; got != want {
 		t.Fatalf("destination = %q, want %q", got, want)
 	}
 }
@@ -337,6 +418,12 @@ func TestReverseLinkHookWithGlobalIndex_ResolvesViaSameFileFallback(t *testing.T
 	}
 	if err := os.MkdirAll(tdDir, 0o750); err != nil {
 		t.Fatalf("mkdir td dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(engDir, fs.StateFileName), []byte("{\"space_key\":\"ENG\"}\n"), 0o600); err != nil {
+		t.Fatalf("write ENG state file: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(tdDir, fs.StateFileName), []byte("{\"space_key\":\"TD\"}\n"), 0o600); err != nil {
+		t.Fatalf("write TD state file: %v", err)
 	}
 
 	realTargetPath := filepath.Join(tdDir, "Target Page.md")
@@ -366,7 +453,7 @@ func TestReverseLinkHookWithGlobalIndex_ResolvesViaSameFileFallback(t *testing.T
 	if !out.Handled {
 		t.Fatal("expected same-file fallback to resolve destination")
 	}
-	if got, want := out.Destination, "https://example.atlassian.net/wiki/pages/viewpage.action?pageId=77"; got != want {
+	if got, want := out.Destination, "https://example.atlassian.net/wiki/spaces/TD/pages/77"; got != want {
 		t.Fatalf("destination = %q, want %q", got, want)
 	}
 }

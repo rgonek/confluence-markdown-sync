@@ -1,7 +1,6 @@
 package sync
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"path/filepath"
@@ -84,13 +83,18 @@ func collectAttachmentRefs(adfJSON []byte, defaultPageID string) (map[string]att
 		}
 
 		attachmentID := firstString(attrs,
-			"id",
 			"attachmentId",
 			"attachmentID",
+		)
+		renderID := firstString(attrs,
+			"id",
 			"mediaId",
 			"fileId",
 			"fileID",
 		)
+		if attachmentID == "" {
+			attachmentID = renderID
+		}
 		if attachmentID == "" {
 			return
 		}
@@ -107,19 +111,21 @@ func collectAttachmentRefs(adfJSON []byte, defaultPageID string) (map[string]att
 		}
 
 		filename := firstString(attrs, "filename", "fileName", "name", "alt", "title")
-		if filename == "" {
-			filename = "attachment"
-		}
 
 		refKey := attachmentID
 		if isUnknownMediaID(attachmentID) {
-			refKey = fmt.Sprintf("unknown-media-%s-%d", normalizeAttachmentFilename(filename), unknownRefSeq)
+			filenameKey := normalizeAttachmentFilename(filename)
+			if filenameKey == "" {
+				filenameKey = "attachment"
+			}
+			refKey = fmt.Sprintf("unknown-media-%s-%d", filenameKey, unknownRefSeq)
 			unknownRefSeq++
 		}
 
 		out[refKey] = attachmentRef{
 			PageID:       pageID,
 			AttachmentID: attachmentID,
+			RenderID:     renderID,
 			Filename:     filename,
 		}
 	})
@@ -163,12 +169,57 @@ func isUnknownMediaID(attachmentID string) bool {
 	return strings.EqualFold(strings.TrimSpace(attachmentID), "UNKNOWN_MEDIA_ID")
 }
 
+func resolveAttachmentRefsByRemoteMetadata(
+	refs map[string]attachmentRef,
+	remoteAttachments []confluence.Attachment,
+) (map[string]attachmentRef, int) {
+	if len(refs) == 0 || len(remoteAttachments) == 0 {
+		return refs, 0
+	}
+
+	attachmentIDByFileID := map[string]confluence.Attachment{}
+	for _, attachment := range remoteAttachments {
+		fileID := strings.TrimSpace(attachment.FileID)
+		if fileID == "" {
+			continue
+		}
+		attachmentIDByFileID[fileID] = attachment
+	}
+
+	resolved := 0
+	refs = cloneAttachmentRefs(refs)
+	for _, key := range sortedStringKeys(refs) {
+		ref := refs[key]
+		if isUnknownMediaID(ref.AttachmentID) {
+			continue
+		}
+
+		attachment, ok := attachmentIDByFileID[strings.TrimSpace(ref.AttachmentID)]
+		if !ok {
+			continue
+		}
+
+		resolvedID := strings.TrimSpace(attachment.ID)
+		if resolvedID == "" || resolvedID == ref.AttachmentID {
+			continue
+		}
+
+		delete(refs, key)
+		ref.AttachmentID = resolvedID
+		if strings.TrimSpace(ref.Filename) == "" || normalizeAttachmentFilename(ref.Filename) == "attachment" {
+			ref.Filename = strings.TrimSpace(attachment.Filename)
+		}
+		refs[resolvedID] = ref
+		resolved++
+	}
+
+	return refs, resolved
+}
+
 func resolveUnknownAttachmentRefsByFilename(
-	ctx context.Context,
-	remote PullRemote,
-	pageID string,
 	refs map[string]attachmentRef,
 	attachmentIndex map[string]string,
+	remoteAttachments []confluence.Attachment,
 ) (map[string]attachmentRef, int, int, error) {
 	if len(refs) == 0 {
 		return refs, 0, 0, nil
@@ -177,7 +228,15 @@ func resolveUnknownAttachmentRefsByFilename(
 	resolved := 0
 	refs = cloneAttachmentRefs(refs)
 
-	localFilenameIndex := buildLocalAttachmentFilenameIndex(attachmentIndex, pageID)
+	defaultPageID := ""
+	for _, ref := range refs {
+		defaultPageID = strings.TrimSpace(ref.PageID)
+		if defaultPageID != "" {
+			break
+		}
+	}
+
+	localFilenameIndex := buildLocalAttachmentFilenameIndex(attachmentIndex, defaultPageID)
 	unresolvedKeys := make([]string, 0)
 	for _, key := range sortedStringKeys(refs) {
 		ref := refs[key]
@@ -200,10 +259,6 @@ func resolveUnknownAttachmentRefsByFilename(
 		return refs, resolved, 0, nil
 	}
 
-	remoteAttachments, err := remote.ListAttachments(ctx, pageID)
-	if err != nil {
-		return refs, resolved, len(unresolvedKeys), err
-	}
 	remoteFilenameIndex := buildRemoteAttachmentFilenameIndex(remoteAttachments)
 
 	unresolved := 0

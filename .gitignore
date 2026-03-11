@@ -31,6 +31,8 @@ go.work.sum
 workspace/
 test-output/
 
+!openspec/specs/workspace/
+
 # Local Confluence sync state
 .confluence-state.json
 .confluence-search-index/

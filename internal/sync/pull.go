@@ -216,7 +216,7 @@ func Pull(ctx context.Context, remote PullRemote, opts PullOptions) (PullResult,
 	if opts.Progress != nil {
 		opts.Progress.SetDescription("Identifying changed pages")
 	}
-	changedPageIDs, err := selectChangedPageIDs(ctx, remote, opts, overlapWindow, pageByID)
+	changedPageIDs, changedPageMeta, err := selectChangedPages(ctx, remote, opts, overlapWindow, pageByID)
 	if err != nil {
 		return PullResult{}, err
 	}
@@ -266,15 +266,12 @@ func Pull(ctx context.Context, remote PullRemote, opts PullOptions) (PullResult,
 				opts.Progress.SetCurrentItem(pageID)
 			}
 
-			page, err := remote.GetPage(gCtx, pageID)
+			page, err := fetchChangedPageWithRetry(gCtx, remote, pageID, pageByID[pageID], changedPageMeta[pageID])
 			if err != nil {
 				if opts.Progress != nil {
 					opts.Progress.Add(1)
 				}
-				if errors.Is(err, confluence.ErrNotFound) {
-					return nil
-				}
-				return fmt.Errorf("fetch page %s: %w", pageID, err)
+				return err
 			}
 
 			if contentStatusMode == tenantContentStatusModeDisabled {
@@ -346,6 +343,7 @@ func Pull(ctx context.Context, remote PullRemote, opts PullOptions) (PullResult,
 	}
 
 	attachmentPathByID := map[string]string{}
+	forwardAttachmentPathByID := map[string]string{}
 	attachmentPageByID := map[string]string{}
 	staleAttachmentPaths := map[string]struct{}{}
 
@@ -373,8 +371,23 @@ func Pull(ctx context.Context, remote PullRemote, opts PullOptions) (PullResult,
 		if diag != nil {
 			diagnostics = append(diagnostics, *diag)
 		}
+		hasUnknownMediaRefs := false
+		for _, ref := range refs {
+			if isUnknownMediaID(ref.AttachmentID) {
+				hasUnknownMediaRefs = true
+				break
+			}
+		}
 
-		refs, resolvedUnknownCount, unresolvedUnknownCount, resolveErr := resolveUnknownAttachmentRefsByFilename(ctx, remote, page.ID, refs, attachmentIndex)
+		remoteAttachments, listAttachmentsErr := remote.ListAttachments(ctx, page.ID)
+		if listAttachmentsErr == nil {
+			refs, _ = resolveAttachmentRefsByRemoteMetadata(refs, remoteAttachments)
+		}
+
+		refs, resolvedUnknownCount, unresolvedUnknownCount, resolveErr := resolveUnknownAttachmentRefsByFilename(refs, attachmentIndex, remoteAttachments)
+		if resolveErr == nil && listAttachmentsErr != nil && hasUnknownMediaRefs {
+			resolveErr = listAttachmentsErr
+		}
 		if resolveErr != nil {
 			diagnostics = append(diagnostics, PullDiagnostic{
 				Path:    page.ID,
@@ -432,7 +445,12 @@ func Pull(ctx context.Context, remote PullRemote, opts PullOptions) (PullResult,
 
 			attachmentIndex[relAssetPath] = ref.AttachmentID
 			pathByAttachmentID[ref.AttachmentID] = relAssetPath
-			attachmentPathByID[ref.AttachmentID] = filepath.Join(spaceDir, filepath.FromSlash(relAssetPath))
+			attachmentAbsPath := filepath.Join(spaceDir, filepath.FromSlash(relAssetPath))
+			attachmentPathByID[ref.AttachmentID] = attachmentAbsPath
+			forwardAttachmentPathByID[ref.AttachmentID] = attachmentAbsPath
+			if renderID := strings.TrimSpace(ref.RenderID); renderID != "" {
+				forwardAttachmentPathByID[renderID] = attachmentAbsPath
+			}
 			attachmentPageByID[ref.AttachmentID] = ref.PageID
 		}
 	}
@@ -573,7 +591,7 @@ func Pull(ctx context.Context, remote PullRemote, opts PullOptions) (PullResult,
 					linkNotices = append(linkNotices, notice)
 				},
 			),
-			MediaHook: NewForwardMediaHook(outputPath, attachmentPathByID),
+			MediaHook: NewForwardMediaHook(outputPath, forwardAttachmentPathByID),
 		}, outputPath)
 		if err != nil {
 			return PullResult{}, fmt.Errorf("convert page %s: %w", page.ID, err)
@@ -668,6 +686,17 @@ func Pull(ctx context.Context, remote PullRemote, opts PullOptions) (PullResult,
 		}
 		_ = removeEmptyParentDirs(filepath.Dir(absPath), assetsRoot)
 	}
+	orphanPageAssets, err := removeAssetDirsForMissingPages(spaceDir, assetsRoot, pageByID)
+	if err != nil {
+		return PullResult{}, fmt.Errorf("delete orphan asset directories: %w", err)
+	}
+	deletedAssets = append(deletedAssets, orphanPageAssets...)
+	untrackedAssets, err := removeUntrackedAssetFiles(spaceDir, assetsRoot, attachmentIndex)
+	if err != nil {
+		return PullResult{}, fmt.Errorf("delete untracked asset files: %w", err)
+	}
+	deletedAssets = append(deletedAssets, untrackedAssets...)
+	deletedAssets = dedupeSortedPaths(deletedAssets)
 
 	state.PagePathIndex = invertPathByID(pagePathByIDRel)
 	state.AttachmentIndex = attachmentIndex
@@ -691,6 +720,90 @@ func Pull(ctx context.Context, remote PullRemote, opts PullOptions) (PullResult,
 		DeletedAssets:      deletedAssets,
 		RemotePagesChecked: len(changedPageIDs),
 	}, nil
+}
+
+func removeAssetDirsForMissingPages(spaceDir, assetsRoot string, pageByID map[string]confluence.Page) ([]string, error) {
+	if _, err := os.Stat(assetsRoot); os.IsNotExist(err) {
+		return nil, nil
+	}
+
+	entries, err := os.ReadDir(assetsRoot)
+	if err != nil {
+		return nil, err
+	}
+
+	deleted := make([]string, 0)
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		pageID := strings.TrimSpace(entry.Name())
+		if pageID == "" {
+			continue
+		}
+		if _, exists := pageByID[pageID]; exists {
+			continue
+		}
+
+		pageDir := filepath.Join(assetsRoot, entry.Name())
+		_ = filepath.WalkDir(pageDir, func(path string, d os.DirEntry, walkErr error) error {
+			if walkErr != nil || d.IsDir() {
+				return walkErr
+			}
+			relPath, relErr := filepath.Rel(spaceDir, path)
+			if relErr == nil {
+				deleted = append(deleted, normalizeRelPath(relPath))
+			}
+			return nil
+		})
+		if err := os.RemoveAll(pageDir); err != nil {
+			return nil, err
+		}
+	}
+
+	sort.Strings(deleted)
+	return deleted, nil
+}
+
+func removeUntrackedAssetFiles(spaceDir, assetsRoot string, attachmentIndex map[string]string) ([]string, error) {
+	if _, err := os.Stat(assetsRoot); os.IsNotExist(err) {
+		return nil, nil
+	}
+
+	deleted := make([]string, 0)
+	err := filepath.WalkDir(assetsRoot, func(path string, d os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if d.IsDir() {
+			return nil
+		}
+
+		relPath, err := filepath.Rel(spaceDir, path)
+		if err != nil {
+			return err
+		}
+		relPath = normalizeRelPath(relPath)
+		if strings.TrimSpace(attachmentIndex[relPath]) != "" {
+			return nil
+		}
+
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+		deleted = append(deleted, relPath)
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	for _, relPath := range deleted {
+		absPath := filepath.Join(spaceDir, filepath.FromSlash(relPath))
+		_ = removeEmptyParentDirs(filepath.Dir(absPath), assetsRoot)
+	}
+	sort.Strings(deleted)
+	return deleted, nil
 }
 
 func removeEmptyParentDirs(startDir, stopDir string) error {

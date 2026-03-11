@@ -3,6 +3,7 @@ package cmd
 import (
 	"bytes"
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -18,13 +19,24 @@ import (
 type preflightCapabilityFakePushRemote struct {
 	*cmdFakePushRemote
 	contentStatusErr error
+	folderErr        error
 }
 
-func (f *preflightCapabilityFakePushRemote) GetContentStatus(_ context.Context, _ string, _ string) (string, error) {
+func (f *preflightCapabilityFakePushRemote) GetContentStatus(_ context.Context, pageID string, _ string) (string, error) {
+	if strings.TrimSpace(pageID) == "" {
+		return "", errors.New("page ID is required")
+	}
 	if f.contentStatusErr != nil {
 		return "", f.contentStatusErr
 	}
 	return "", nil
+}
+
+func (f *preflightCapabilityFakePushRemote) ListFolders(_ context.Context, _ confluence.FolderListOptions) (confluence.FolderListResult, error) {
+	if f.folderErr != nil {
+		return confluence.FolderListResult{}, f.folderErr
+	}
+	return f.cmdFakePushRemote.ListFolders(context.Background(), confluence.FolderListOptions{})
 }
 
 func TestRunPush_DryRunDoesNotMutateFrontmatter(t *testing.T) {
@@ -308,6 +320,59 @@ func TestRunPush_PreflightShowsPlanWithoutRemoteWrites(t *testing.T) {
 	}
 }
 
+func TestRunPush_PreflightUsesExistingRemotePageForContentStatusProbe(t *testing.T) {
+	runParallelCommandTest(t)
+
+	repo := t.TempDir()
+	spaceDir := preparePushRepoWithBaseline(t, repo)
+
+	writeMarkdown(t, filepath.Join(spaceDir, "new-page.md"), fs.MarkdownDocument{
+		Frontmatter: fs.Frontmatter{
+			Title:  "New page",
+			Status: "Ready to review",
+		},
+		Body: "new content\n",
+	})
+	runGitForTest(t, repo, "add", ".")
+	runGitForTest(t, repo, "commit", "-m", "local change")
+
+	previousPreflight := flagPushPreflight
+	flagPushPreflight = true
+	t.Cleanup(func() { flagPushPreflight = previousPreflight })
+
+	oldPushFactory := newPushRemote
+	oldPullFactory := newPullRemote
+	newPushRemote = func(_ *config.Config) (syncflow.PushRemote, error) {
+		return &preflightCapabilityFakePushRemote{
+			cmdFakePushRemote: newCmdFakePushRemote(1),
+			contentStatusErr:  &confluence.APIError{StatusCode: 404, Message: "missing"},
+		}, nil
+	}
+	newPullRemote = func(_ *config.Config) (syncflow.PullRemote, error) {
+		return newCmdFakePushRemote(1), nil
+	}
+	t.Cleanup(func() {
+		newPushRemote = oldPushFactory
+		newPullRemote = oldPullFactory
+	})
+
+	setupEnv(t)
+	chdirRepo(t, spaceDir)
+
+	cmd := &cobra.Command{}
+	out := &bytes.Buffer{}
+	cmd.SetOut(out)
+
+	if err := runPush(cmd, config.Target{Mode: config.TargetModeSpace, Value: ""}, "", false); err != nil {
+		t.Fatalf("runPush() preflight unexpected error: %v", err)
+	}
+
+	text := out.String()
+	if !strings.Contains(text, "content-status metadata sync disabled for this push") {
+		t.Fatalf("preflight output missing degraded-mode detail for new-page probe:\n%s", text)
+	}
+}
+
 func TestRunPush_PreflightHonorsExplicitForceConflictPolicy(t *testing.T) {
 	runParallelCommandTest(t)
 
@@ -418,8 +483,8 @@ func TestRunPush_PreflightShowsDestructiveDeleteProminent(t *testing.T) {
 	text := out.String()
 
 	// Delete entries in the planned mutations section must be prominent.
-	if !strings.Contains(text, "Destructive: delete") {
-		t.Fatalf("preflight output missing prominent destructive delete marker:\n%s", text)
+	if !strings.Contains(text, "Destructive: archive remote page for") {
+		t.Fatalf("preflight output missing prominent remote archive marker:\n%s", text)
 	}
 	if !strings.Contains(text, "root.md") {
 		t.Fatalf("preflight output missing deleted file name:\n%s", text)
@@ -433,5 +498,123 @@ func TestRunPush_PreflightShowsDestructiveDeleteProminent(t *testing.T) {
 	// safety confirmation notice must appear.
 	if !strings.Contains(text, "safety confirmation would be required") {
 		t.Fatalf("preflight output missing safety confirmation notice:\n%s", text)
+	}
+}
+
+func TestRunPush_PreflightDoesNotProbeUndocumentedFolderListAPI(t *testing.T) {
+	runParallelCommandTest(t)
+
+	repo := t.TempDir()
+	spaceDir := preparePushRepoWithBaseline(t, repo)
+
+	nestedDir := filepath.Join(spaceDir, "Parent")
+	if err := os.MkdirAll(nestedDir, 0o750); err != nil {
+		t.Fatalf("mkdir nested dir: %v", err)
+	}
+	writeMarkdown(t, filepath.Join(nestedDir, "Child.md"), fs.MarkdownDocument{
+		Frontmatter: fs.Frontmatter{Title: "Child"},
+		Body:        "child\n",
+	})
+	runGitForTest(t, repo, "add", ".")
+	runGitForTest(t, repo, "commit", "-m", "add nested page")
+
+	previousPreflight := flagPushPreflight
+	flagPushPreflight = true
+	t.Cleanup(func() { flagPushPreflight = previousPreflight })
+
+	oldPushFactory := newPushRemote
+	oldPullFactory := newPullRemote
+	newPushRemote = func(_ *config.Config) (syncflow.PushRemote, error) {
+		return &preflightCapabilityFakePushRemote{
+			cmdFakePushRemote: newCmdFakePushRemote(1),
+		}, nil
+	}
+	newPullRemote = func(_ *config.Config) (syncflow.PullRemote, error) {
+		return newCmdFakePushRemote(1), nil
+	}
+	t.Cleanup(func() {
+		newPushRemote = oldPushFactory
+		newPullRemote = oldPullFactory
+	})
+
+	setupEnv(t)
+	chdirRepo(t, spaceDir)
+
+	cmd := &cobra.Command{}
+	out := &bytes.Buffer{}
+	cmd.SetOut(out)
+
+	if err := runPush(cmd, config.Target{Mode: config.TargetModeSpace, Value: ""}, "", false); err != nil {
+		t.Fatalf("runPush() preflight unexpected error: %v", err)
+	}
+
+	text := out.String()
+	if strings.Contains(text, "folder API") {
+		t.Fatalf("preflight should not probe undocumented folder list capability, got:\n%s", text)
+	}
+}
+
+func TestRunPush_AllModesCatchBrokenLinksIntroducedByDeletion(t *testing.T) {
+	runParallelCommandTest(t)
+
+	testCases := []struct {
+		name      string
+		preflight bool
+		dryRun    bool
+	}{
+		{name: "preflight", preflight: true},
+		{name: "dry-run", dryRun: true},
+		{name: "push"},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := t.TempDir()
+			spaceDir := preparePushRepoWithLinkedChildBaseline(t, repo)
+
+			if err := os.Remove(filepath.Join(spaceDir, "child.md")); err != nil {
+				t.Fatalf("remove child.md: %v", err)
+			}
+
+			previousPreflight := flagPushPreflight
+			flagPushPreflight = tc.preflight
+			t.Cleanup(func() { flagPushPreflight = previousPreflight })
+
+			factoryCalls := 0
+			oldPushFactory := newPushRemote
+			oldPullFactory := newPullRemote
+			newPushRemote = func(_ *config.Config) (syncflow.PushRemote, error) {
+				factoryCalls++
+				return newCmdFakePushRemote(1), nil
+			}
+			newPullRemote = func(_ *config.Config) (syncflow.PullRemote, error) {
+				return newCmdFakePushRemote(1), nil
+			}
+			t.Cleanup(func() {
+				newPushRemote = oldPushFactory
+				newPullRemote = oldPullFactory
+			})
+
+			setupEnv(t)
+			chdirRepo(t, spaceDir)
+
+			out := &bytes.Buffer{}
+			cmd := &cobra.Command{}
+			cmd.SetOut(out)
+
+			err := runPush(cmd, config.Target{Mode: config.TargetModeSpace, Value: ""}, OnConflictCancel, tc.dryRun)
+			if err == nil {
+				t.Fatal("expected push validation failure")
+			}
+			if !strings.Contains(err.Error(), "validate failed") {
+				t.Fatalf("expected validation failure, got: %v", err)
+			}
+			if !strings.Contains(out.String(), "Validation failed for root.md") {
+				t.Fatalf("expected broken link validation to surface in root.md, got:\n%s", out.String())
+			}
+			if factoryCalls != 0 {
+				t.Fatalf("expected validation failure before remote factory calls, got %d", factoryCalls)
+			}
+		})
 	}
 }

@@ -546,3 +546,220 @@ func TestPullNoOp_ExplainsReason_NoRemoteChanges(t *testing.T) {
 		t.Fatalf("expected no-op message to explain reason (no remote changes), got:\n%s", got)
 	}
 }
+
+func TestRunPull_IncrementalCreateMaterializesRemotePageWithoutForce(t *testing.T) {
+	runParallelCommandTest(t)
+
+	repo := t.TempDir()
+	setupGitRepo(t, repo)
+
+	spaceDir := filepath.Join(repo, "Engineering (ENG)")
+	if err := os.MkdirAll(spaceDir, 0o750); err != nil {
+		t.Fatalf("mkdir space: %v", err)
+	}
+	writeMarkdown(t, filepath.Join(spaceDir, "Parent.md"), fs.MarkdownDocument{
+		Frontmatter: fs.Frontmatter{
+			Title:   "Parent",
+			ID:      "10",
+			Version: 1,
+		},
+		Body: "old parent\n",
+	})
+	if err := fs.SaveState(spaceDir, fs.SpaceState{
+		SpaceKey:              "ENG",
+		LastPullHighWatermark: "2026-03-09T09:00:00Z",
+		PagePathIndex: map[string]string{
+			"Parent.md": "10",
+		},
+	}); err != nil {
+		t.Fatalf("save state: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, ".gitignore"), []byte(".env\n.confluence-state.json\n"), 0o600); err != nil {
+		t.Fatalf("write .gitignore: %v", err)
+	}
+	runGitForTest(t, repo, "add", ".")
+	runGitForTest(t, repo, "commit", "-m", "initial")
+
+	modifiedAt := time.Date(2026, time.March, 9, 9, 30, 0, 0, time.UTC)
+	fake := &cmdFakePullRemote{
+		space: confluence.Space{ID: "space-1", Key: "ENG", Name: "Engineering"},
+		pages: []confluence.Page{
+			{ID: "10", SpaceID: "space-1", Title: "Parent", Version: 1, LastModified: modifiedAt},
+			{ID: "20", SpaceID: "space-1", Title: "Remote Child", ParentPageID: "10", Version: 1, LastModified: modifiedAt},
+		},
+		changes: []confluence.Change{
+			{PageID: "20", SpaceKey: "ENG", Version: 1, LastModified: modifiedAt},
+		},
+		pagesByID: map[string]confluence.Page{
+			"10": {
+				ID:           "10",
+				SpaceID:      "space-1",
+				Title:        "Parent",
+				Version:      1,
+				LastModified: modifiedAt,
+				BodyADF:      rawJSON(t, simpleADF("parent body")),
+			},
+			"20": {
+				ID:           "20",
+				SpaceID:      "space-1",
+				Title:        "Remote Child",
+				ParentPageID: "10",
+				Version:      1,
+				LastModified: modifiedAt,
+				BodyADF:      rawJSON(t, simpleADF("remote child body")),
+			},
+		},
+		attachments: map[string][]byte{},
+	}
+	childFetches := 0
+	fake.getPageFunc = func(pageID string) (confluence.Page, error) {
+		if pageID == "20" {
+			childFetches++
+			if childFetches == 1 {
+				return confluence.Page{}, confluence.ErrNotFound
+			}
+		}
+		page, ok := fake.pagesByID[pageID]
+		if !ok {
+			return confluence.Page{}, confluence.ErrNotFound
+		}
+		return page, nil
+	}
+
+	oldFactory := newPullRemote
+	newPullRemote = func(_ *config.Config) (syncflow.PullRemote, error) { return fake, nil }
+	t.Cleanup(func() { newPullRemote = oldFactory })
+
+	setupEnv(t)
+	chdirRepo(t, repo)
+
+	cmd := &cobra.Command{}
+	out := &bytes.Buffer{}
+	cmd.SetOut(out)
+
+	if err := runPull(cmd, config.Target{Mode: config.TargetModeSpace, Value: "Engineering (ENG)"}); err != nil {
+		t.Fatalf("runPull() error: %v", err)
+	}
+
+	if childFetches < 2 {
+		t.Fatalf("expected child page fetch retry, got %d attempt(s)", childFetches)
+	}
+	if _, err := os.Stat(filepath.Join(spaceDir, "Parent", "Remote-Child.md")); err != nil {
+		t.Fatalf("expected incremental pull to materialize remote child markdown: %v", err)
+	}
+
+	state, err := fs.LoadState(spaceDir)
+	if err != nil {
+		t.Fatalf("load state: %v", err)
+	}
+	if got := state.PagePathIndex["Parent/Remote-Child.md"]; got != "20" {
+		t.Fatalf("state page_path_index[Parent/Remote-Child.md] = %q, want 20", got)
+	}
+}
+
+func TestRunPull_IncrementalUpdateReconcilesRemoteVersionWithoutForce(t *testing.T) {
+	runParallelCommandTest(t)
+
+	repo := t.TempDir()
+	setupGitRepo(t, repo)
+
+	spaceDir := filepath.Join(repo, "Engineering (ENG)")
+	if err := os.MkdirAll(spaceDir, 0o750); err != nil {
+		t.Fatalf("mkdir space: %v", err)
+	}
+	writeMarkdown(t, filepath.Join(spaceDir, "Remote-Page.md"), fs.MarkdownDocument{
+		Frontmatter: fs.Frontmatter{
+			Title:   "Remote Page",
+			ID:      "20",
+			Version: 1,
+		},
+		Body: "old body\n",
+	})
+	if err := fs.SaveState(spaceDir, fs.SpaceState{
+		SpaceKey:              "ENG",
+		LastPullHighWatermark: "2026-03-09T11:00:00Z",
+		PagePathIndex: map[string]string{
+			"Remote-Page.md": "20",
+		},
+	}); err != nil {
+		t.Fatalf("save state: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, ".gitignore"), []byte(".env\n.confluence-state.json\n"), 0o600); err != nil {
+		t.Fatalf("write .gitignore: %v", err)
+	}
+	runGitForTest(t, repo, "add", ".")
+	runGitForTest(t, repo, "commit", "-m", "initial")
+
+	changeTime := time.Date(2026, time.March, 9, 11, 30, 0, 0, time.UTC)
+	fake := &cmdFakePullRemote{
+		space: confluence.Space{ID: "space-1", Key: "ENG", Name: "Engineering"},
+		pages: []confluence.Page{
+			{ID: "20", SpaceID: "space-1", Title: "Remote Page", Version: 1, LastModified: time.Date(2026, time.March, 9, 11, 0, 0, 0, time.UTC)},
+		},
+		changes: []confluence.Change{
+			{PageID: "20", SpaceKey: "ENG", Version: 2, LastModified: changeTime},
+		},
+		pagesByID: map[string]confluence.Page{
+			"20": {
+				ID:           "20",
+				SpaceID:      "space-1",
+				Title:        "Remote Page",
+				Version:      2,
+				LastModified: changeTime,
+				BodyADF:      rawJSON(t, simpleADF("fresh body")),
+			},
+		},
+		attachments: map[string][]byte{},
+	}
+	updateFetches := 0
+	fake.getPageFunc = func(pageID string) (confluence.Page, error) {
+		if pageID != "20" {
+			return confluence.Page{}, confluence.ErrNotFound
+		}
+		updateFetches++
+		if updateFetches == 1 {
+			return confluence.Page{
+				ID:           "20",
+				SpaceID:      "space-1",
+				Title:        "Remote Page",
+				Version:      1,
+				LastModified: time.Date(2026, time.March, 9, 11, 0, 0, 0, time.UTC),
+				BodyADF:      rawJSON(t, simpleADF("old body")),
+			}, nil
+		}
+		return fake.pagesByID["20"], nil
+	}
+
+	oldFactory := newPullRemote
+	newPullRemote = func(_ *config.Config) (syncflow.PullRemote, error) { return fake, nil }
+	t.Cleanup(func() { newPullRemote = oldFactory })
+
+	setupEnv(t)
+	chdirRepo(t, repo)
+
+	cmd := &cobra.Command{}
+	out := &bytes.Buffer{}
+	cmd.SetOut(out)
+
+	if err := runPull(cmd, config.Target{Mode: config.TargetModeSpace, Value: "Engineering (ENG)"}); err != nil {
+		t.Fatalf("runPull() error: %v", err)
+	}
+
+	if updateFetches < 2 {
+		t.Fatalf("expected updated page fetch retry, got %d attempt(s)", updateFetches)
+	}
+
+	doc, err := fs.ReadMarkdownDocument(filepath.Join(spaceDir, "Remote-Page.md"))
+	if err != nil {
+		t.Fatalf("read Remote-Page.md: %v", err)
+	}
+	if doc.Frontmatter.Version != 2 {
+		t.Fatalf("version = %d, want 2", doc.Frontmatter.Version)
+	}
+	if !strings.Contains(doc.Body, "fresh body") {
+		t.Fatalf("expected updated body after incremental pull, got:\n%s", doc.Body)
+	}
+	if strings.Contains(out.String(), "all remote updates were outside the target scope") {
+		t.Fatalf("unexpected false no-op message:\n%s", out.String())
+	}
+}

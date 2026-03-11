@@ -139,8 +139,14 @@ Validation failures must stop `push` immediately.
 - **NEVER perform real tests (e.g. `conf pull` or `conf push`) targeting real Confluence spaces within the repository root.** This prevents accidental commits of synced Markdown content.
 - **Agent Sandbox**: Use a temporary directory *outside* of the repository for full end-to-end integration tests with real data.
 - E2E tests must run only against explicit sandbox configuration:
-  - `CONF_E2E_SANDBOX_SPACE_KEY` (required for all E2E workflows)
-  - `CONF_E2E_CONFLICT_PAGE_ID` (required for conflict workflow coverage)
+  - `CONF_E2E_DOMAIN`
+  - `CONF_E2E_EMAIL`
+  - `CONF_E2E_API_TOKEN`
+  - `CONF_E2E_PRIMARY_SPACE_KEY`
+  - `CONF_E2E_SECONDARY_SPACE_KEY`
+  - No other environment variables should be required to run `make test-e2e`
+  - Core E2E tests should create and clean up their own scratch pages instead of mutating shared seeded content
+  - Capability-specific live E2E suites (for example folder-fallback coverage) must still skip when the required tenant behavior is unavailable
   - Never hardcode production page IDs or space keys in test code.
 - If you must use a subdirectory for small tests, use the `workspace/` or `test-output/` directories (both gitignored).
 - **Cleanup**: Always delete test content from `workspace/` or `test-output/` after completing a test session to keep the environment clean.

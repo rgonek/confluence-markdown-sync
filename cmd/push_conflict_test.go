@@ -172,3 +172,89 @@ func TestRunPush_PullMergeRestoresStashedWorkspaceBeforePull(t *testing.T) {
 		t.Fatalf("expected stash to be empty after workspace restore, got:\n%s", stashList)
 	}
 }
+
+func TestRunPush_PullMergeDoesNotForceDiscardLocalDuringPull(t *testing.T) {
+	runParallelCommandTest(t)
+
+	repo := t.TempDir()
+	spaceDir := preparePushRepoWithBaseline(t, repo)
+	rootPath := filepath.Join(spaceDir, "root.md")
+
+	writeMarkdown(t, rootPath, fs.MarkdownDocument{
+		Frontmatter: fs.Frontmatter{
+			Title: "Root",
+			ID:    "1",
+
+			Version:                1,
+			ConfluenceLastModified: "2026-02-01T10:00:00Z",
+		},
+		Body: "local uncommitted content\n",
+	})
+
+	fake := newCmdFakePushRemote(3)
+	oldPushFactory := newPushRemote
+	oldPullFactory := newPullRemote
+	newPushRemote = func(_ *config.Config) (syncflow.PushRemote, error) { return fake, nil }
+	newPullRemote = func(_ *config.Config) (syncflow.PullRemote, error) { return fake, nil }
+	t.Cleanup(func() {
+		newPushRemote = oldPushFactory
+		newPullRemote = oldPullFactory
+	})
+
+	oldRunPullForPush := runPullForPush
+	oldDiscardLocal := flagPullDiscardLocal
+	discardLocalDuringPull := true
+	restoredBeforePull := false
+	runPullForPush = func(_ *cobra.Command, _ config.Target) (commandRunReport, error) {
+		discardLocalDuringPull = flagPullDiscardLocal
+		doc, err := fs.ReadMarkdownDocument(rootPath)
+		if err != nil {
+			return commandRunReport{}, err
+		}
+		restoredBeforePull = strings.Contains(doc.Body, "local uncommitted content")
+		doc.Frontmatter.Version = 3
+		doc.Body += "\nremote change after pull-merge\n"
+		if err := fs.WriteMarkdownDocument(rootPath, doc); err != nil {
+			return commandRunReport{}, err
+		}
+		return commandRunReport{MutatedFiles: []string{"root.md"}}, nil
+	}
+	flagPullDiscardLocal = true
+	t.Cleanup(func() {
+		runPullForPush = oldRunPullForPush
+		flagPullDiscardLocal = oldDiscardLocal
+	})
+
+	setupEnv(t)
+	chdirRepo(t, spaceDir)
+
+	cmd := &cobra.Command{}
+	out := &bytes.Buffer{}
+	cmd.SetOut(out)
+	err := runPush(cmd, config.Target{Mode: config.TargetModeSpace, Value: ""}, OnConflictPullMerge, false)
+	if err != nil {
+		t.Fatalf("runPush() unexpected error: %v", err)
+	}
+	if discardLocalDuringPull {
+		t.Fatal("expected automatic pull-merge to disable discard-local and preserve local edits")
+	}
+	if !restoredBeforePull {
+		t.Fatal("expected local workspace changes to be restored before automatic pull-merge")
+	}
+	doc, err := fs.ReadMarkdownDocument(rootPath)
+	if err != nil {
+		t.Fatalf("read root markdown: %v", err)
+	}
+	if !strings.Contains(doc.Body, "local uncommitted content") {
+		t.Fatalf("expected local edit to survive automatic pull-merge, got body %q", doc.Body)
+	}
+	if doc.Frontmatter.Version != 3 {
+		t.Fatalf("expected stubbed pull-merge to update version to 3, got %d", doc.Frontmatter.Version)
+	}
+	if stashList := strings.TrimSpace(runGitForTest(t, repo, "stash", "list")); stashList != "" {
+		t.Fatalf("expected stash to be empty after automatic pull-merge, got:\n%s", stashList)
+	}
+	if !strings.Contains(out.String(), "automatic pull-merge completed") {
+		t.Fatalf("expected pull-merge completion guidance, got:\n%s", out.String())
+	}
+}

@@ -29,6 +29,7 @@ func Reverse(ctx context.Context, markdown []byte, cfg ReverseConfig, sourcePath
 
 	c, err := mdconv.New(mdconv.ReverseConfig{
 		ResolutionMode:         mode,
+		DateDetection:          mdconv.DateDetectNone,
 		LinkHook:               cfg.LinkHook,
 		MediaHook:              cfg.MediaHook,
 		UnderlineDetection:     mdconv.UnderlineDetectPandoc,

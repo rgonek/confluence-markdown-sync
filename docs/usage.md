@@ -94,10 +94,12 @@ Highlights:
 - diagnostics distinguish preserved cross-space links (`note`), degraded-but-pullable fallbacks, and broken references left as fallback output,
 - page files follow Confluence hierarchy (folders and parent/child pages become nested directories),
 - pages that have children are written as `<Page>/<Page>.md` so they are distinguishable from folders,
+- incremental pulls reconcile remote page creates, updates, and deletes without requiring `--force`,
 - leaf-page title renames can keep the existing Markdown path when the effective parent directory is unchanged,
 - pages that own subtree directories move when their self-owned directory segment changes,
 - hierarchy moves and ancestor/path-segment sanitization changes move the Markdown file and emit `PAGE_PATH_MOVED` notes with old/new paths,
 - same-space links rewritten to relative Markdown links,
+- cross-space links preserved as readable remote URLs/references instead of being rewritten to local Markdown paths,
 - attachments downloaded into `assets/<page-id>/<attachment-id>-<filename>`,
 - `--force` (`-f`) forces a full-space refresh (all tracked pages are re-pulled even when incremental changes are empty),
 - attachment download failures include the owning page ID,
@@ -132,7 +134,7 @@ Highlights:
 - surfaces planned tracked-page path relocations that would happen on the next pull,
 - focuses on Markdown page files only.
 
-Attachment-only changes are intentionally excluded from `conf status`. Use `git status` or `conf diff` when you need asset visibility.
+Attachment-only changes are intentionally excluded from `conf status`. Use `git status` for local asset changes or `conf diff` for attachment-aware remote inspection. There is no attachment-aware `conf status` mode yet.
 
 ### `conf diff [TARGET]`
 
@@ -146,7 +148,8 @@ Highlights:
 - includes synced frontmatter parity such as `state`, `status`, and `labels`,
 - strips read-only author/timestamp metadata so the diff stays focused on actionable drift,
 - compares using `git diff --no-index`,
-- supports both file and space targets.
+- supports both file and space targets,
+- requires an `id` for file-mode remote comparison; for a brand-new local file without `id`, use `conf push <file> --preflight` instead.
 
 ### `conf init agents [TARGET]`
 
@@ -175,11 +178,20 @@ Publishes local Markdown changes to Confluence.
 Highlights:
 
 - always runs `validate` first,
+- preflights frontmatter `status` values before any remote page mutation so invalid or unavailable content-status writes fail early,
 - strict conversion before remote writes,
 - isolated sync branch and worktree execution,
+- repository-scoped workspace lock prevents concurrent `pull`/`push` runs in the same repo,
 - per-page commit metadata with Confluence trailers,
 - recovery refs retained on failures,
-- archive deletes require long-task completion (`--archive-task-timeout`, `--archive-task-poll-interval`),
+- failed pushes print concrete `recover`, branch inspection, and cleanup commands for the retained run,
+- space-scoped push, `--preflight`, and `--dry-run` validate the full target space whenever there are in-scope changes,
+- `--preflight` uses the same validation scope and strictness as a real push,
+- `--on-conflict=pull-merge` restores local edits before running `pull` and preserves them via merge results, conflict markers, or retained recovery state instead of silently discarding them,
+- when `--on-conflict=pull-merge` stops after a conflict-preserving pull, the CLI prints explicit next steps to resolve files, `git add` them, and rerun push,
+- removing tracked Markdown pages archives the corresponding remote page and follow-up pull removes it from tracked local state,
+- tracked page removals are previewed and summarized as remote archive operations rather than hard deletes,
+- remote archive operations require long-task completion (`--archive-task-timeout`, `--archive-task-poll-interval`), and timeout handling now performs a follow-up verification read so the CLI can distinguish "still running remotely" from a confirmed archive,
 - `--preflight` for a concise local push plan (change summary + validation) without remote writes.
 
 ### `conf search QUERY`
@@ -246,9 +258,9 @@ conf search "oauth" --created-by alice --updated-after 2024-01-01 --result-detai
 
 Markdown frontmatter keys:
 
+- `space` is not stored in frontmatter; space identity comes from workspace context and `.confluence-state.json`.
 - immutable keys:
   - `id`
-  - `space`
 - sync-managed keys:
   - `version`
   - `created_by`
@@ -272,8 +284,10 @@ fallback behavior applies when those APIs are unavailable, see
 
 | Item | Support level | Markdown / ADF behavior | Notes |
 |------|---------------|-------------------------|-------|
+| Markdown task lists | Native round-trip support | Push writes Confluence task nodes and pull restores checkbox lists. | Checked/unchecked state should survive push/pull round-trips. |
 | PlantUML (`plantumlcloud`) | Rendered round-trip support | Pull/diff use the custom extension handler to turn the Confluence macro into a managed `adf-extension` wrapper with a `puml` code body; validate/push rebuild the same Confluence extension. | This is the only first-class extension handler registered by `conf`. |
 | Mermaid | Preserved but not rendered | Markdown keeps ` ```mermaid ` fences; push writes an ADF `codeBlock` with language `mermaid` instead of a Confluence diagram macro. | `conf validate` warns with `MERMAID_PRESERVED_AS_CODEBLOCK`, and push surfaces the same warning before writing. |
+| Plain ISO-like date text | Text-preserving round-trip | Ordinary body text such as `2026-03-09` stays plain text through push/pull unless the source explicitly requests date markup. | Date-looking text must not be silently coerced into a different calendar date or implicit macro. |
 | Raw ADF extension preservation | Best-effort preservation only | When an extension node has no repo-specific handler, pull/diff can preserve it as a raw ```` ```adf:extension ```` JSON fence that validate/push can pass back through with minimal interpretation. | Treat this as a low-level escape hatch, not as a rendered or human-friendly authoring format. It is not a verified end-to-end round-trip contract; validate in a sandbox before relying on it. |
 | Unknown Confluence macros/extensions | Unsupported as a first-class feature | `conf` does not add custom behavior for unknown macros beyond whatever best-effort raw ADF preservation may be possible for some remote payloads. | If Confluence rejects an unknown or uninstalled macro, push can still fail. Do not assume rendered round-trip support unless a handler is documented explicitly, and sandbox-validate any workflow that depends on this path. |
 
@@ -306,4 +320,6 @@ conf push ENG --on-conflict=cancel
 
 - Validation errors on unresolved links/assets: run `conf validate [TARGET]` and fix broken paths or metadata.
 - Conflict errors on push: choose `--on-conflict=pull-merge|force|cancel` based on your policy.
+- `another sync command is already mutating this repository`: wait for the active `pull`/`push` to finish, or inspect `.git/confluence-sync.lock.json` if you suspect a stale lock.
+- `ATTACHMENT_PATH_NORMALIZED`: the first push may relocate referenced local assets into `assets/<page-id>/...`; that rename is expected and stable after the next pull.
 - No-op output: there were no in-scope changes to sync.

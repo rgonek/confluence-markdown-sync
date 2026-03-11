@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 )
 
@@ -84,7 +85,12 @@ func evalFinalPath(p string) string {
 }
 
 func RunGit(workdir string, args ...string) (string, error) {
-	cmd := exec.Command("git", args...) //nolint:gosec // Intentionally running git
+	gitArgs := args
+	if runtime.GOOS == "windows" {
+		gitArgs = append([]string{"-c", "core.longpaths=true"}, args...)
+	}
+
+	cmd := exec.Command("git", gitArgs...) //nolint:gosec // Intentionally running git
 	if strings.TrimSpace(workdir) != "" {
 		cmd.Dir = workdir
 	}
@@ -103,9 +109,9 @@ func RunGit(workdir string, args ...string) (string, error) {
 			msg = strings.TrimSpace(stdout.String())
 		}
 		if msg == "" {
-			return "", fmt.Errorf("git %s failed: %w", strings.Join(args, " "), err)
+			return "", fmt.Errorf("git %s failed: %w", strings.Join(gitArgs, " "), err)
 		}
-		return "", fmt.Errorf("git %s failed: %s", strings.Join(args, " "), msg)
+		return "", fmt.Errorf("git %s failed: %s", strings.Join(gitArgs, " "), msg)
 	}
 	return stdout.String(), nil
 }

@@ -38,7 +38,7 @@ type StatusReport struct {
 	MaxVersionDrift  int
 }
 
-const statusScopeNote = "Scope: markdown/page drift only; attachment-only drift is excluded from `conf status` output. Use `git status` or `conf diff` to inspect assets."
+const statusScopeNote = "Scope: markdown/page drift only; attachment-only drift is excluded from `conf status` output. Use `git status` for local asset changes or `conf diff` for attachment-aware remote inspection. There is no attachment-aware `conf status` mode yet."
 
 var newStatusRemote = func(cfg *config.Config) (StatusRemote, error) {
 	return newConfluenceClientFromConfig(cfg)
@@ -51,7 +51,7 @@ func newStatusCmd() *cobra.Command {
 		Short: "Inspect local and remote sync drift",
 		Long: `status prints a high-level sync summary without mutating local files or remote content.
 
-Status scope: markdown/page drift only; attachment-only drift is excluded from ` + "`conf status`" + ` output. Use ` + "`git status`" + ` or ` + "`conf diff`" + ` to inspect assets.
+Status scope: markdown/page drift only; attachment-only drift is excluded from ` + "`conf status`" + ` output. Use ` + "`git status`" + ` for local asset changes or ` + "`conf diff`" + ` for attachment-aware remote inspection. There is no attachment-aware ` + "`conf status`" + ` mode yet.
 
 TARGET follows the standard rule:
 - .md suffix => file mode (space inferred from file)
@@ -328,7 +328,7 @@ func collectLocalStatusChanges(target config.Target, spaceDir, spaceKey string) 
 		return nil, nil, nil, fmt.Errorf("resolve sync baseline: %w", err)
 	}
 
-	targetCtx, err := resolveValidateTargetContext(target)
+	targetCtx, err := resolveValidateTargetContext(target, "")
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("resolve target context: %w", err)
 	}

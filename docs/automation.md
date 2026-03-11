@@ -14,6 +14,8 @@ Supported on `pull` and `push`:
   - disables prompts,
   - fails fast when a decision is required and not provided.
 
+`pull` and `push` also take a repository-scoped workspace lock. If another sync is already mutating the same repo, the second command fails fast with a lock message instead of continuing into incidental Git/index failures.
+
 Additional pull flag:
 
 - `--skip-missing-assets` (`-s`)
@@ -44,11 +46,24 @@ Behavior:
 
 When remote versions are ahead:
 
-- `pull-merge`: when a remote-ahead conflict is detected, `push` triggers `pull`, then stops so you can review/resolve and retry push.
+- `pull-merge`: when a remote-ahead conflict is detected, `push` triggers `pull`, preserves local edits via merge/conflict state/recoverable artifacts, then stops so you can review/resolve and retry push.
 - `force`: overwrite based on remote head.
 - `cancel`: stop without remote writes.
 
 In non-interactive usage, set one explicitly.
+
+If `pull-merge` stops after preserving local edits, the CLI now prints the expected recovery sequence explicitly:
+
+1. Resolve the affected files or review preserved backup files.
+2. `git add` each resolved file.
+3. Rerun `conf push ... --on-conflict=cancel`.
+
+If a real `push` fails after recovery artifacts are created, the CLI prints the next commands to run for:
+
+- listing retained runs with `conf recover`,
+- inspecting the retained sync branch with `git switch sync/<SPACE_KEY>/<UTC timestamp>`,
+- diffing the retained snapshot against that branch, and
+- cleaning up a single run with `conf recover --discard <SPACE_KEY>/<UTC timestamp> --yes`.
 
 ## Pull Conflict Handling Runbook
 
@@ -81,12 +96,21 @@ Rollback outcomes are surfaced as diagnostics in command output:
 - `ROLLBACK_ATTACHMENT_DELETED` / `ROLLBACK_ATTACHMENT_FAILED`
 - `ROLLBACK_PAGE_DELETED` / `ROLLBACK_PAGE_DELETE_FAILED`
 
-Archive/delete safety diagnostics:
+Archive/page-removal safety diagnostics:
 
 - `ARCHIVE_TASK_TIMEOUT`
+- `ARCHIVE_TASK_STILL_RUNNING`
 - `ARCHIVE_TASK_FAILED`
+- `ARCHIVE_CONFIRMED_AFTER_WAIT_FAILURE`
 
 If any `*_FAILED` code appears, treat the run as partial and inspect the referenced page before retrying.
+If `ARCHIVE_TASK_STILL_RUNNING` appears, Confluence did not finish within the current timeout and the verification read still saw the page as current; inspect the page remotely and consider increasing `--archive-task-timeout`.
+
+Asset drift note:
+
+- `conf status` remains page-only.
+- Use `git status` for local asset changes and `conf diff` when automation needs attachment-aware remote inspection.
+- The first push for locally sourced assets may emit `ATTACHMENT_PATH_NORMALIZED` because `conf` relocates files into the managed `assets/<page-id>/...` hierarchy. That rename is expected and stable after the next pull.
 
 ## Dry-Run Behavior (`push --dry-run`)
 
@@ -96,6 +120,7 @@ Use it to verify:
 
 - changed markdown scope,
 - planned page operations,
+- full-space strict validation for space-scoped pushes,
 - conversion and link/media resolution readiness.
 
 Recommended sequence before unattended push:
@@ -113,6 +138,100 @@ conf pull ENG --yes --non-interactive --skip-missing-assets --force
 conf validate ENG
 conf push ENG --yes --non-interactive --on-conflict=cancel
 ```
+
+## Live E2E Environment Contract
+
+The `go test -tags=e2e ./cmd -run TestWorkflow` suite is intended for explicit live sandbox spaces only.
+
+Required environment for `make test-e2e`:
+
+- `CONF_E2E_DOMAIN`
+- `CONF_E2E_EMAIL`
+- `CONF_E2E_API_TOKEN`
+- `CONF_E2E_PRIMARY_SPACE_KEY`
+- `CONF_E2E_SECONDARY_SPACE_KEY`
+
+Compatibility notes:
+
+- No `ATLASSIAN_*`, `CONFLUENCE_*`, `CONF_LIVE_*`, legacy alias, or page-ID variables are required by the E2E harness.
+- The E2E test process maps `CONF_E2E_DOMAIN`, `CONF_E2E_EMAIL`, and `CONF_E2E_API_TOKEN` into the runtime config expected by `conf` and the direct API client.
+- Core conflict-path tests create and clean up their own temporary pages rather than depending on shared seeded page IDs.
+- Capability-specific live suites, such as folder-fallback coverage, should be opt-in and skip unless the required tenant behavior or capability flag is available.
+
+Example:
+
+```powershell
+$env:CONF_E2E_DOMAIN = 'https://your-domain.atlassian.net'
+$env:CONF_E2E_EMAIL = 'you@example.com'
+$env:CONF_E2E_API_TOKEN = 'your-token'
+$env:CONF_E2E_PRIMARY_SPACE_KEY = 'SANDBOX'
+$env:CONF_E2E_SECONDARY_SPACE_KEY = 'SANDBOX2'
+
+go test -v -tags=e2e ./cmd -run TestWorkflow
+```
+
+`make test-e2e` wraps the same live suite after building `conf`, and `make release-check` is the repository release gate:
+
+```powershell
+make release-check
+```
+
+`make release-check` runs:
+
+- `make fmt-check`
+- `make lint`
+- `make test`
+- `make test-e2e`
+
+Use it only with the explicit sandbox environment above. It is intended for release candidates, not for production spaces or casual local iteration.
+
+## Live Sandbox Baseline Policy
+
+Release verification should start from a stable, documented sandbox baseline. The live E2E suite now enforces that by running a force-pull baseline check before the broader workflow assertions.
+
+Policy:
+
+- Prefer fixing or recreating noisy sandbox seed content.
+- If a known sandbox warning cannot be removed immediately, document it here and keep the automated allowlist aligned with `cmd/e2e_test.go`.
+- Treat any new unexpected baseline diagnostic as a release blocker until it is explained and either removed or explicitly allowlisted.
+
+Current documented baseline allowlist for the maintained release sandbox:
+
+| Space | Expected diagnostic match | Reason |
+|------|----------------------------|--------|
+| `TD2` | `path=17727489`, `code=UNKNOWN_MEDIA_ID_UNRESOLVED` | Existing seed page still contains unresolved media identities; pull skips stale-attachment pruning for safety. |
+| `TD2` | `path=Technical-Documentation/Live-Workflow-Test-2026-03-05/Endpoint-Notes.md`, `code=unresolved_reference`, message contains `pageId=17727489#Task-list` | Seed content now includes another unresolved same-space task-list anchor reference. |
+| `TD2` | `path=Technical-Documentation/Live-Workflow-Test-2026-03-05/Live-Workflow-Test-2026-03-05.md`, `code=unresolved_reference`, message contains `pageId=17727489` | Seed content now includes another unresolved same-space page reference. |
+| `TD2` | `path=Technical-Documentation/Live-Workflow-Test-2026-03-05/Live-Workflow-Test-2026-03-05.md`, `code=unresolved_reference`, message contains `pageId=17530900#Task-list` | Seed content still links to an unresolved remote target. |
+| `TD2` | `path=Technical-Documentation/Live-Workflow-Test-2026-03-05/Checklist-and-Diagrams.md`, message contains `UNKNOWN_MEDIA_ID` | Seed content still contains unresolved media fallback output. |
+| `SD2` | `path=Software-Development/Release-Sandbox-2026-03-05.md`, `code=unresolved_reference`, message contains `pageId=17334539` | Seed content still links to an unresolved remote target. |
+
+If these spaces are cleaned up later, remove the allowlist entries in the same change that removes the warnings.
+
+## Live Sandbox Release Checklist
+
+Use this checklist for a release candidate. It turns the 2026-03-09 one-off live verification into a repeatable gate.
+
+1. Confirm the target spaces are explicit non-production sandboxes and that the `CONF_E2E_*` environment variables point to them.
+2. Run `make release-check`.
+3. Treat any failure in `TestWorkflow_SandboxBaselineDiagnosticsAllowlist` as baseline noise that must be cleaned up or documented before release.
+4. Treat any failure in `TestWorkflow_EndToEndCleanupParity` as a release blocker because it means the workflow did not return the sandbox to a clean state.
+5. Run the manual smoke workflow below if you need human review of operator prompts, diffs, or recovery messaging in addition to the automated live suite.
+6. Capture the release artifacts:
+   - `make release-check` output
+   - any retained recovery commands or branch names from failed push scenarios
+   - final `git status --short` and `conf status <SPACE>` output from manual smoke workspaces, if the manual runbook was used
+7. Approve the release only if:
+   - `fmt-check`, `lint`, unit tests, and live E2E all pass
+   - baseline diagnostics are limited to the documented allowlist
+   - cleanup parity leaves the sandbox with clean `git status` and clean `conf status`
+   - temporary live-test workspaces and scratch content are removed or restored
+
+Failure triage:
+
+- Unexpected baseline diagnostics: update the sandbox seed content first; only add to the allowlist when the warning is understood and intentionally accepted.
+- Live E2E write-path failures: inspect the scratch pages directly in Confluence, then rerun only after the sandbox is back in a known state.
+- Cleanup-parity failures: verify archived/deleted scratch pages, force-pull the affected space, and confirm both `git status` and `conf status` are clean before rerunning the gate.
 
 ## Live Sandbox Smoke-Test Runbook
 
@@ -134,7 +253,9 @@ Recommended environment contract:
 ```powershell
 $RepoRoot      = 'C:\Dev\confluence-markdown-sync'
 $Conf          = Join-Path $RepoRoot 'conf.exe'
-$SandboxSpace  = 'SANDBOX'
+$env:CONF_LIVE_PRIMARY_SPACE_KEY = 'SANDBOX'
+$env:CONF_LIVE_SECONDARY_SPACE_KEY = 'SANDBOX2' # optional, for cross-space smoke tests
+$SandboxSpace  = $env:CONF_LIVE_PRIMARY_SPACE_KEY
 $SmokeRoot     = Join-Path $env:TEMP ("conf-live-smoke-" + (Get-Date -Format 'yyyyMMdd-HHmmss'))
 $WorkspaceA    = Join-Path $SmokeRoot 'workspace-a'
 $WorkspaceB    = Join-Path $SmokeRoot 'workspace-b'

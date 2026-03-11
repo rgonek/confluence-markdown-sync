@@ -1,12 +1,9 @@
 package sync
 
 import (
-	"context"
 	"log/slog"
 	"strings"
 	"sync"
-
-	"github.com/rgonek/confluence-markdown-sync/internal/confluence"
 )
 
 type folderListFallbackTracker struct {
@@ -51,35 +48,24 @@ func (t *folderListFallbackTracker) Report(scope string, err error) {
 	t.mu.Unlock()
 
 	if firstOccurrence {
+		cause := folderFallbackCauseLabel(err)
 		slog.Warn(
-			"folder_list_unavailable_falling_back_to_pages",
+			"folder_api_unavailable_falling_back_to_pages",
 			"scope", scope,
+			"cause", cause,
 			"error", err.Error(),
-			"note", "continuing with page-based hierarchy fallback; repeated folder-list failures in this push will be suppressed",
+			"note", "continuing with page-based hierarchy fallback because of "+cause+"; repeated folder API failures in this push will be suppressed",
 		)
 		return
 	}
 
 	if announceSuppression {
 		slog.Info(
-			"folder_list_unavailable_repeats_suppressed",
+			"folder_api_unavailable_repeats_suppressed",
 			"scope", scope,
+			"cause", folderFallbackCauseLabel(err),
 			"error", err.Error(),
 			"repeat_count", state.count-1,
 		)
 	}
-}
-
-func listAllPushFoldersWithTracking(
-	ctx context.Context,
-	remote PushRemote,
-	opts confluence.FolderListOptions,
-	tracker *folderListFallbackTracker,
-	scope string,
-) ([]confluence.Folder, error) {
-	folders, err := listAllPushFolders(ctx, remote, opts)
-	if err != nil {
-		tracker.Report(scope, err)
-	}
-	return folders, err
 }

@@ -114,16 +114,44 @@ func runValidateCommand(cmd *cobra.Command, target config.Target) (runErr error)
 }
 
 func runValidateTargetWithContext(ctx context.Context, out io.Writer, target config.Target) error {
-	_, err := runValidateTargetWithContextReport(ctx, out, target)
+	_, err := runValidateTargetWithContextReportWithOverride(ctx, out, target, "")
 	return err
 }
 
+func resolvePushValidationTarget(target config.Target, spaceDir string) (config.Target, error) {
+	if target.IsFile() {
+		abs, err := filepath.Abs(target.Value)
+		if err != nil {
+			return config.Target{}, err
+		}
+		return config.Target{Mode: config.TargetModeFile, Value: abs}, nil
+	}
+
+	return config.Target{Mode: config.TargetModeSpace, Value: spaceDir}, nil
+}
+
+func runPushValidation(ctx context.Context, out io.Writer, target config.Target, spaceDir string, failurePrefix string) error {
+	validationTarget, err := resolvePushValidationTarget(target, spaceDir)
+	if err != nil {
+		return err
+	}
+
+	if _, err := runValidateTargetWithContextReportWithOverride(ctx, out, validationTarget, spaceDir); err != nil {
+		return fmt.Errorf("%s: %w", failurePrefix, err)
+	}
+	return nil
+}
+
 func runValidateTargetWithContextReport(ctx context.Context, out io.Writer, target config.Target) (validateCommandResult, error) {
+	return runValidateTargetWithContextReportWithOverride(ctx, out, target, "")
+}
+
+func runValidateTargetWithContextReportWithOverride(ctx context.Context, out io.Writer, target config.Target, fileSpaceDirOverride string) (validateCommandResult, error) {
 	if err := ensureWorkspaceSyncReady("validate"); err != nil {
 		return validateCommandResult{}, err
 	}
 
-	targetCtx, err := resolveValidateTargetContext(target)
+	targetCtx, err := resolveValidateTargetContext(target, fileSpaceDirOverride)
 	if err != nil {
 		return validateCommandResult{}, err
 	}
@@ -224,7 +252,7 @@ func runValidateTargetWithContextReport(ctx context.Context, out io.Writer, targ
 	return result, nil
 }
 
-func resolveValidateTargetContext(target config.Target) (validateTargetContext, error) {
+func resolveValidateTargetContext(target config.Target, fileSpaceDirOverride string) (validateTargetContext, error) {
 	if target.IsFile() {
 		abs, err := filepath.Abs(target.Value)
 		if err != nil {
@@ -234,9 +262,14 @@ func resolveValidateTargetContext(target config.Target) (validateTargetContext, 
 			return validateTargetContext{}, fmt.Errorf("target file %s: %w", target.Value, err)
 		}
 
+		spaceDir := strings.TrimSpace(fileSpaceDirOverride)
+		if spaceDir == "" {
+			spaceDir = findSpaceDirFromFile(abs, "")
+		}
+
 		return validateTargetContext{
-			spaceDir: findSpaceDirFromFile(abs, ""),
-			spaceKey: resolveValidateFileSpaceKey(abs),
+			spaceDir: spaceDir,
+			spaceKey: resolveValidateFileSpaceKey(abs, spaceDir),
 			files:    []string{abs},
 		}, nil
 	}
@@ -278,8 +311,11 @@ func resolveValidateTargetContext(target config.Target) (validateTargetContext, 
 	return validateTargetContext{spaceDir: spaceDir, spaceKey: initialCtx.spaceKey, files: files}, nil
 }
 
-func resolveValidateFileSpaceKey(filePath string) string {
-	spaceDir := findSpaceDirFromFile(filePath, "")
+func resolveValidateFileSpaceKey(filePath, fallbackSpaceDir string) string {
+	spaceDir := strings.TrimSpace(fallbackSpaceDir)
+	if spaceDir == "" {
+		spaceDir = findSpaceDirFromFile(filePath, "")
+	}
 	state, err := fs.LoadState(spaceDir)
 	if err == nil {
 		if key := strings.TrimSpace(state.SpaceKey); key != "" {
@@ -438,99 +474,6 @@ func validateFile(ctx context.Context, path, spaceDir string, linkHook mdconvert
 	}
 
 	return result
-}
-
-// runValidateChangedPushFiles validates only the files in changedAbsPaths but builds the full
-// space context (index, global index) so cross-page links resolve correctly.
-func runValidateChangedPushFiles(ctx context.Context, out io.Writer, spaceDir string, changedAbsPaths []string) error {
-	if len(changedAbsPaths) == 0 {
-		return nil
-	}
-
-	spaceTarget := config.Target{Mode: config.TargetModeSpace, Value: spaceDir}
-	targetCtx, err := resolveValidateTargetContext(spaceTarget)
-	if err != nil {
-		return err
-	}
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-
-	envPath := findEnvPath(targetCtx.spaceDir)
-	cfg, err := config.Load(envPath)
-	if err != nil {
-		return fmt.Errorf("failed to load config: %w", err)
-	}
-
-	_, _ = fmt.Fprintf(out, "Building index for space: %s\n", targetCtx.spaceDir)
-	index, err := syncflow.BuildPageIndexWithPending(targetCtx.spaceDir, targetCtx.files)
-	if err != nil {
-		return fmt.Errorf("failed to build page index: %w", err)
-	}
-
-	if dupErrs := detectDuplicatePageIDs(index); len(dupErrs) > 0 {
-		for _, msg := range dupErrs {
-			_, _ = fmt.Fprintf(out, "Validation failed: %s\n", msg)
-		}
-		return fmt.Errorf("validation failed: duplicate page IDs detected - rename each file to have a unique id or remove the duplicate id")
-	}
-
-	globalIndex, err := buildWorkspaceGlobalPageIndex(targetCtx.spaceDir)
-	if err != nil {
-		return fmt.Errorf("failed to build global page index: %w", err)
-	}
-
-	state, err := fs.LoadState(targetCtx.spaceDir)
-	if err != nil {
-		return fmt.Errorf("failed to load state: %w", err)
-	}
-	if strings.TrimSpace(targetCtx.spaceKey) == "" {
-		targetCtx.spaceKey = strings.TrimSpace(state.SpaceKey)
-	}
-
-	immutableResolver := newValidateImmutableFrontmatterResolver(targetCtx.spaceDir, targetCtx.spaceKey, state)
-	linkHook := syncflow.NewReverseLinkHookWithGlobalIndex(targetCtx.spaceDir, index, globalIndex, cfg.Domain)
-
-	hasErrors := false
-	for _, file := range changedAbsPaths {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-
-		rel, _ := filepath.Rel(targetCtx.spaceDir, file)
-
-		fileResult := validateFile(ctx, file, targetCtx.spaceDir, linkHook, state.AttachmentIndex)
-		issues := append(fileResult.Issues, immutableResolver.validate(file)...)
-		printValidateWarnings(out, rel, fileResult.Warnings)
-		if len(issues) == 0 {
-			continue
-		}
-
-		hasErrors = true
-		_, _ = fmt.Fprintf(out, "Validation failed for %s:\n", filepath.ToSlash(rel))
-		for _, issue := range issues {
-			_, _ = fmt.Fprintf(out, "  - [%s] %s: %s\n", issue.Code, issue.Field, issue.Message)
-		}
-	}
-
-	if hasErrors {
-		return fmt.Errorf("validation failed: please fix the issues listed above before retrying")
-	}
-
-	_, _ = fmt.Fprintln(out, "Validation successful")
-	return nil
-}
-
-// pushChangedAbsPaths returns absolute paths for push changes that are not deletions.
-func pushChangedAbsPaths(spaceDir string, changes []syncflow.PushFileChange) []string {
-	out := make([]string, 0, len(changes))
-	for _, change := range changes {
-		if change.Type == syncflow.PushChangeDelete {
-			continue
-		}
-		out = append(out, filepath.Join(spaceDir, filepath.FromSlash(change.Path)))
-	}
-	return out
 }
 
 func buildWorkspaceGlobalPageIndex(spaceDir string) (syncflow.GlobalPageIndex, error) {

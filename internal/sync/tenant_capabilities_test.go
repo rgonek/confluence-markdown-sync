@@ -69,13 +69,67 @@ func TestPull_FolderCapabilityFallbackSelectedBeforeHierarchyWalk(t *testing.T) 
 
 	foundMode := false
 	for _, diag := range result.Diagnostics {
-		if diag.Code == "FOLDER_LOOKUP_UNAVAILABLE" && strings.Contains(diag.Message, "compatibility mode") {
+		if diag.Code == "FOLDER_LOOKUP_UNAVAILABLE" && strings.Contains(diag.Message, "folder API endpoint failed upstream") {
 			foundMode = true
 			break
 		}
 	}
 	if !foundMode {
-		t.Fatalf("expected concise folder compatibility diagnostic, got %+v", result.Diagnostics)
+		t.Fatalf("expected upstream folder compatibility diagnostic, got %+v", result.Diagnostics)
+	}
+}
+
+func TestPull_FolderCapabilityFallbackDistinguishesUnsupportedTenantCapability(t *testing.T) {
+	tmpDir := t.TempDir()
+	spaceDir := filepath.Join(tmpDir, "ENG")
+	if err := fs.WriteMarkdownDocument(filepath.Join(spaceDir, "existing.md"), fs.MarkdownDocument{
+		Frontmatter: fs.Frontmatter{Title: "Existing", ID: "existing", Version: 1},
+		Body:        "existing\n",
+	}); err != nil {
+		t.Fatalf("write existing markdown: %v", err)
+	}
+
+	remote := &fakePullRemote{
+		space: confluence.Space{ID: "space-1", Key: "ENG", Name: "Engineering"},
+		pages: []confluence.Page{
+			{
+				ID:           "1",
+				SpaceID:      "space-1",
+				Title:        "Start Here",
+				ParentPageID: "folder-1",
+				ParentType:   "folder",
+				Version:      2,
+				LastModified: time.Date(2026, time.March, 5, 12, 0, 0, 0, time.UTC),
+			},
+		},
+		pagesByID: map[string]confluence.Page{
+			"1": {ID: "1", SpaceID: "space-1", Title: "Start Here", ParentPageID: "folder-1", ParentType: "folder", Version: 2, BodyADF: rawJSON(t, map[string]any{"version": 1, "type": "doc", "content": []any{}})},
+		},
+		folderErr: &confluence.APIError{
+			StatusCode: 501,
+			Method:     "GET",
+			URL:        "/wiki/api/v2/folders/folder-1",
+			Message:    "Not Implemented",
+		},
+	}
+
+	result, err := Pull(context.Background(), remote, PullOptions{
+		SpaceKey: "ENG",
+		SpaceDir: spaceDir,
+	})
+	if err != nil {
+		t.Fatalf("Pull() unexpected error: %v", err)
+	}
+
+	foundMode := false
+	for _, diag := range result.Diagnostics {
+		if diag.Code == "FOLDER_LOOKUP_UNAVAILABLE" && strings.Contains(diag.Message, "tenant does not support the folder API") {
+			foundMode = true
+			break
+		}
+	}
+	if !foundMode {
+		t.Fatalf("expected unsupported folder compatibility diagnostic, got %+v", result.Diagnostics)
 	}
 }
 
@@ -553,9 +607,9 @@ func TestPush_FolderCapabilityFallbackUsesPageHierarchyMode(t *testing.T) {
 	}
 
 	remote := newRollbackPushRemote()
-	remote.listFoldersErr = &confluence.APIError{
+	remote.createFolderErr = &confluence.APIError{
 		StatusCode: 500,
-		Method:     "GET",
+		Method:     "POST",
 		URL:        "/wiki/api/v2/folders",
 		Message:    "Internal Server Error",
 	}
@@ -572,8 +626,8 @@ func TestPush_FolderCapabilityFallbackUsesPageHierarchyMode(t *testing.T) {
 		t.Fatalf("Push() unexpected error: %v", err)
 	}
 
-	if remote.createFolderCalls != 0 {
-		t.Fatalf("create folder calls = %d, want 0 after compatibility mode selection", remote.createFolderCalls)
+	if remote.createFolderCalls != 1 {
+		t.Fatalf("create folder calls = %d, want 1 attempted native folder creation before fallback", remote.createFolderCalls)
 	}
 	if remote.createPageCalls < 2 {
 		t.Fatalf("create page calls = %d, want at least 2 for parent compatibility page + child", remote.createPageCalls)
@@ -581,12 +635,54 @@ func TestPush_FolderCapabilityFallbackUsesPageHierarchyMode(t *testing.T) {
 
 	foundMode := false
 	for _, diag := range result.Diagnostics {
-		if diag.Code == "FOLDER_COMPATIBILITY_MODE" && strings.Contains(diag.Message, "page-based hierarchy mode") {
+		if diag.Code == "FOLDER_COMPATIBILITY_MODE" && strings.Contains(diag.Message, "folder API endpoint failed upstream") {
 			foundMode = true
 			break
 		}
 	}
 	if !foundMode {
-		t.Fatalf("expected folder compatibility diagnostic, got %+v", result.Diagnostics)
+		t.Fatalf("expected upstream folder compatibility diagnostic, got %+v", result.Diagnostics)
+	}
+}
+
+func TestPush_FolderCapabilityFallbackDistinguishesUnsupportedTenantCapability(t *testing.T) {
+	spaceDir := t.TempDir()
+	nestedDir := filepath.Join(spaceDir, "Parent")
+	if err := fs.WriteMarkdownDocument(filepath.Join(nestedDir, "Child.md"), fs.MarkdownDocument{
+		Frontmatter: fs.Frontmatter{Title: "Child"},
+		Body:        "child\n",
+	}); err != nil {
+		t.Fatalf("write Child.md: %v", err)
+	}
+
+	remote := newRollbackPushRemote()
+	remote.createFolderErr = &confluence.APIError{
+		StatusCode: 501,
+		Method:     "POST",
+		URL:        "/wiki/api/v2/folders",
+		Message:    "Not Implemented",
+	}
+
+	result, err := Push(context.Background(), remote, PushOptions{
+		SpaceKey:       "ENG",
+		SpaceDir:       spaceDir,
+		Domain:         "https://example.atlassian.net",
+		State:          fs.SpaceState{SpaceKey: "ENG"},
+		ConflictPolicy: PushConflictPolicyCancel,
+		Changes:        []PushFileChange{{Type: PushChangeAdd, Path: "Parent/Child.md"}},
+	})
+	if err != nil {
+		t.Fatalf("Push() unexpected error: %v", err)
+	}
+
+	foundMode := false
+	for _, diag := range result.Diagnostics {
+		if diag.Code == "FOLDER_COMPATIBILITY_MODE" && strings.Contains(diag.Message, "tenant does not support the folder API") {
+			foundMode = true
+			break
+		}
+	}
+	if !foundMode {
+		t.Fatalf("expected unsupported folder compatibility diagnostic, got %+v", result.Diagnostics)
 	}
 }

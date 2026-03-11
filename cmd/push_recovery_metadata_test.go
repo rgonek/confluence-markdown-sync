@@ -129,3 +129,74 @@ func TestRunPush_WarnsWhenRecoveryMetadataCleanupFails(t *testing.T) {
 		t.Fatalf("expected warning about recovery metadata cleanup failure, got:\n%s", out.String())
 	}
 }
+
+func TestRunPush_FailurePrintsRecoveryGuidance(t *testing.T) {
+	runParallelCommandTest(t)
+
+	repo := t.TempDir()
+	spaceDir := preparePushRepoWithBaseline(t, repo)
+
+	writeMarkdown(t, filepath.Join(spaceDir, "root.md"), fs.MarkdownDocument{
+		Frontmatter: fs.Frontmatter{
+			Title: "Root",
+			ID:    "1",
+
+			Version:                1,
+			ConfluenceLastModified: "2026-02-01T10:00:00Z",
+		},
+		Body: "Updated local content that will fail\n",
+	})
+	runGitForTest(t, repo, "add", ".")
+	runGitForTest(t, repo, "commit", "-m", "local change")
+
+	fake := newCmdFakePushRemote(1)
+	failingFake := &failingPushRemote{cmdFakePushRemote: fake}
+
+	oldPushFactory := newPushRemote
+	oldPullFactory := newPullRemote
+	oldNow := nowUTC
+	fixedNow := time.Date(2026, time.February, 1, 12, 34, 59, 0, time.UTC)
+	newPushRemote = func(_ *config.Config) (syncflow.PushRemote, error) { return failingFake, nil }
+	newPullRemote = func(_ *config.Config) (syncflow.PullRemote, error) { return failingFake, nil }
+	nowUTC = func() time.Time { return fixedNow }
+	t.Cleanup(func() {
+		newPushRemote = oldPushFactory
+		newPullRemote = oldPullFactory
+		nowUTC = oldNow
+	})
+
+	setupEnv(t)
+	chdirRepo(t, spaceDir)
+
+	out := &bytes.Buffer{}
+	cmd := &cobra.Command{}
+	cmd.SetOut(out)
+
+	err := runPush(cmd, config.Target{Mode: config.TargetModeSpace, Value: ""}, OnConflictCancel, false)
+	if err == nil {
+		t.Fatal("runPush() expected error")
+	}
+
+	timestamp := fixedNow.Format("20060102T150405Z")
+	syncBranch := "sync/ENG/" + timestamp
+	snapshotRef := "refs/confluence-sync/snapshots/ENG/" + timestamp
+
+	if !strings.Contains(out.String(), "Snapshot retained for recovery: "+snapshotRef) {
+		t.Fatalf("expected retained snapshot in output, got:\n%s", out.String())
+	}
+	if !strings.Contains(out.String(), "Sync branch retained for recovery: "+syncBranch) {
+		t.Fatalf("expected retained sync branch in output, got:\n%s", out.String())
+	}
+	if !strings.Contains(out.String(), "conf recover") {
+		t.Fatalf("expected recover command in output, got:\n%s", out.String())
+	}
+	if !strings.Contains(out.String(), "git switch "+syncBranch) {
+		t.Fatalf("expected branch inspection command in output, got:\n%s", out.String())
+	}
+	if !strings.Contains(out.String(), "git diff "+snapshotRef+".."+syncBranch) {
+		t.Fatalf("expected diff inspection command in output, got:\n%s", out.String())
+	}
+	if !strings.Contains(out.String(), "conf recover --discard ENG/"+timestamp+" --yes") {
+		t.Fatalf("expected discard command in output, got:\n%s", out.String())
+	}
+}
