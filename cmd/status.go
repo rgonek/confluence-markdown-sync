@@ -29,20 +29,20 @@ type StatusRemote interface {
 
 // StatusReport contains the results of a sync drift inspection.
 type StatusReport struct {
-	LocalAdded       []string
-	LocalModified    []string
-	LocalDeleted     []string
-	RemoteAdded      []string
-	RemoteModified   []string
-	RemoteDeleted    []string
-	PlannedPathMoves []syncflow.PlannedPagePathMove
-	ConflictAhead    []string // pages that are both locally modified AND ahead on remote
-	MaxVersionDrift  int
-	LocalAttachmentAdded  []string
-	LocalAttachmentDeleted []string
-	RemoteAttachmentAdded []string
+	LocalAdded              []string
+	LocalModified           []string
+	LocalDeleted            []string
+	RemoteAdded             []string
+	RemoteModified          []string
+	RemoteDeleted           []string
+	PlannedPathMoves        []syncflow.PlannedPagePathMove
+	ConflictAhead           []string // pages that are both locally modified AND ahead on remote
+	MaxVersionDrift         int
+	LocalAttachmentAdded    []string
+	LocalAttachmentDeleted  []string
+	RemoteAttachmentAdded   []string
 	RemoteAttachmentDeleted []string
-	OrphanedLocalAssets   []string
+	OrphanedLocalAssets     []string
 }
 
 const statusScopeNote = "Scope: markdown/page drift by default. Use `conf status --attachments` to inspect local and remote attachment drift from the same command."
@@ -321,20 +321,20 @@ func buildStatusReport(
 	}
 
 	return StatusReport{
-		LocalAdded:       localAdded,
-		LocalModified:    localModified,
-		LocalDeleted:     localDeleted,
-		RemoteAdded:      remoteAdded,
-		RemoteModified:   remoteModified,
-		RemoteDeleted:    remoteDeleted,
-		PlannedPathMoves: plannedPathMoves,
-		ConflictAhead:    conflictAhead,
-		MaxVersionDrift:  maxVersionDrift,
-		LocalAttachmentAdded:   localAttachmentAdded,
-		LocalAttachmentDeleted: localAttachmentDeleted,
-		RemoteAttachmentAdded:  remoteAttachmentAdded,
+		LocalAdded:              localAdded,
+		LocalModified:           localModified,
+		LocalDeleted:            localDeleted,
+		RemoteAdded:             remoteAdded,
+		RemoteModified:          remoteModified,
+		RemoteDeleted:           remoteDeleted,
+		PlannedPathMoves:        plannedPathMoves,
+		ConflictAhead:           conflictAhead,
+		MaxVersionDrift:         maxVersionDrift,
+		LocalAttachmentAdded:    localAttachmentAdded,
+		LocalAttachmentDeleted:  localAttachmentDeleted,
+		RemoteAttachmentAdded:   remoteAttachmentAdded,
 		RemoteAttachmentDeleted: remoteAttachmentDeleted,
-		OrphanedLocalAssets:    orphanedLocalAssets,
+		OrphanedLocalAssets:     orphanedLocalAssets,
 	}, nil
 }
 

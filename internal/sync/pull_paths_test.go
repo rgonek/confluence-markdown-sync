@@ -87,7 +87,7 @@ func TestPlanPagePaths_ReconcilesShortSlugToCanonicalPath(t *testing.T) {
 		{ID: "10", Title: "Software Development"},
 	}
 	previousPageIndex := map[string]string{
-		"Software-Development/XT-20260311-0712.md": "1",
+		"Software-Development/XT-20260311-0712.md":     "1",
 		"Software-Development/Software-Development.md": "10",
 	}
 

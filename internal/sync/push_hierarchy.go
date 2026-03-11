@@ -145,22 +145,6 @@ func ensureFolderHierarchy(
 	return folderIDByPath, nil
 }
 
-func appendPushFolderCompatibilityDiagnosticOnce(diagnostics *[]PushDiagnostic, err error) {
-	if diagnostics == nil {
-		return
-	}
-	for _, diag := range *diagnostics {
-		if strings.TrimSpace(diag.Code) == "FOLDER_COMPATIBILITY_MODE" {
-			return
-		}
-	}
-	*diagnostics = append(*diagnostics, PushDiagnostic{
-		Path:    "",
-		Code:    "FOLDER_COMPATIBILITY_MODE",
-		Message: folderCompatibilityModeMessage(err),
-	})
-}
-
 func collapseFolderParentIfIndexPage(
 	ctx context.Context,
 	remote PushRemote,

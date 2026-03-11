@@ -111,8 +111,8 @@ func TestRunPull_ReportJSONWithRelinkKeepsStdoutJSONAndCapturesRelinkedFiles(t *
 
 	report := decodeCommandReportJSON(t, stdout.Bytes())
 	assertReportMetadata(t, report, "pull", true)
-	if !containsString(report.MutatedFiles, "target.md") {
-		t.Fatalf("mutated files = %v, want target.md", report.MutatedFiles)
+	if !containsString(report.MutatedFiles, "Target.md") {
+		t.Fatalf("mutated files = %v, want Target.md", report.MutatedFiles)
 	}
 	if !containsString(report.MutatedFiles, "../Source (SRC)/doc.md") {
 		t.Fatalf("mutated files = %v, want relinked source doc", report.MutatedFiles)
@@ -122,7 +122,7 @@ func TestRunPull_ReportJSONWithRelinkKeepsStdoutJSONAndCapturesRelinkedFiles(t *
 	if err != nil {
 		t.Fatalf("read source doc: %v", err)
 	}
-	if !strings.Contains(string(raw), "../Target%20%28TGT%29/target.md") {
+	if !strings.Contains(string(raw), "../Target%20%28TGT%29/Target.md") {
 		t.Fatalf("expected source doc to be relinked, got:\n%s", string(raw))
 	}
 }
@@ -238,8 +238,8 @@ func TestRunPull_ReportJSONWithRelinkPreservesAppliedFilesOnLaterError(t *testin
 	if !strings.Contains(report.Error, "auto-relink") {
 		t.Fatalf("error = %q, want auto-relink failure", report.Error)
 	}
-	if !containsString(report.MutatedFiles, "target.md") {
-		t.Fatalf("mutated files = %v, want target.md", report.MutatedFiles)
+	if !containsString(report.MutatedFiles, "Target.md") {
+		t.Fatalf("mutated files = %v, want Target.md", report.MutatedFiles)
 	}
 	if !containsString(report.MutatedFiles, "../Source (SRC)/a.md") {
 		t.Fatalf("mutated files = %v, want applied relink file", report.MutatedFiles)
@@ -249,7 +249,7 @@ func TestRunPull_ReportJSONWithRelinkPreservesAppliedFilesOnLaterError(t *testin
 	if err != nil {
 		t.Fatalf("read applied relink file: %v", err)
 	}
-	if !strings.Contains(string(appliedRaw), "../Target%20%28TGT%29/target.md") {
+	if !strings.Contains(string(appliedRaw), "../Target%20%28TGT%29/Target.md") {
 		t.Fatalf("expected applied relink file to be rewritten, got:\n%s", string(appliedRaw))
 	}
 }

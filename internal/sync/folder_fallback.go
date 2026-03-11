@@ -146,15 +146,6 @@ func folderLookupUnavailableMessage(err error) string {
 	}
 }
 
-func folderCompatibilityModeMessage(err error) string {
-	switch folderFallbackCause(err) {
-	case folderFallbackCauseUnsupportedCapability:
-		return "compatibility mode active: tenant does not support the folder API; using page-based hierarchy mode for this push"
-	default:
-		return "compatibility mode active: folder API endpoint failed upstream; using page-based hierarchy mode for this push"
-	}
-}
-
 type folderFallbackCauseKind string
 
 const (
