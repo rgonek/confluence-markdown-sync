@@ -15,7 +15,7 @@ WORKDIR /src
 
 COPY go.mod go.sum ./
 RUN go mod download
-RUN go install github.com/golangci/golangci-lint/cmd/golangci-lint@v2.8.0
+RUN go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.8.0
 
 COPY . .
 
