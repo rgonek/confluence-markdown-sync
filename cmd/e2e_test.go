@@ -38,19 +38,29 @@ var sandboxBaselineDiagnosticAllowlist = map[string][]e2eExpectedDiagnostic{
 			Code: "UNKNOWN_MEDIA_ID_UNRESOLVED",
 		},
 		{
+			Path:            "Technical-Documentation/Live-Verification-2026-03-11-0712/Live-Verification-2026-03-11-0712.md",
+			Code:            "CROSS_SPACE_LINK_PRESERVED",
+			MessageContains: "pageId=26673153",
+		},
+		{
 			Path:            "Technical-Documentation/Live-Workflow-Test-2026-03-05/Endpoint-Notes.md",
-			Code:            "unresolved_reference",
+			Code:            "CROSS_SPACE_LINK_PRESERVED",
 			MessageContains: "pageId=17727489#Task-list",
 		},
 		{
 			Path:            "Technical-Documentation/Live-Workflow-Test-2026-03-05/Live-Workflow-Test-2026-03-05.md",
-			Code:            "unresolved_reference",
+			Code:            "CROSS_SPACE_LINK_PRESERVED",
 			MessageContains: "pageId=17727489",
 		},
 		{
 			Path:            "Technical-Documentation/Live-Workflow-Test-2026-03-05/Live-Workflow-Test-2026-03-05.md",
-			Code:            "unresolved_reference",
+			Code:            "CROSS_SPACE_LINK_PRESERVED",
 			MessageContains: "pageId=17530900#Task-list",
+		},
+		{
+			Path:            "Technical-Documentation/Live-Workflow-Test-2026-03-10-1655/Live-Workflow-Test-2026-03-10-1655.md",
+			Code:            "CROSS_SPACE_LINK_PRESERVED",
+			MessageContains: "pageId=25460737",
 		},
 		{
 			Path:            "Technical-Documentation/Live-Workflow-Test-2026-03-05/Checklist-and-Diagrams.md",
@@ -58,6 +68,16 @@ var sandboxBaselineDiagnosticAllowlist = map[string][]e2eExpectedDiagnostic{
 		},
 	},
 	"SD2": {
+		{
+			Path:            "Software-Development/Cross-Space-Target-2026-03-10-1655.md",
+			Code:            "CROSS_SPACE_LINK_PRESERVED",
+			MessageContains: "pageId=25591809",
+		},
+		{
+			Path:            "Software-Development/Cross-Space-Target-2026-03-11-0712.md",
+			Code:            "CROSS_SPACE_LINK_PRESERVED",
+			MessageContains: "pageId=26771457",
+		},
 		{
 			Path:            "Software-Development/Release-Sandbox-2026-03-05.md",
 			Code:            "CROSS_SPACE_LINK_PRESERVED",
@@ -147,9 +167,7 @@ func TestWorkflow_ConflictResolution(t *testing.T) {
 		t.Fatalf("Remote update (conflict simulation) failed: %v", err)
 	}
 	fmt.Printf("Remote version after simulation: %d\n", updatedRemote.Version)
-
-	// Wait for eventual consistency
-	time.Sleep(5 * time.Second)
+	waitForPageVersion(t, ctx, client, pageID, updatedRemote.Version)
 
 	// 4. Try push --on-conflict=cancel -> should fail
 	cmd := exec.Command(confBin, "push", simplePath, "--on-conflict=cancel", "--yes", "--non-interactive")
@@ -242,18 +260,21 @@ func TestWorkflow_PushAutoPullMerge(t *testing.T) {
 
 	// 3. Simulate remote update (bump version)
 	remotePage, _ := client.GetPage(ctx, pageID)
-	client.UpdatePage(ctx, pageID, confluence.PageUpsertInput{
+	updatedRemote, err := client.UpdatePage(ctx, pageID, confluence.PageUpsertInput{
 		SpaceID:      remotePage.SpaceID,
 		ParentPageID: remotePage.ParentPageID,
 		Title:        remotePage.Title,
 		Version:      remotePage.Version + 1,
 		BodyADF:      []byte(`{"version":1,"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"Remote update for auto pull-merge"}]}]}`),
 	})
-	time.Sleep(5 * time.Second)
+	if err != nil {
+		t.Fatalf("Remote update (auto pull-merge simulation) failed: %v", err)
+	}
+	waitForPageVersion(t, ctx, client, pageID, updatedRemote.Version)
 
 	// 4. Run push with --on-conflict=pull-merge
 	// This should trigger the automatic pull
-	pcmd := exec.Command(confBin, "push", simplePath, "--on-conflict=pull-merge", "--yes", "--non-interactive")
+	pcmd := exec.Command(confBin, "push", simplePath, "--on-conflict=pull-merge", "--merge-resolution=keep-both", "--yes", "--non-interactive")
 	pcmd.Dir = tmpDir
 	out, err := pcmd.CombinedOutput()
 	// It might fail with a content conflict error (which is what happens in this test setup)
@@ -270,8 +291,8 @@ func TestWorkflow_PushAutoPullMerge(t *testing.T) {
 	simplePath = findMarkdownByPageID(t, spaceDir, pageID)
 	doc, _ = fs.ReadMarkdownDocument(simplePath)
 	// After pull (even with conflict), the frontmatter version should be updated
-	if doc.Frontmatter.Version != remotePage.Version+1 {
-		t.Fatalf("Local version should be updated after auto pull-merge: got %d, want %d", doc.Frontmatter.Version, remotePage.Version+1)
+	if doc.Frontmatter.Version != updatedRemote.Version {
+		t.Fatalf("Local version should be updated after auto pull-merge: got %d, want %d", doc.Frontmatter.Version, updatedRemote.Version)
 	}
 	raw, readErr := os.ReadFile(simplePath)
 	if readErr != nil {
@@ -283,6 +304,90 @@ func TestWorkflow_PushAutoPullMerge(t *testing.T) {
 		if !backupFound {
 			t.Fatalf("Local edit should survive auto pull-merge via merged content, conflict markers, or side-by-side backup, got:\n%s\n\npush output:\n%s", bodyText, string(out))
 		}
+	}
+}
+
+func TestWorkflow_PushAutoPullMergeFailDoesNotMutateWorkspace(t *testing.T) {
+	e2eCfg := requireE2EConfig(t)
+	spaceKey := e2eCfg.PrimarySpaceKey
+
+	ctx := context.Background()
+	cfg, err := config.Load("")
+	if err != nil {
+		t.Fatalf("Load config: %v", err)
+	}
+	client, _ := confluence.NewClient(confluence.ClientConfig{
+		BaseURL:  cfg.Domain,
+		Email:    cfg.Email,
+		APIToken: cfg.APIToken,
+	})
+
+	rootDir := projectRootFromWD(t)
+	confBin := confBinaryForOS(rootDir)
+
+	tmpDir, err := os.MkdirTemp("", "conf-e2e-autopull-fail-*")
+	if err != nil {
+		t.Fatalf("MkdirTemp: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	runCMS := func(args ...string) string {
+		cmd := exec.Command(confBin, args...)
+		cmd.Dir = tmpDir
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("Command conf %v failed: %v\n%s", args, err, string(out))
+		}
+		return string(out)
+	}
+
+	runCMS("init")
+	runCMS("pull", spaceKey, "--yes", "--non-interactive")
+
+	spaceDir := findPulledSpaceDir(t, tmpDir)
+	simplePath, pageID := prepareE2EConflictTarget(t, spaceDir, client, runCMS)
+	doc, _ := fs.ReadMarkdownDocument(simplePath)
+	originalVersion := doc.Frontmatter.Version
+	doc.Body += "\n\nLocal change for auto pull-merge fail test"
+	if err := fs.WriteMarkdownDocument(simplePath, doc); err != nil {
+		t.Fatalf("WriteMarkdown: %v", err)
+	}
+
+	remotePage, err := client.GetPage(ctx, pageID)
+	if err != nil {
+		t.Fatalf("GetPage: %v", err)
+	}
+	updatedRemote, err := client.UpdatePage(ctx, pageID, confluence.PageUpsertInput{
+		SpaceID:      remotePage.SpaceID,
+		ParentPageID: remotePage.ParentPageID,
+		Title:        remotePage.Title,
+		Version:      remotePage.Version + 1,
+		BodyADF:      []byte(`{"version":1,"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"Remote update for auto pull-merge fail"}]}]}`),
+	})
+	if err != nil {
+		t.Fatalf("Remote update (conflict simulation) failed: %v", err)
+	}
+	waitForPageVersion(t, ctx, client, pageID, updatedRemote.Version)
+
+	cmd := exec.Command(confBin, "push", simplePath, "--on-conflict=pull-merge", "--merge-resolution=fail", "--yes", "--non-interactive")
+	cmd.Dir = tmpDir
+	out, err := cmd.CombinedOutput()
+	if err == nil {
+		t.Fatalf("push should fail closed when --merge-resolution=fail is selected\n%s", string(out))
+	}
+	if !strings.Contains(string(out), "--merge-resolution=fail") {
+		t.Fatalf("expected fail-before-mutate guidance, got:\n%s", string(out))
+	}
+
+	docAfter, err := fs.ReadMarkdownDocument(simplePath)
+	if err != nil {
+		t.Fatalf("ReadMarkdown after failed auto pull-merge: %v", err)
+	}
+	if docAfter.Frontmatter.Version != originalVersion {
+		t.Fatalf("local version changed unexpectedly: got %d want %d", docAfter.Frontmatter.Version, originalVersion)
+	}
+	if !strings.Contains(docAfter.Body, "Local change for auto pull-merge fail test") {
+		t.Fatalf("expected local edit to remain untouched, body=\n%s", docAfter.Body)
 	}
 }
 
@@ -336,6 +441,100 @@ func TestWorkflow_AgenticFullCycle(t *testing.T) {
 	runCMS("push", simplePath, "--on-conflict=cancel", "--yes", "--non-interactive")
 
 	fmt.Printf("Agentic full cycle succeeded\n")
+}
+
+func TestWorkflow_DiffPreviewForNewPage(t *testing.T) {
+	e2eCfg := requireE2EConfig(t)
+	spaceKey := e2eCfg.PrimarySpaceKey
+
+	rootDir := projectRootFromWD(t)
+	confBin := confBinaryForOS(rootDir)
+
+	tmpDir, err := os.MkdirTemp("", "conf-e2e-diff-preview-*")
+	if err != nil {
+		t.Fatalf("MkdirTemp: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	runCMS := func(args ...string) string {
+		cmd := exec.Command(confBin, args...)
+		cmd.Dir = tmpDir
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("Command conf %v failed: %v\n%s", args, err, string(out))
+		}
+		return string(out)
+	}
+
+	runCMS("init")
+	runCMS("pull", spaceKey, "--yes", "--non-interactive")
+
+	spaceDir := findPulledSpaceDirBySpaceKey(t, tmpDir, spaceKey)
+	filePath := filepath.Join(spaceDir, "diff-preview-e2e.md")
+	if err := fs.WriteMarkdownDocument(filePath, fs.MarkdownDocument{
+		Frontmatter: fs.Frontmatter{Title: "Diff Preview E2E"},
+		Body:        "preview body\n",
+	}); err != nil {
+		t.Fatalf("WriteMarkdown: %v", err)
+	}
+
+	cmd := exec.Command(confBin, "diff", filePath)
+	cmd.Dir = tmpDir
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("conf diff failed: %v\n%s", err, string(out))
+	}
+	text := string(out)
+	if !strings.Contains(text, "new page preview:") {
+		t.Fatalf("expected new page preview output, got:\n%s", text)
+	}
+	if !strings.Contains(text, "canonical target path: Diff-Preview-E2E.md") {
+		t.Fatalf("expected canonical target path in preview, got:\n%s", text)
+	}
+}
+
+func TestWorkflow_StatusAttachmentsFlagShowsOrphanedAsset(t *testing.T) {
+	e2eCfg := requireE2EConfig(t)
+	spaceKey := e2eCfg.PrimarySpaceKey
+
+	rootDir := projectRootFromWD(t)
+	confBin := confBinaryForOS(rootDir)
+
+	tmpDir, err := os.MkdirTemp("", "conf-e2e-status-attachments-*")
+	if err != nil {
+		t.Fatalf("MkdirTemp: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	runCMS := func(args ...string) string {
+		cmd := exec.Command(confBin, args...)
+		cmd.Dir = tmpDir
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("Command conf %v failed: %v\n%s", args, err, string(out))
+		}
+		return string(out)
+	}
+
+	runCMS("init")
+	runCMS("pull", spaceKey, "--yes", "--non-interactive")
+
+	spaceDir := findPulledSpaceDirBySpaceKey(t, tmpDir, spaceKey)
+	orphanPath := filepath.Join(spaceDir, "assets", "orphan-page", "ghost.txt")
+	if err := os.MkdirAll(filepath.Dir(orphanPath), 0o750); err != nil {
+		t.Fatalf("MkdirAll orphan asset dir: %v", err)
+	}
+	if err := os.WriteFile(orphanPath, []byte("ghost"), 0o600); err != nil {
+		t.Fatalf("WriteFile orphan asset: %v", err)
+	}
+
+	out := runCMS("status", spaceKey, "--attachments")
+	if !strings.Contains(out, "orphaned local assets (1):") {
+		t.Fatalf("expected orphaned local assets section, got:\n%s", out)
+	}
+	if !strings.Contains(out, "assets/orphan-page/ghost.txt") {
+		t.Fatalf("expected orphaned asset path, got:\n%s", out)
+	}
 }
 
 func TestWorkflow_SandboxBaselineDiagnosticsAllowlist(t *testing.T) {

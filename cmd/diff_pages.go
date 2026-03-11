@@ -147,7 +147,15 @@ func shouldIgnoreFolderHierarchyError(err error) bool {
 		return true
 	}
 	var apiErr *confluence.APIError
-	return errors.As(err, &apiErr)
+	if errors.As(err, &apiErr) {
+		switch apiErr.StatusCode {
+		case 400, 409:
+			return false
+		default:
+			return true
+		}
+	}
+	return false
 }
 
 func diffDisplayRelPath(spaceDir, path string) string {

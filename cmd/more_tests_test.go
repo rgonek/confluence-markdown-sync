@@ -16,7 +16,7 @@ func TestBuildStatusReport_SkipGit(t *testing.T) {
 	mock := &mockStatusRemote{err: confluence.ErrNotFound}
 
 	// Set targetRelPath to something to avoid remoteAdded logic for now
-	_, _ = buildStatusReport(context.Background(), mock, config.Target{}, initialPullContext{}, fs.SpaceState{}, "SPACE", "path")
+	_, _ = buildStatusReport(context.Background(), mock, config.Target{}, initialPullContext{}, fs.SpaceState{}, "SPACE", "path", false)
 }
 
 func TestPrintStatusList_Empty(t *testing.T) {

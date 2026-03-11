@@ -21,8 +21,15 @@ The system SHALL degrade safely when the Confluence Folder API is unavailable.
 
 - GIVEN a tenant does not support folder operations needed for hierarchy writes
 - WHEN `push` resolves remote hierarchy
-- THEN the system SHALL fall back to page-based hierarchy behavior
-- AND the system SHALL emit compatibility diagnostics
+- THEN the system SHALL explain that completing the push would require a folder-to-page semantic downgrade
+- AND the system SHALL require explicit interactive operator acceptance before rewriting the workspace into page-based hierarchy behavior
+
+#### Scenario: Non-interactive push does not auto-downgrade folder semantics
+
+- GIVEN a tenant does not support folder operations needed for hierarchy writes
+- AND the run is non-interactive
+- WHEN `push` resolves remote hierarchy
+- THEN the system SHALL fail closed instead of auto-downgrading the hierarchy
 
 #### Scenario: Folder fallback distinguishes incompatibility from upstream failure
 
@@ -32,7 +39,7 @@ The system SHALL degrade safely when the Confluence Folder API is unavailable.
 
 #### Scenario: Push summary and structured reports surface active folder fallback
 
-- GIVEN push runs in folder compatibility fallback mode
+- GIVEN push runs after an explicitly accepted folder compatibility downgrade
 - WHEN the command prints its final summary or emits a structured JSON report
 - THEN the active fallback mode SHALL be visible in the summary/report output
 - AND the output SHALL preserve the distinction between unsupported capability and upstream endpoint failure

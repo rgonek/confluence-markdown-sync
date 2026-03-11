@@ -63,6 +63,13 @@ The system SHALL map Confluence hierarchy into deterministic Markdown paths.
 - THEN the system SHALL continue with a safe fallback path
 - AND the system SHALL emit diagnostics describing the degraded hierarchy resolution
 
+#### Scenario: Canonical pull paths reconcile authored slugs
+
+- GIVEN a tracked page was previously authored at a non-canonical local path
+- WHEN pull computes the canonical local markdown path for that page
+- THEN the canonical pull path SHALL win
+- AND an existing workspace SHALL converge to the same path shape a fresh workspace would produce
+
 ### Requirement: Link and attachment rewrite on pull
 
 The system SHALL rewrite same-space references to local Markdown and asset paths whenever the local targets are known.
@@ -161,11 +168,29 @@ The system SHALL validate local Markdown with the same strict reverse-conversion
 - WHEN `conf validate` builds the page index
 - THEN the system SHALL fail validation
 
+#### Scenario: Duplicate folder titles block validation
+
+- GIVEN two local directory-backed folders in the same space resolve to the same folder title under different parent paths
+- WHEN `conf validate` inspects the pushable hierarchy
+- THEN the system SHALL fail validation
+- AND the error SHALL explain that Confluence folder titles must be unique across the space
+
 #### Scenario: Mermaid content produces warning, not failure
 
 - GIVEN a Markdown file contains a Mermaid fenced code block
 - WHEN `conf validate` runs
 - THEN the system SHALL emit a warning indicating the content will be preserved as a code block on push
+
+### Requirement: Diff previews new-page creation
+
+The system SHALL keep `diff` useful for brand-new Markdown pages that do not yet have a Confluence `id`.
+
+#### Scenario: Diff shows create preview for a new local page
+
+- GIVEN the user runs `conf diff` on a Markdown file without a Confluence `id`
+- WHEN the file is a candidate for `push`
+- THEN the system SHALL render a create preview instead of failing with a missing-id error
+- AND the preview SHALL align with push preflight for the same file
 
 #### Scenario: Space-scoped push validation evaluates the full space target
 

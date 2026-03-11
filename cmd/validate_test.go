@@ -556,6 +556,57 @@ func TestRunValidateTarget_BlocksDuplicatePageIDs(t *testing.T) {
 	}
 }
 
+func TestRunValidateTarget_BlocksDuplicateFolderTitles(t *testing.T) {
+	runParallelCommandTest(t)
+	repo := t.TempDir()
+	setupGitRepo(t, repo)
+	setupEnv(t)
+
+	spaceDir := filepath.Join(repo, "Engineering (ENG)")
+	if err := os.MkdirAll(filepath.Join(spaceDir, "API"), 0o750); err != nil {
+		t.Fatalf("mkdir API dir: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(spaceDir, "Guides", "API"), 0o750); err != nil {
+		t.Fatalf("mkdir nested API dir: %v", err)
+	}
+
+	writeMarkdown(t, filepath.Join(spaceDir, "API", "One.md"), fs.MarkdownDocument{
+		Frontmatter: fs.Frontmatter{Title: "One"},
+		Body:        "one\n",
+	})
+	writeMarkdown(t, filepath.Join(spaceDir, "Guides", "Guides.md"), fs.MarkdownDocument{
+		Frontmatter: fs.Frontmatter{Title: "Guides"},
+		Body:        "guides\n",
+	})
+	writeMarkdown(t, filepath.Join(spaceDir, "Guides", "API", "Two.md"), fs.MarkdownDocument{
+		Frontmatter: fs.Frontmatter{Title: "Two"},
+		Body:        "two\n",
+	})
+	if err := fs.SaveState(spaceDir, fs.SpaceState{SpaceKey: "ENG"}); err != nil {
+		t.Fatalf("save state: %v", err)
+	}
+
+	runGitForTest(t, repo, "add", ".")
+	runGitForTest(t, repo, "commit", "-m", "baseline")
+
+	chdirRepo(t, repo)
+	out := &bytes.Buffer{}
+	err := runValidateTargetWithContext(context.Background(), out, config.Target{Mode: config.TargetModeSpace, Value: "Engineering (ENG)"})
+	if err == nil {
+		t.Fatal("expected validate to fail for duplicate folder titles")
+	}
+	got := out.String()
+	if !strings.Contains(got, "folder title \"API\"") {
+		t.Fatalf("expected duplicate folder title in output, got:\n%s", got)
+	}
+	if !strings.Contains(got, "API, Guides/API") {
+		t.Fatalf("expected both conflicting folder paths in output, got:\n%s", got)
+	}
+	if !strings.Contains(got, "must be unique across the space") {
+		t.Fatalf("expected Confluence uniqueness guidance, got:\n%s", got)
+	}
+}
+
 func TestDetectDuplicatePageIDs_ReturnsNilForUniqueIDs(t *testing.T) {
 	t.Parallel()
 	index := map[string]string{

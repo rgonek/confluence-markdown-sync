@@ -28,6 +28,10 @@ Additional push flag:
 - `--on-conflict=pull-merge|force|cancel`
   - required with `push --non-interactive` for file targets.
   - optional for space targets (defaults to `pull-merge`).
+- `--merge-resolution=fail|keep-local|keep-remote|keep-both`
+  - used with `--on-conflict=pull-merge --non-interactive`.
+  - `fail` stops before mutating the main workspace.
+  - `keep-local`, `keep-remote`, and `keep-both` apply the corresponding pull-conflict resolution automatically.
 
 ## Safety Confirmation Rules
 
@@ -50,7 +54,11 @@ When remote versions are ahead:
 - `force`: overwrite based on remote head.
 - `cancel`: stop without remote writes.
 
-In non-interactive usage, set one explicitly.
+In non-interactive usage:
+
+- file targets still require an explicit `--on-conflict` policy,
+- `pull-merge` also requires an explicit `--merge-resolution`,
+- `--merge-resolution=fail` aborts before the automatic pull touches the main workspace.
 
 If `pull-merge` stops after preserving local edits, the CLI now prints the expected recovery sequence explicitly:
 
@@ -79,7 +87,7 @@ Recommended operator flow:
 2. Resolve markers and run `conf validate <SPACE_KEY>`.
 3. Commit the merge-resolution result before the next `conf push`.
 
-For automation (`--non-interactive`), conflicts fail fast and require manual follow-up.
+For automation (`--non-interactive`), set `--merge-resolution=keep-local|keep-remote|keep-both` if you want deterministic conflict handling, or `--merge-resolution=fail` if you want the command to stop before mutating the workspace.
 
 ## Push Rollback Expectations
 
@@ -108,8 +116,8 @@ If `ARCHIVE_TASK_STILL_RUNNING` appears, Confluence did not finish within the cu
 
 Asset drift note:
 
-- `conf status` remains page-only.
-- Use `git status` for local asset changes and `conf diff` when automation needs attachment-aware remote inspection.
+- `conf status` defaults to page drift only, but `conf status --attachments` adds attachment-only drift and orphaned local asset inspection.
+- Use `git status` when you want raw Git detail in addition to the sync-aware status view.
 - The first push for locally sourced assets may emit `ATTACHMENT_PATH_NORMALIZED` because `conf` relocates files into the managed `assets/<page-id>/...` hierarchy. That rename is expected and stable after the next pull.
 
 ## Dry-Run Behavior (`push --dry-run`)
@@ -200,13 +208,26 @@ Current documented baseline allowlist for the maintained release sandbox:
 | Space | Expected diagnostic match | Reason |
 |------|----------------------------|--------|
 | `TD2` | `path=17727489`, `code=UNKNOWN_MEDIA_ID_UNRESOLVED` | Existing seed page still contains unresolved media identities; pull skips stale-attachment pruning for safety. |
-| `TD2` | `path=Technical-Documentation/Live-Workflow-Test-2026-03-05/Endpoint-Notes.md`, `code=unresolved_reference`, message contains `pageId=17727489#Task-list` | Seed content now includes another unresolved same-space task-list anchor reference. |
-| `TD2` | `path=Technical-Documentation/Live-Workflow-Test-2026-03-05/Live-Workflow-Test-2026-03-05.md`, `code=unresolved_reference`, message contains `pageId=17727489` | Seed content now includes another unresolved same-space page reference. |
-| `TD2` | `path=Technical-Documentation/Live-Workflow-Test-2026-03-05/Live-Workflow-Test-2026-03-05.md`, `code=unresolved_reference`, message contains `pageId=17530900#Task-list` | Seed content still links to an unresolved remote target. |
+| `TD2` | `path=Technical-Documentation/Live-Verification-2026-03-11-0712/Live-Verification-2026-03-11-0712.md`, `code=CROSS_SPACE_LINK_PRESERVED`, message contains `pageId=26673153` | Seed content now intentionally preserves a cross-space page reference during pull. |
+| `TD2` | `path=Technical-Documentation/Live-Workflow-Test-2026-03-05/Endpoint-Notes.md`, `code=CROSS_SPACE_LINK_PRESERVED`, message contains `pageId=17727489#Task-list` | Seed content preserves a cross-space task-list anchor reference during pull. |
+| `TD2` | `path=Technical-Documentation/Live-Workflow-Test-2026-03-05/Live-Workflow-Test-2026-03-05.md`, `code=CROSS_SPACE_LINK_PRESERVED`, message contains `pageId=17727489` | Seed content preserves a cross-space page reference during pull. |
+| `TD2` | `path=Technical-Documentation/Live-Workflow-Test-2026-03-05/Live-Workflow-Test-2026-03-05.md`, `code=CROSS_SPACE_LINK_PRESERVED`, message contains `pageId=17530900#Task-list` | Seed content preserves a cross-space task-list anchor reference during pull. |
+| `TD2` | `path=Technical-Documentation/Live-Workflow-Test-2026-03-10-1655/Live-Workflow-Test-2026-03-10-1655.md`, `code=CROSS_SPACE_LINK_PRESERVED`, message contains `pageId=25460737` | Seed content preserves another cross-space page reference during pull. |
 | `TD2` | `path=Technical-Documentation/Live-Workflow-Test-2026-03-05/Checklist-and-Diagrams.md`, message contains `UNKNOWN_MEDIA_ID` | Seed content still contains unresolved media fallback output. |
-| `SD2` | `path=Software-Development/Release-Sandbox-2026-03-05.md`, `code=unresolved_reference`, message contains `pageId=17334539` | Seed content still links to an unresolved remote target. |
+| `SD2` | `path=Software-Development/Cross-Space-Target-2026-03-10-1655.md`, `code=CROSS_SPACE_LINK_PRESERVED`, message contains `pageId=25591809` | Seed content preserves a cross-space page reference during pull. |
+| `SD2` | `path=Software-Development/Cross-Space-Target-2026-03-11-0712.md`, `code=CROSS_SPACE_LINK_PRESERVED`, message contains `pageId=26771457` | Seed content preserves a cross-space page reference during pull. |
+| `SD2` | `path=Software-Development/Release-Sandbox-2026-03-05.md`, `code=CROSS_SPACE_LINK_PRESERVED`, message contains `pageId=17334539` | Seed content preserves a cross-space page reference during pull. |
 
 If these spaces are cleaned up later, remove the allowlist entries in the same change that removes the warnings.
+
+## Reproducing Ubuntu CI Locally
+
+The GitHub Actions Ubuntu job can be reproduced locally in Docker with the same command sequence used by `.github/workflows/ci.yml`.
+
+- `make ci-ubuntu`
+- or on Windows PowerShell: `./scripts/ci-ubuntu.ps1`
+
+The Docker image installs the Linux toolchain needed for `go test -race`, runs `go vet`, `go build -trimpath ./cmd/conf`, `go test -race ./...`, `go run ./tools/coveragecheck`, `go run ./tools/gofmtcheck`, and `golangci-lint run`.
 
 ## Live Sandbox Release Checklist
 

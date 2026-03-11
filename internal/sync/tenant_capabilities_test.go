@@ -2,6 +2,7 @@ package sync
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -596,7 +597,7 @@ func TestPush_ContentStatusRealErrorsSurfaceForNewPageInEmptySpace(t *testing.T)
 	}
 }
 
-func TestPush_FolderCapabilityFallbackUsesPageHierarchyMode(t *testing.T) {
+func TestPush_FolderCapabilityFallbackFailsClosedOnUpstreamError(t *testing.T) {
 	spaceDir := t.TempDir()
 	nestedDir := filepath.Join(spaceDir, "Parent")
 	if err := fs.WriteMarkdownDocument(filepath.Join(nestedDir, "Child.md"), fs.MarkdownDocument{
@@ -622,30 +623,24 @@ func TestPush_FolderCapabilityFallbackUsesPageHierarchyMode(t *testing.T) {
 		ConflictPolicy: PushConflictPolicyCancel,
 		Changes:        []PushFileChange{{Type: PushChangeAdd, Path: "Parent/Child.md"}},
 	})
-	if err != nil {
-		t.Fatalf("Push() unexpected error: %v", err)
+	if err == nil {
+		t.Fatal("Push() error = nil, want explicit folder create failure")
 	}
-
 	if remote.createFolderCalls != 1 {
-		t.Fatalf("create folder calls = %d, want 1 attempted native folder creation before fallback", remote.createFolderCalls)
+		t.Fatalf("create folder calls = %d, want 1 attempted native folder creation", remote.createFolderCalls)
 	}
-	if remote.createPageCalls < 2 {
-		t.Fatalf("create page calls = %d, want at least 2 for parent compatibility page + child", remote.createPageCalls)
+	if remote.createPageCalls != 0 {
+		t.Fatalf("create page calls = %d, want 0 without explicit fallback acceptance", remote.createPageCalls)
 	}
-
-	foundMode := false
-	for _, diag := range result.Diagnostics {
-		if diag.Code == "FOLDER_COMPATIBILITY_MODE" && strings.Contains(diag.Message, "folder API endpoint failed upstream") {
-			foundMode = true
-			break
-		}
+	if !strings.Contains(err.Error(), `create folder "Parent"`) {
+		t.Fatalf("expected explicit folder create failure, got %v", err)
 	}
-	if !foundMode {
-		t.Fatalf("expected upstream folder compatibility diagnostic, got %+v", result.Diagnostics)
+	if len(result.Diagnostics) != 0 {
+		t.Fatalf("unexpected diagnostics on hard failure: %+v", result.Diagnostics)
 	}
 }
 
-func TestPush_FolderCapabilityFallbackDistinguishesUnsupportedTenantCapability(t *testing.T) {
+func TestPush_FolderCapabilityFallbackRequiresExplicitDowngrade(t *testing.T) {
 	spaceDir := t.TempDir()
 	nestedDir := filepath.Join(spaceDir, "Parent")
 	if err := fs.WriteMarkdownDocument(filepath.Join(nestedDir, "Child.md"), fs.MarkdownDocument{
@@ -671,18 +666,23 @@ func TestPush_FolderCapabilityFallbackDistinguishesUnsupportedTenantCapability(t
 		ConflictPolicy: PushConflictPolicyCancel,
 		Changes:        []PushFileChange{{Type: PushChangeAdd, Path: "Parent/Child.md"}},
 	})
-	if err != nil {
-		t.Fatalf("Push() unexpected error: %v", err)
+	if err == nil {
+		t.Fatal("Push() error = nil, want explicit downgrade requirement")
 	}
-
-	foundMode := false
-	for _, diag := range result.Diagnostics {
-		if diag.Code == "FOLDER_COMPATIBILITY_MODE" && strings.Contains(diag.Message, "tenant does not support the folder API") {
-			foundMode = true
-			break
-		}
+	var fallbackErr *FolderPageFallbackRequiredError
+	if !errors.As(err, &fallbackErr) {
+		t.Fatalf("expected FolderPageFallbackRequiredError, got %v", err)
 	}
-	if !foundMode {
-		t.Fatalf("expected unsupported folder compatibility diagnostic, got %+v", result.Diagnostics)
+	if fallbackErr.Path != "Parent" {
+		t.Fatalf("fallback path = %q, want Parent", fallbackErr.Path)
+	}
+	if fallbackErr.Reason != "unsupported tenant capability" {
+		t.Fatalf("fallback reason = %q, want unsupported tenant capability", fallbackErr.Reason)
+	}
+	if remote.createPageCalls != 0 {
+		t.Fatalf("create page calls = %d, want 0 without explicit fallback acceptance", remote.createPageCalls)
+	}
+	if len(result.Diagnostics) != 0 {
+		t.Fatalf("unexpected diagnostics on downgrade-required error: %+v", result.Diagnostics)
 	}
 }

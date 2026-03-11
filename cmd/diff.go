@@ -92,10 +92,7 @@ func runDiff(cmd *cobra.Command, target config.Target) (runErr error) {
 	if err := ensureWorkspaceSyncReady("diff"); err != nil {
 		return err
 	}
-	if err := ensureDiffTargetSupportsRemoteComparison(target); err != nil {
-		return err
-	}
-	initialCtx, err := resolveInitialPullContext(target)
+	initialCtx, err := resolveInitialDiffContext(target)
 	if err != nil {
 		return err
 	}
@@ -141,6 +138,35 @@ func runDiff(cmd *cobra.Command, target config.Target) (runErr error) {
 	state, err := fs.LoadState(diffCtx.spaceDir)
 	if err != nil {
 		return fmt.Errorf("load state: %w", err)
+	}
+
+	if target.IsFile() {
+		absPath, err := filepath.Abs(target.Value)
+		if err != nil {
+			return err
+		}
+		doc, err := fs.ReadMarkdownDocument(absPath)
+		if err != nil {
+			return fmt.Errorf("read target file %s: %w", target.Value, err)
+		}
+		if strings.TrimSpace(doc.Frontmatter.ID) == "" {
+			globalPageIndex, buildErr := buildWorkspaceGlobalPageIndex(diffCtx.spaceDir)
+			if buildErr != nil {
+				return fmt.Errorf("build global page index: %w", buildErr)
+			}
+			preview, previewErr := buildLocalCreatePreview(ctx, diffCtx.spaceDir, diffDisplayRelPath(diffCtx.spaceDir, absPath), cfg.Domain, state.AttachmentIndex, globalPageIndex)
+			if previewErr != nil {
+				return fmt.Errorf("build create preview for %s: %w", target.Value, previewErr)
+			}
+			printDiffCreatePreview(out, preview)
+			report.MutatedFiles = append(report.MutatedFiles, preview.RelPath)
+			report.MutatedPages = append(report.MutatedPages, commandRunReportPage{
+				Operation: "create-preview",
+				Path:      preview.RelPath,
+				Title:     preview.Title,
+			})
+			return nil
+		}
 	}
 
 	pages, err := listAllDiffPages(ctx, remote, confluence.PageListOptions{
@@ -212,29 +238,38 @@ func runDiff(cmd *cobra.Command, target config.Target) (runErr error) {
 	return err
 }
 
-func ensureDiffTargetSupportsRemoteComparison(target config.Target) error {
+func resolveInitialDiffContext(target config.Target) (initialPullContext, error) {
 	if !target.IsFile() {
-		return nil
+		return resolveInitialPullContext(target)
 	}
 
 	absPath, err := filepath.Abs(target.Value)
 	if err != nil {
-		return err
+		return initialPullContext{}, err
 	}
-
 	doc, err := fs.ReadMarkdownDocument(absPath)
 	if err != nil {
-		return fmt.Errorf("read target file %s: %w", target.Value, err)
-	}
-	if strings.TrimSpace(doc.Frontmatter.ID) != "" {
-		return nil
+		return initialPullContext{}, fmt.Errorf("read target file %s: %w", target.Value, err)
 	}
 
-	return fmt.Errorf(
-		"target file %s has no id, so diff cannot compare it to an existing remote page; for a brand-new page preview, run `conf push --preflight %s`",
-		target.Value,
-		target.Value,
-	)
+	spaceDir := findSpaceDirFromFile(absPath, "")
+	spaceKey := ""
+	if state, stateErr := fs.LoadState(spaceDir); stateErr == nil {
+		spaceKey = strings.TrimSpace(state.SpaceKey)
+	}
+	if spaceKey == "" {
+		spaceKey = inferSpaceKeyFromDirName(spaceDir)
+	}
+	if spaceKey == "" {
+		return initialPullContext{}, fmt.Errorf("target file %s missing tracked space context; run pull with a space target first", target.Value)
+	}
+
+	return initialPullContext{
+		spaceKey:     spaceKey,
+		spaceDir:     spaceDir,
+		targetPageID: strings.TrimSpace(doc.Frontmatter.ID),
+		fixedDir:     true,
+	}, nil
 }
 
 func runDiffFileMode(
@@ -347,6 +382,23 @@ func runDiffFileMode(
 		result.ChangedFiles = append(result.ChangedFiles, relPath)
 	}
 	return result, err
+}
+
+func printDiffCreatePreview(out io.Writer, preview localCreatePreview) {
+	_, _ = fmt.Fprintln(out, "new page preview:")
+	_, _ = fmt.Fprintf(out, "  operation: create page %q\n", preview.Title)
+	_, _ = fmt.Fprintf(out, "  source file: %s\n", preview.RelPath)
+	_, _ = fmt.Fprintf(out, "  resolved parent: %s\n", preview.ResolvedParent)
+	_, _ = fmt.Fprintf(out, "  canonical target path: %s\n", preview.CanonicalTargetPath)
+	if len(preview.AttachmentUploads) == 0 {
+		_, _ = fmt.Fprintln(out, "  attachment operations: none")
+	} else {
+		_, _ = fmt.Fprintf(out, "  attachment operations: upload %d asset(s)\n", len(preview.AttachmentUploads))
+		for _, asset := range preview.AttachmentUploads {
+			_, _ = fmt.Fprintf(out, "    - %s\n", asset)
+		}
+	}
+	_, _ = fmt.Fprintf(out, "  ADF summary: %d byte(s), %d top-level node(s)\n", preview.ADFBytes, preview.ADFTopLevelNodes)
 }
 
 func runDiffSpaceMode(

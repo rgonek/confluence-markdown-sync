@@ -21,6 +21,8 @@ type pushPreflightContext struct {
 	state          fs.SpaceState
 	remotePageByID map[string]confluence.Page
 	concerns       []string
+	domain         string
+	globalIndex    syncflow.GlobalPageIndex
 }
 
 type pushDeletePreview struct {
@@ -63,8 +65,8 @@ func runPushPreflight(
 	}
 
 	printPushPreflightConcerns(out, preflightCtx.concerns)
-	printPushPreflightPageMutations(out, spaceDir, syncChanges, onConflict, preflightCtx)
-	printPushPreflightAttachmentMutations(out, spaceDir, syncChanges, preflightCtx.state)
+	printPushPreflightPageMutations(ctx, out, spaceDir, syncChanges, onConflict, preflightCtx)
+	printPushPreflightAttachmentMutations(ctx, out, spaceDir, syncChanges, preflightCtx)
 
 	addCount, modifyCount, deleteCount := summarizePushChanges(syncChanges)
 	_, _ = fmt.Fprintf(out, "changes: %d (A:%d M:%d D:%d)\n", len(syncChanges), addCount, modifyCount, deleteCount)
@@ -113,11 +115,14 @@ func buildPushPreflightContext(ctx context.Context, spaceKey, spaceDir string, s
 	}
 
 	state, _ := fs.LoadState(spaceDir)
+	globalIndex, _ := buildWorkspaceGlobalPageIndex(spaceDir)
 
 	return pushPreflightContext{
 		state:          state,
 		remotePageByID: remotePageByID,
 		concerns:       concerns,
+		domain:         cfg.Domain,
+		globalIndex:    globalIndex,
 	}, nil
 }
 
@@ -179,6 +184,7 @@ func normalizePreflightPageLifecycleState(state string) string {
 }
 
 func printPushPreflightPageMutations(
+	ctx context.Context,
 	out io.Writer,
 	spaceDir string,
 	syncChanges []syncflow.PushFileChange,
@@ -190,25 +196,29 @@ func printPushPreflightPageMutations(
 		_, _ = fmt.Fprintf(
 			out,
 			"  %s\n",
-			preflightPageMutationLine(spaceDir, change, onConflict, preflightCtx.state, preflightCtx.remotePageByID),
+			preflightPageMutationLine(ctx, spaceDir, change, onConflict, preflightCtx),
 		)
 	}
 }
 
 func preflightPageMutationLine(
+	ctx context.Context,
 	spaceDir string,
 	change syncflow.PushFileChange,
 	onConflict string,
-	state fs.SpaceState,
-	remotePageByID map[string]confluence.Page,
+	preflightCtx pushPreflightContext,
 ) string {
 	switch change.Type {
 	case syncflow.PushChangeAdd:
-		return fmt.Sprintf("add %s", change.Path)
+		preview, err := buildLocalCreatePreview(ctx, spaceDir, change.Path, preflightCtx.domain, preflightCtx.state.AttachmentIndex, preflightCtx.globalIndex)
+		if err != nil {
+			return fmt.Sprintf("add %s", change.Path)
+		}
+		return fmt.Sprintf("create %s (parent: %s, canonical path: %s)", change.Path, preview.ResolvedParent, preview.CanonicalTargetPath)
 	case syncflow.PushChangeDelete:
-		return resolvePushDeletePreview(spaceDir, state, remotePageByID, change.Path).preflightMutationLine()
+		return resolvePushDeletePreview(spaceDir, preflightCtx.state, preflightCtx.remotePageByID, change.Path).preflightMutationLine()
 	case syncflow.PushChangeModify:
-		return preflightModifyMutationLine(spaceDir, change.Path, onConflict, remotePageByID)
+		return preflightModifyMutationLine(spaceDir, change.Path, onConflict, preflightCtx.remotePageByID)
 	default:
 		return change.Path
 	}
@@ -243,8 +253,8 @@ func preflightModifyMutationLine(
 	return fmt.Sprintf("update %s (page %s, %q, version %d)", relPath, pageID, remotePage.Title, plannedVersion)
 }
 
-func printPushPreflightAttachmentMutations(out io.Writer, spaceDir string, syncChanges []syncflow.PushFileChange, state fs.SpaceState) {
-	uploads, deletes := preflightAttachmentMutations(spaceDir, syncChanges, state)
+func printPushPreflightAttachmentMutations(ctx context.Context, out io.Writer, spaceDir string, syncChanges []syncflow.PushFileChange, preflightCtx pushPreflightContext) {
+	uploads, deletes := preflightAttachmentMutations(ctx, spaceDir, syncChanges, preflightCtx)
 	if len(uploads) == 0 && len(deletes) == 0 {
 		return
 	}
@@ -292,7 +302,7 @@ func isPreflightCapabilityProbeError(err error) bool {
 	}
 }
 
-func preflightAttachmentMutations(spaceDir string, syncChanges []syncflow.PushFileChange, state fs.SpaceState) (uploads, deletes []string) {
+func preflightAttachmentMutations(_ context.Context, spaceDir string, syncChanges []syncflow.PushFileChange, preflightCtx pushPreflightContext) (uploads, deletes []string) {
 	plannedUploadKeys := map[string]struct{}{}
 
 	for _, change := range syncChanges {
@@ -307,25 +317,28 @@ func preflightAttachmentMutations(spaceDir string, syncChanges []syncflow.PushFi
 		}
 
 		pageID := strings.TrimSpace(doc.Frontmatter.ID)
-		if pageID == "" {
+		referencedPaths, err := syncflow.CollectReferencedAssetPaths(spaceDir, absPath, doc.Body)
+		if err != nil {
 			continue
 		}
 
-		referencedPaths, err := syncflow.CollectReferencedAssetPaths(spaceDir, absPath, doc.Body)
-		if err != nil {
+		if pageID == "" {
+			for _, assetPath := range referencedPaths {
+				uploads = append(uploads, fmt.Sprintf("%s (new page: %s)", assetPath, change.Path))
+			}
 			continue
 		}
 
 		for _, assetPath := range referencedPaths {
 			plannedKey := filepath.ToSlash(filepath.Join("assets", pageID, filepath.Base(assetPath)))
 			plannedUploadKeys[plannedKey] = struct{}{}
-			if strings.TrimSpace(state.AttachmentIndex[plannedKey]) == "" {
+			if strings.TrimSpace(preflightCtx.state.AttachmentIndex[plannedKey]) == "" {
 				uploads = append(uploads, plannedKey)
 			}
 		}
 
 		prefix := "assets/" + pageID + "/"
-		for stateKey := range state.AttachmentIndex {
+		for stateKey := range preflightCtx.state.AttachmentIndex {
 			if !strings.HasPrefix(stateKey, prefix) {
 				continue
 			}

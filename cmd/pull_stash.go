@@ -146,9 +146,18 @@ func handlePullConflict(repoRoot, stashRef, scopePath string, in io.Reader, out 
 	}
 
 	if flagNonInteractive || flagYes {
-		return fmt.Errorf(
-			"a sync conflict needs your choice (keep local, keep website, or keep both), but interactive input is disabled. rerun without --non-interactive to continue",
-		)
+		switch strings.TrimSpace(flagMergeResolution) {
+		case "keep-local":
+			return applyPullConflictChoice("local", repoRoot, stashRef, scopePath, conflictedPaths, out)
+		case "keep-remote":
+			return applyPullConflictChoice("remote", repoRoot, stashRef, scopePath, conflictedPaths, out)
+		case "keep-both":
+			return applyPullConflictChoice("both", repoRoot, stashRef, scopePath, conflictedPaths, out)
+		default:
+			return fmt.Errorf(
+				"a sync conflict needs your choice (keep local, keep website, or keep both), but interactive input is disabled. rerun without --non-interactive or pass --merge-resolution=keep-local|keep-remote|keep-both",
+			)
+		}
 	}
 
 	const (

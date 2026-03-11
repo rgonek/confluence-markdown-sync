@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -103,29 +102,6 @@ func ensureFolderHierarchy(
 			continue
 		}
 
-		if opts != nil && opts.folderMode == tenantFolderModePageFallback {
-			pageCreated, pageErr := remote.CreatePage(ctx, confluence.PageUpsertInput{
-				SpaceID:      spaceID,
-				ParentPageID: parentID,
-				Title:        seg,
-				Status:       "current",
-				BodyADF:      []byte(`{"version":1,"type":"doc","content":[]}`),
-			})
-			if pageErr != nil {
-				return nil, fmt.Errorf("create compatibility hierarchy page %q: %w", currentPath, pageErr)
-			}
-
-			createdID := strings.TrimSpace(pageCreated.ID)
-			if createdID == "" {
-				return nil, fmt.Errorf("create compatibility hierarchy page %q returned empty page ID", currentPath)
-			}
-
-			folderIDByPath[currentPath] = createdID
-			parentID = createdID
-			parentType = "page"
-			continue
-		}
-
 		createInput := confluence.FolderCreateInput{
 			SpaceID: spaceID,
 			Title:   seg,
@@ -137,35 +113,15 @@ func ensureFolderHierarchy(
 
 		created, err := remote.CreateFolder(ctx, createInput)
 		if err != nil {
-			if shouldIgnoreFolderHierarchyError(err) {
-				if opts != nil {
-					opts.folderMode = tenantFolderModePageFallback
-					if opts.folderListTracker != nil {
-						opts.folderListTracker.Report(currentPath, err)
-					}
+			if isFolderDowngradeCandidate(err) {
+				return nil, &FolderPageFallbackRequiredError{
+					Path:    currentPath,
+					Reason:  folderFallbackCauseLabel(err),
+					Message: fmt.Sprintf("folder %q cannot be created as a Confluence folder without changing semantics (%s): %v", currentPath, folderFallbackCauseLabel(err), err),
+					Cause:   err,
 				}
-				appendPushFolderCompatibilityDiagnosticOnce(diagnostics, err)
-				slog.Warn("folder_api_unavailable_falling_back_to_page", "path", currentPath, "error", err.Error())
-				pageCreated, pageErr := remote.CreatePage(ctx, confluence.PageUpsertInput{
-					SpaceID:      spaceID,
-					ParentPageID: parentID,
-					Title:        seg,
-					Status:       "current",
-					BodyADF:      []byte(`{"version":1,"type":"doc","content":[]}`),
-				})
-				if pageErr != nil {
-					return nil, fmt.Errorf("create compatibility hierarchy page %q after folder fallback: %w", currentPath, pageErr)
-				}
-				created = confluence.Folder{
-					ID:         pageCreated.ID,
-					SpaceID:    pageCreated.SpaceID,
-					Title:      pageCreated.Title,
-					ParentID:   pageCreated.ParentPageID,
-					ParentType: pageCreated.ParentType,
-				}
-			} else {
-				return nil, fmt.Errorf("create folder %q: %w", currentPath, err)
 			}
+			return nil, fmt.Errorf("create folder %q: %w", currentPath, err)
 		}
 
 		createdID := strings.TrimSpace(created.ID)
@@ -175,11 +131,7 @@ func ensureFolderHierarchy(
 
 		folderIDByPath[currentPath] = createdID
 		parentID = createdID
-		if opts != nil && opts.folderMode == tenantFolderModePageFallback {
-			parentType = "page"
-		} else {
-			parentType = "folder"
-		}
+		parentType = "folder"
 
 		if diagnostics != nil {
 			*diagnostics = append(*diagnostics, PushDiagnostic{
@@ -191,22 +143,6 @@ func ensureFolderHierarchy(
 	}
 
 	return folderIDByPath, nil
-}
-
-func appendPushFolderCompatibilityDiagnosticOnce(diagnostics *[]PushDiagnostic, err error) {
-	if diagnostics == nil {
-		return
-	}
-	for _, diag := range *diagnostics {
-		if strings.TrimSpace(diag.Code) == "FOLDER_COMPATIBILITY_MODE" {
-			return
-		}
-	}
-	*diagnostics = append(*diagnostics, PushDiagnostic{
-		Path:    "",
-		Code:    "FOLDER_COMPATIBILITY_MODE",
-		Message: folderCompatibilityModeMessage(err),
-	})
 }
 
 func collapseFolderParentIfIndexPage(

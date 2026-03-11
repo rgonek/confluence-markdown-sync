@@ -24,6 +24,18 @@ The system SHALL let operators inspect retained push recovery artifacts without 
 - AND the system SHALL show a concrete discard command for each retained run
 - AND the system SHALL show the general `conf recover --discard-all --yes` cleanup command
 
+### Requirement: Status can inspect attachment drift
+
+The system SHALL let operators inspect attachment-only drift without dropping into Git internals.
+
+#### Scenario: Attachment-aware status reports local and remote asset drift
+
+- GIVEN a space has attachment additions, deletions, or orphaned local asset files while Markdown page content is otherwise unchanged
+- WHEN the user runs attachment-aware status inspection
+- THEN the system SHALL summarize local attachment additions and deletions
+- AND the system SHALL summarize remote attachment additions and deletions
+- AND the system SHALL identify orphaned local asset files
+
 ### Requirement: Doctor surfaces active workspace sync locks
 
 The system SHALL let operators inspect leftover repository sync locks that can block new mutating commands.

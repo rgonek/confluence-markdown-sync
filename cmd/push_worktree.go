@@ -22,7 +22,7 @@ func runPushInWorktree(
 	cmd *cobra.Command,
 	out io.Writer,
 	target config.Target,
-	spaceKey, spaceDir, onConflict, tsStr string,
+	spaceKey, spaceDir, onConflict, mergeResolution, tsStr string,
 	gitClient *git.Client,
 	spaceScopePath, changeScopePath string,
 	worktreeDir, syncBranchName, snapshotRefName string,
@@ -123,21 +123,48 @@ func runPushInWorktree(
 		progress = newConsoleProgress(out, "Syncing to Confluence")
 	}
 
-	result, err := syncflow.Push(ctx, remote, syncflow.PushOptions{
-		SpaceKey:            spaceKey,
-		SpaceDir:            wtSpaceDir,
-		Domain:              cfg.Domain,
-		State:               state,
-		GlobalPageIndex:     globalPageIndex,
-		Changes:             syncChanges,
-		ConflictPolicy:      toSyncConflictPolicy(onConflict),
-		KeepOrphanAssets:    flagPushKeepOrphanAssets,
-		ArchiveTimeout:      normalizedArchiveTaskTimeout(),
-		ArchivePollInterval: normalizedArchiveTaskPollInterval(),
-		Progress:            progress,
-	})
-	outcome.Result = result
-	if err != nil {
+	var result syncflow.PushResult
+	for {
+		nextResult, pushErr := syncflow.Push(ctx, remote, syncflow.PushOptions{
+			SpaceKey:            spaceKey,
+			SpaceDir:            wtSpaceDir,
+			Domain:              cfg.Domain,
+			State:               state,
+			GlobalPageIndex:     globalPageIndex,
+			Changes:             syncChanges,
+			ConflictPolicy:      toSyncConflictPolicy(onConflict),
+			KeepOrphanAssets:    flagPushKeepOrphanAssets,
+			ArchiveTimeout:      normalizedArchiveTaskTimeout(),
+			ArchivePollInterval: normalizedArchiveTaskPollInterval(),
+			Progress:            progress,
+		})
+		result = nextResult
+		outcome.Result = result
+		err = pushErr
+		if err == nil {
+			break
+		}
+		var folderErr *syncflow.FolderPageFallbackRequiredError
+		if errors.As(err, &folderErr) {
+			indexRelPath, accepted, handleErr := handleFolderPageFallback(cmd.InOrStdin(), out, wtSpaceDir, folderErr)
+			if handleErr != nil {
+				return outcome, handleErr
+			}
+			if accepted {
+				if target.IsFile() && strings.TrimSpace(indexRelPath) != "" {
+					syncChanges = append(syncChanges, syncflow.PushFileChange{Type: syncflow.PushChangeAdd, Path: indexRelPath})
+				} else {
+					syncChanges, err = collectPushChangesForTarget(wtClient, baselineRef, target, spaceScopePath, changeScopePath)
+					if err != nil {
+						return outcome, err
+					}
+				}
+				if err := runPushValidation(ctx, out, config.Target{Mode: config.TargetModeSpace, Value: wtSpaceDir}, wtSpaceDir, "pre-push validate failed"); err != nil {
+					return outcome, err
+				}
+				continue
+			}
+		}
 		var conflictErr *syncflow.PushConflictError
 		if errors.As(err, &conflictErr) {
 			slog.Warn("push_conflict_detected",
@@ -148,10 +175,20 @@ func runPushInWorktree(
 				"policy", conflictErr.Policy,
 			)
 			if onConflict == OnConflictPullMerge {
+				if flagNonInteractive && strings.EqualFold(strings.TrimSpace(mergeResolution), "fail") {
+					outcome.ConflictResolution = &commandRunReportConflictResolution{
+						Policy: OnConflictPullMerge,
+						Status: "failed",
+					}
+					return outcome, errors.New("automatic pull-merge stopped before mutating the main workspace because --merge-resolution=fail was requested")
+				}
 				slog.Info("push_conflict_resolution", "strategy", OnConflictPullMerge, "action", "run_pull")
 				_, _ = fmt.Fprintf(out, "conflict detected for %s; policy is %s, attempting automatic pull-merge...\n", conflictErr.Path, onConflict)
+				previousMergeResolution := flagMergeResolution
+				flagMergeResolution = mergeResolution
 				if strings.TrimSpace(*stashRef) != "" {
 					if err := restorePushStash(gitClient, *stashRef, spaceScopePath, nil); err != nil {
+						flagMergeResolution = previousMergeResolution
 						return outcome, fmt.Errorf("restore local workspace before automatic pull-merge: %w", err)
 					}
 					*stashRef = ""
@@ -167,6 +204,7 @@ func runPushInWorktree(
 					AttachmentOperations: append([]commandRunReportAttachmentOp(nil), pullReport.AttachmentOperations...),
 					FallbackModes:        append([]string(nil), pullReport.FallbackModes...),
 				}
+				flagMergeResolution = previousMergeResolution
 				flagPullDiscardLocal = prevDiscardLocal
 				if pullErr != nil {
 					outcome.ConflictResolution.Status = "failed"

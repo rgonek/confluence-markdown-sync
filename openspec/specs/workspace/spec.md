@@ -64,6 +64,17 @@ The system SHALL maintain one directory per managed Confluence space.
 - WHEN `pull`, `push`, `validate`, or `status` run for that space
 - THEN the system SHALL reuse the tracked directory rather than renaming it opportunistically
 
+### Requirement: Canonical markdown paths converge within a tracked space
+
+The system SHALL keep page paths inside a tracked space aligned with the canonical pull hierarchy.
+
+#### Scenario: Pull renames tracked markdown to canonical path
+
+- GIVEN a tracked page currently lives at a non-canonical authored path inside the space directory
+- WHEN `pull` or `pull --force` recomputes the page layout
+- THEN the tracked markdown path SHALL move to the canonical pull path
+- AND the state file SHALL be updated to the canonical path
+
 ### Requirement: Safety confirmation
 
 The system SHALL require explicit confirmation before large or destructive operations proceed.

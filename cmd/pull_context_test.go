@@ -208,7 +208,7 @@ func TestRunPull_ForcePullRefreshesEntireSpace(t *testing.T) {
 	if err := os.MkdirAll(spaceDir, 0o750); err != nil {
 		t.Fatalf("mkdir space: %v", err)
 	}
-	writeMarkdown(t, filepath.Join(spaceDir, "root.md"), fs.MarkdownDocument{
+	writeMarkdown(t, filepath.Join(spaceDir, "Root.md"), fs.MarkdownDocument{
 		Frontmatter: fs.Frontmatter{
 			Title: "Root",
 			ID:    "1",
@@ -221,7 +221,7 @@ func TestRunPull_ForcePullRefreshesEntireSpace(t *testing.T) {
 	if err := fs.SaveState(spaceDir, fs.SpaceState{
 		LastPullHighWatermark: "2026-02-02T00:00:00Z",
 		PagePathIndex: map[string]string{
-			"root.md": "1",
+			"Root.md": "1",
 		},
 		AttachmentIndex: map[string]string{},
 	}); err != nil {
@@ -275,12 +275,12 @@ func TestRunPull_ForcePullRefreshesEntireSpace(t *testing.T) {
 		t.Fatalf("runPull() error: %v", err)
 	}
 
-	rootDoc, err := fs.ReadMarkdownDocument(filepath.Join(spaceDir, "root.md"))
+	rootDoc, err := fs.ReadMarkdownDocument(filepath.Join(spaceDir, "Root.md"))
 	if err != nil {
-		t.Fatalf("read root.md: %v", err)
+		t.Fatalf("read Root.md: %v", err)
 	}
 	if !strings.Contains(rootDoc.Body, "new body") {
-		t.Fatalf("expected root.md body to be refreshed on force pull, got:\n%s", rootDoc.Body)
+		t.Fatalf("expected Root.md body to be refreshed on force pull, got:\n%s", rootDoc.Body)
 	}
 }
 

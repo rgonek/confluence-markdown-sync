@@ -447,16 +447,16 @@ func TestRunPull_DraftSpaceListing(t *testing.T) {
 		t.Fatalf("runPull() error: %v", err)
 	}
 
-	// draft.md should NOT be deleted, and should be updated from remote
-	doc, err := fs.ReadMarkdownDocument(filepath.Join(spaceDir, "draft.md"))
+	// Pull should reconcile the tracked draft to its canonical path and update it from remote.
+	doc, err := fs.ReadMarkdownDocument(filepath.Join(spaceDir, "Draft-Page.md"))
 	if err != nil {
-		t.Fatalf("read draft.md: %v", err)
+		t.Fatalf("read Draft-Page.md: %v", err)
 	}
 	if !strings.Contains(doc.Body, "remote draft body") {
-		t.Errorf("draft.md not updated from remote, body = %q", doc.Body)
+		t.Errorf("Draft-Page.md not updated from remote, body = %q", doc.Body)
 	}
 	if doc.Frontmatter.State != "draft" {
-		t.Errorf("draft.md status = %q, want draft", doc.Frontmatter.State)
+		t.Errorf("Draft-Page.md status = %q, want draft", doc.Frontmatter.State)
 	}
 }
 

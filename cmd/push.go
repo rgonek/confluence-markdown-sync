@@ -35,11 +35,11 @@ var flagPushPreflight bool
 var flagPushKeepOrphanAssets bool
 var flagArchiveTaskTimeout = confluence.DefaultArchiveTaskTimeout
 var flagArchiveTaskPollInterval = confluence.DefaultArchiveTaskPollInterval
+var flagMergeResolution string
 
 func newPushCmd() *cobra.Command {
 	var onConflict string
 	var dryRun bool
-
 	cmd := &cobra.Command{
 		Use:   "push [TARGET]",
 		Short: "Push local Markdown changes to Confluence",
@@ -70,6 +70,7 @@ It uses an isolated worktree and a temporary branch to ensure safety.`,
 	cmd.Flags().BoolVarP(&flagYes, "yes", "y", false, "Auto-approve safety confirmations")
 	cmd.Flags().BoolVar(&flagNonInteractive, "non-interactive", false, "Disable prompts; fail fast when a decision is required")
 	cmd.Flags().StringVar(&onConflict, "on-conflict", "", "Non-interactive conflict policy: pull-merge|force|cancel")
+	cmd.Flags().StringVar(&flagMergeResolution, "merge-resolution", "", "Non-interactive merge resolution for pull-merge conflicts: fail|keep-local|keep-remote|keep-both")
 	addReportJSONFlag(cmd)
 	return cmd
 }
@@ -83,6 +84,18 @@ func validateOnConflict(v string) error {
 		return nil
 	default:
 		return fmt.Errorf("invalid --on-conflict value %q: must be pull-merge, force, or cancel", v)
+	}
+}
+
+func validateMergeResolution(v string) error {
+	if v == "" {
+		return nil
+	}
+	switch v {
+	case "fail", "keep-local", "keep-remote", "keep-both":
+		return nil
+	default:
+		return fmt.Errorf("invalid --merge-resolution value %q: must be fail, keep-local, keep-remote, or keep-both", v)
 	}
 }
 
@@ -134,6 +147,9 @@ func runPush(cmd *cobra.Command, target config.Target, onConflict string, dryRun
 	if preflight && dryRun {
 		return errors.New("--preflight and --dry-run cannot be used together")
 	}
+	if err := validateMergeResolution(flagMergeResolution); err != nil {
+		return err
+	}
 	if !preflight {
 		resolvedPolicy, err := resolvePushConflictPolicy(cmd.InOrStdin(), out, onConflict, target.IsSpace())
 		if err != nil {
@@ -141,6 +157,9 @@ func runPush(cmd *cobra.Command, target config.Target, onConflict string, dryRun
 		}
 		onConflict = resolvedPolicy
 		telemetryConflictPolicy = resolvedPolicy
+		if !dryRun && flagNonInteractive && onConflict == OnConflictPullMerge && strings.TrimSpace(flagMergeResolution) == "" {
+			return errors.New("--non-interactive with --on-conflict=pull-merge requires --merge-resolution=fail|keep-local|keep-remote|keep-both")
+		}
 	}
 
 	initialCtx, err := resolveInitialPushContext(target)
@@ -333,7 +352,7 @@ func runPush(cmd *cobra.Command, target config.Target, onConflict string, dryRun
 		}
 	}()
 
-	outcome, err := runPushInWorktree(ctx, cmd, out, target, spaceKey, spaceDir, onConflict, tsStr,
+	outcome, err := runPushInWorktree(ctx, cmd, out, target, spaceKey, spaceDir, onConflict, flagMergeResolution, tsStr,
 		gitClient, spaceScopePath, changeScopePath, worktreeDir, syncBranchName, snapshotName, &stashRef)
 	report.Diagnostics = append(report.Diagnostics, reportDiagnosticsFromPush(outcome.Result.Diagnostics, spaceDir)...)
 	for _, commit := range outcome.Result.Commits {
