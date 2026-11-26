@@ -110,8 +110,47 @@ The system SHALL support structured querying and automation-friendly output.
 - WHEN `conf search` executes
 - THEN the system SHALL apply those filters to the indexed documents
 
-#### Scenario: Piped output defaults to JSON
+#### Scenario: Automatic format follows the output stream
 
-- GIVEN `conf search` output is not a TTY
-- WHEN the user leaves `--format` as `auto`
-- THEN the system SHALL emit JSON output
+- GIVEN the user leaves `--format` as `auto`
+- WHEN `conf search` writes to a terminal
+- THEN the system SHALL emit text
+- AND it SHALL emit TOON when output is redirected or piped
+- AND explicit `--format text`, `--format toon`, and `--format json` SHALL override detection
+- AND reindex progress SHALL stay off structured stdout
+
+#### Scenario: Invalid output options are rejected
+
+- GIVEN `--format` or `--result-detail` has an unrecognized value
+- WHEN `conf search` validates the options
+- THEN it SHALL report the invalid value and list the valid values before opening the index
+- AND it SHALL exit with status 2
+
+#### Scenario: Standard detail is the default
+
+- GIVEN neither `--result-detail` nor `search.result_detail` in `.conf.yaml` is set
+- WHEN `conf search` returns matches
+- THEN it SHALL include path, title, space, labels, heading context, line, snippet, and author and date metadata when available
+- AND raw content SHALL be available with `full` in TOON and JSON
+- AND an explicit result detail flag SHALL take precedence over the workspace configuration
+
+#### Scenario: Counts reflect all matching indexed documents
+
+- GIVEN the query or filters match more indexed documents than the result limit
+- WHEN `conf search` renders results as text or TOON
+- THEN it SHALL report `count: N of M total` and give a rerun command that retains filters and raises the limit to M
+- AND TOON SHALL emit nonempty results as a table with comma-separated labels and heading paths joined by ` > ` in their respective cells
+- AND explicit JSON SHALL retain its results array
+
+#### Scenario: Empty results include context and next steps
+
+- GIVEN no indexed documents match the query and filters
+- WHEN `conf search` renders results as text or TOON
+- THEN it SHALL report zero results with the query and active filters
+- AND it SHALL suggest ways to discover spaces and labels or rebuild the index
+
+#### Scenario: Facet discovery supports TOON
+
+- WHEN the user lists labels or spaces with `--format toon`
+- THEN `conf search` SHALL emit a count and the corresponding array
+- AND it SHALL explicitly report when the array is empty

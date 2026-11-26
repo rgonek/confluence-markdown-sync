@@ -165,7 +165,7 @@ Should not be indexed.
 	store := openStoreFromIndexer(t, repoDir)
 	defer func() { _ = store.Close() }()
 
-	results, err := store.Search(search.SearchOptions{Query: "Should not be indexed"})
+	results, _, err := store.Search(search.SearchOptions{Query: "Should not be indexed"})
 	if err != nil {
 		t.Fatalf("Search: %v", err)
 	}
@@ -292,7 +292,7 @@ Body text here.
 		t.Fatalf("IndexSpace: %v", err)
 	}
 
-	results, err := store.Search(search.SearchOptions{SpaceKey: "DEV"})
+	results, _, err := store.Search(search.SearchOptions{SpaceKey: "DEV"})
 	if err != nil {
 		t.Fatalf("Search: %v", err)
 	}
@@ -348,7 +348,7 @@ Removed from disk and search.
 				t.Fatalf("IndexSpace second: %v", err)
 			}
 
-			results, err := store.Search(search.SearchOptions{Query: "Removed from disk"})
+			results, _, err := store.Search(search.SearchOptions{Query: "Removed from disk"})
 			if err != nil {
 				t.Fatalf("Search: %v", err)
 			}
@@ -380,7 +380,7 @@ func TestIndexer_IncrementalUpdate_RemovesDeletedMarkdownPaths(t *testing.T) {
 				t.Fatalf("IncrementalUpdate: %v", err)
 			}
 
-			results, err := store.Search(search.SearchOptions{Query: "Refresh tokens are rotated"})
+			results, _, err := store.Search(search.SearchOptions{Query: "Refresh tokens are rotated"})
 			if err != nil {
 				t.Fatalf("Search: %v", err)
 			}

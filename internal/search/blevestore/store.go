@@ -100,8 +100,8 @@ func (s *Store) DeleteByPath(relPath string) error {
 	return nil
 }
 
-// Search executes a full-text query against the index.
-func (s *Store) Search(opts search.SearchOptions) ([]search.SearchResult, error) {
+// Search returns the ranked hits and the total number of matches.
+func (s *Store) Search(opts search.SearchOptions) ([]search.SearchResult, uint64, error) {
 	limit := opts.Limit
 	if limit <= 0 {
 		limit = defaultSearchLimit
@@ -118,7 +118,7 @@ func (s *Store) Search(opts search.SearchOptions) ([]search.SearchResult, error)
 
 	bleveRes, err := s.index.Search(req)
 	if err != nil {
-		return nil, fmt.Errorf("blevestore.Search: %w", err)
+		return nil, 0, fmt.Errorf("blevestore.Search: %w", err)
 	}
 
 	results := make([]search.SearchResult, 0, len(bleveRes.Hits))
@@ -134,7 +134,7 @@ func (s *Store) Search(opts search.SearchOptions) ([]search.SearchResult, error)
 			Snippet:  snippet,
 		})
 	}
-	return results, nil
+	return results, bleveRes.Total, nil
 }
 
 // ListLabels returns all distinct label values present in the index, sorted.

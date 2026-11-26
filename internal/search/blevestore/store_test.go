@@ -111,7 +111,7 @@ func TestIndexAndBasicTextSearch(t *testing.T) {
 	}
 	mustIndex(t, s, docs...)
 
-	results, err := s.Search(search.SearchOptions{Query: "authentication"})
+	results, _, err := s.Search(search.SearchOptions{Query: "authentication"})
 	if err != nil {
 		t.Fatalf("Search: %v", err)
 	}
@@ -148,7 +148,7 @@ func TestSearchReturnsAllFieldsRoundTrip(t *testing.T) {
 	}
 	mustIndex(t, s, doc)
 
-	results, err := s.Search(search.SearchOptions{Query: "architecture"})
+	results, _, err := s.Search(search.SearchOptions{Query: "architecture"})
 	if err != nil {
 		t.Fatalf("Search: %v", err)
 	}
@@ -188,7 +188,7 @@ func TestDeleteByPath(t *testing.T) {
 	mustIndex(t, s, docs...)
 
 	// Confirm both a.md docs are indexed.
-	res, err := s.Search(search.SearchOptions{Query: "golang"})
+	res, _, err := s.Search(search.SearchOptions{Query: "golang"})
 	if err != nil {
 		t.Fatalf("Search: %v", err)
 	}
@@ -201,7 +201,7 @@ func TestDeleteByPath(t *testing.T) {
 	}
 
 	// a.md docs should be gone; b.md should remain.
-	res, err = s.Search(search.SearchOptions{Query: "golang"})
+	res, _, err = s.Search(search.SearchOptions{Query: "golang"})
 	if err != nil {
 		t.Fatalf("Search after delete: %v", err)
 	}
@@ -211,7 +211,7 @@ func TestDeleteByPath(t *testing.T) {
 		}
 	}
 
-	res, err = s.Search(search.SearchOptions{Query: "python"})
+	res, _, err = s.Search(search.SearchOptions{Query: "python"})
 	if err != nil {
 		t.Fatalf("Search b.md: %v", err)
 	}
@@ -238,7 +238,7 @@ func TestFilterBySpaceKey(t *testing.T) {
 	}
 	mustIndex(t, s, docs...)
 
-	res, err := s.Search(search.SearchOptions{
+	res, _, err := s.Search(search.SearchOptions{
 		Query:    "microservice",
 		SpaceKey: "DEV",
 	})
@@ -264,7 +264,7 @@ func TestFilterByLabels(t *testing.T) {
 	mustIndex(t, s, docs...)
 
 	// Filter: label "go" AND "backend" — should match only a.md.
-	res, err := s.Search(search.SearchOptions{
+	res, _, err := s.Search(search.SearchOptions{
 		Labels: []string{"go", "backend"},
 	})
 	if err != nil {
@@ -276,7 +276,7 @@ func TestFilterByLabels(t *testing.T) {
 	}
 
 	// Filter: label "go" only — should match a.md and b.md.
-	res, err = s.Search(search.SearchOptions{
+	res, _, err = s.Search(search.SearchOptions{
 		Labels: []string{"go"},
 	})
 	if err != nil {
@@ -404,7 +404,7 @@ func TestUpsertBehavior(t *testing.T) {
 	original := pageDoc("page:SPACE/page.md", "SPACE/page.md", "SPACE", "Original Title", "original content")
 	mustIndex(t, s, original)
 
-	res, err := s.Search(search.SearchOptions{Query: "original"})
+	res, _, err := s.Search(search.SearchOptions{Query: "original"})
 	if err != nil {
 		t.Fatalf("Search original: %v", err)
 	}
@@ -421,7 +421,7 @@ func TestUpsertBehavior(t *testing.T) {
 	mustIndex(t, s, updated)
 
 	// Old content should not match.
-	res, err = s.Search(search.SearchOptions{Query: "original"})
+	res, _, err = s.Search(search.SearchOptions{Query: "original"})
 	if err != nil {
 		t.Fatalf("Search original after upsert: %v", err)
 	}
@@ -432,7 +432,7 @@ func TestUpsertBehavior(t *testing.T) {
 	}
 
 	// New content should match.
-	res, err = s.Search(search.SearchOptions{Query: "refactoring"})
+	res, _, err = s.Search(search.SearchOptions{Query: "refactoring"})
 	if err != nil {
 		t.Fatalf("Search updated: %v", err)
 	}
@@ -453,7 +453,7 @@ func TestSearchEmptyQueryReturnsAll(t *testing.T) {
 	}
 	mustIndex(t, s, docs...)
 
-	res, err := s.Search(search.SearchOptions{Limit: 100})
+	res, _, err := s.Search(search.SearchOptions{Limit: 100})
 	if err != nil {
 		t.Fatalf("Search empty: %v", err)
 	}
@@ -471,7 +471,7 @@ func TestSearchByType(t *testing.T) {
 	}
 	mustIndex(t, s, docs...)
 
-	res, err := s.Search(search.SearchOptions{
+	res, _, err := s.Search(search.SearchOptions{
 		Query: "authentication",
 		Types: []string{search.DocTypeSection},
 	})
@@ -501,14 +501,15 @@ func TestSearchLimit(t *testing.T) {
 			"common keyword content",
 		))
 	}
+	docs = append(docs, pageDoc("page:OTHER/page.md", "OTHER/page.md", "OTHER", "Other", "common keyword content"))
 	mustIndex(t, s, docs...)
 
-	res, err := s.Search(search.SearchOptions{Query: "common", Limit: 5})
+	res, total, err := s.Search(search.SearchOptions{Query: "common", SpaceKey: "S", Limit: 5})
 	if err != nil {
 		t.Fatalf("Search with limit: %v", err)
 	}
-	if len(res) > 5 {
-		t.Errorf("expected <=5 results, got %d", len(res))
+	if len(res) != 5 || total != 20 {
+		t.Errorf("Search returned %d of %d; want 5 of 20", len(res), total)
 	}
 }
 
@@ -519,7 +520,7 @@ func TestSnippetIsPopulated(t *testing.T) {
 		"Distributed tracing helps you understand latency across services.")
 	mustIndex(t, s, doc)
 
-	res, err := s.Search(search.SearchOptions{Query: "tracing"})
+	res, _, err := s.Search(search.SearchOptions{Query: "tracing"})
 	if err != nil {
 		t.Fatalf("Search: %v", err)
 	}
@@ -564,7 +565,7 @@ func TestBleve_FilterByCreatedBy(t *testing.T) {
 	}
 	mustIndex(t, s, docs...)
 
-	res, err := s.Search(search.SearchOptions{CreatedBy: "alice"})
+	res, _, err := s.Search(search.SearchOptions{CreatedBy: "alice"})
 	if err != nil {
 		t.Fatalf("Search: %v", err)
 	}
@@ -585,7 +586,7 @@ func TestBleve_FilterByUpdatedBy(t *testing.T) {
 	}
 	mustIndex(t, s, docs...)
 
-	res, err := s.Search(search.SearchOptions{UpdatedBy: "alice"})
+	res, _, err := s.Search(search.SearchOptions{UpdatedBy: "alice"})
 	if err != nil {
 		t.Fatalf("Search: %v", err)
 	}
@@ -607,7 +608,7 @@ func TestBleve_FilterByCreatedAfterAndBefore(t *testing.T) {
 	mustIndex(t, s, docs...)
 
 	// Window: Feb–Oct 2024 — should catch mar.md only.
-	res, err := s.Search(search.SearchOptions{
+	res, _, err := s.Search(search.SearchOptions{
 		CreatedAfter:  "2024-02-01T00:00:00Z",
 		CreatedBefore: "2024-10-01T00:00:00Z",
 	})
@@ -630,7 +631,7 @@ func TestBleve_FilterByUpdatedAfter(t *testing.T) {
 	}
 	mustIndex(t, s, docs...)
 
-	res, err := s.Search(search.SearchOptions{
+	res, _, err := s.Search(search.SearchOptions{
 		UpdatedAfter: "2024-06-01T00:00:00Z",
 	})
 	if err != nil {
@@ -653,7 +654,7 @@ func TestBleve_AuthorFieldsRoundTrip(t *testing.T) {
 	)
 	mustIndex(t, s, doc)
 
-	res, err := s.Search(search.SearchOptions{CreatedBy: "carol"})
+	res, _, err := s.Search(search.SearchOptions{CreatedBy: "carol"})
 	if err != nil {
 		t.Fatalf("Search: %v", err)
 	}

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/signal"
@@ -15,6 +16,10 @@ func main() {
 	defer stop()
 
 	if err := cmd.ExecuteContext(ctx); err != nil {
+		var optionError *cmd.SearchOptionError
+		if errors.As(err, &optionError) {
+			os.Exit(2) // Cobra already printed the invalid option and its valid values.
+		}
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}

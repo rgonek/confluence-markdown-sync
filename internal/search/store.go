@@ -14,8 +14,8 @@ type Store interface {
 	// DeleteByPath removes all indexed documents whose Path equals relPath.
 	DeleteByPath(relPath string) error
 
-	// Search executes a full-text query and returns ranked results.
-	Search(opts SearchOptions) ([]SearchResult, error)
+	// Search returns ranked results up to the limit and the total number of matches before the limit.
+	Search(opts SearchOptions) ([]SearchResult, uint64, error)
 
 	// ListLabels returns all distinct label values present in the index, sorted.
 	ListLabels() ([]string, error)

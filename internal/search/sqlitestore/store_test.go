@@ -88,7 +88,7 @@ func TestStore_IndexAndSearch(t *testing.T) {
 		t.Fatalf("Index: %v", err)
 	}
 
-	results, err := s.Search(search.SearchOptions{Query: "OAuth2"})
+	results, _, err := s.Search(search.SearchOptions{Query: "OAuth2"})
 	if err != nil {
 		t.Fatalf("Search: %v", err)
 	}
@@ -115,7 +115,7 @@ func TestStore_SearchStripsSpecialCharacters(t *testing.T) {
 		t.Fatalf("Index: %v", err)
 	}
 
-	results, err := s.Search(search.SearchOptions{Query: "POST /v2/events"})
+	results, _, err := s.Search(search.SearchOptions{Query: "POST /v2/events"})
 	if err != nil {
 		t.Fatalf("Search: %v", err)
 	}
@@ -197,7 +197,7 @@ func TestStore_DeleteByPath(t *testing.T) {
 		t.Fatalf("DeleteByPath: %v", err)
 	}
 
-	results, err := s.Search(search.SearchOptions{Query: "OAuth2"})
+	results, _, err := s.Search(search.SearchOptions{Query: "OAuth2"})
 	if err != nil {
 		t.Fatalf("Search after delete: %v", err)
 	}
@@ -214,7 +214,7 @@ func TestStore_FilterBySpace(t *testing.T) {
 		t.Fatalf("Index: %v", err)
 	}
 
-	results, err := s.Search(search.SearchOptions{SpaceKey: "OPS"})
+	results, _, err := s.Search(search.SearchOptions{SpaceKey: "OPS"})
 	if err != nil {
 		t.Fatalf("Search: %v", err)
 	}
@@ -234,7 +234,7 @@ func TestStore_FilterByLabel(t *testing.T) {
 		t.Fatalf("Index: %v", err)
 	}
 
-	results, err := s.Search(search.SearchOptions{Labels: []string{"deployment"}})
+	results, _, err := s.Search(search.SearchOptions{Labels: []string{"deployment"}})
 	if err != nil {
 		t.Fatalf("Search: %v", err)
 	}
@@ -356,7 +356,7 @@ func TestStore_Upsert(t *testing.T) {
 		t.Fatalf("second Index (upsert): %v", err)
 	}
 
-	results, err := s.Search(search.SearchOptions{Query: "updated"})
+	results, _, err := s.Search(search.SearchOptions{Query: "updated"})
 	if err != nil {
 		t.Fatalf("Search: %v", err)
 	}
@@ -380,12 +380,22 @@ func TestStore_Limit(t *testing.T) {
 		t.Fatalf("Index: %v", err)
 	}
 
-	results, err := s.Search(search.SearchOptions{Limit: 2})
-	if err != nil {
-		t.Fatalf("Search: %v", err)
-	}
-	if len(results) > 2 {
-		t.Errorf("expected at most 2 results with Limit=2, got %d", len(results))
+	for _, tc := range []struct {
+		query, space string
+		wantHits     int
+		wantTotal    uint64
+	}{
+		{"", "DEV", 1, 3},
+		{"OAuth2", "DEV", 1, 2},
+		{"OAuth2", "OPS", 0, 0},
+	} {
+		results, total, err := s.Search(search.SearchOptions{Query: tc.query, SpaceKey: tc.space, Limit: 1})
+		if err != nil {
+			t.Fatalf("Search(%q, %q): %v", tc.query, tc.space, err)
+		}
+		if len(results) != tc.wantHits || total != tc.wantTotal {
+			t.Errorf("Search(%q, %q) returned %d of %d; want %d of %d", tc.query, tc.space, len(results), total, tc.wantHits, tc.wantTotal)
+		}
 	}
 }
 
@@ -395,7 +405,7 @@ func TestStore_TypeFilter(t *testing.T) {
 		t.Fatalf("Index: %v", err)
 	}
 
-	results, err := s.Search(search.SearchOptions{Types: []string{search.DocTypeCode}})
+	results, _, err := s.Search(search.SearchOptions{Types: []string{search.DocTypeCode}})
 	if err != nil {
 		t.Fatalf("Search: %v", err)
 	}
@@ -473,7 +483,7 @@ func TestStore_FilterByCreatedBy(t *testing.T) {
 		t.Fatalf("Index: %v", err)
 	}
 
-	results, err := s.Search(search.SearchOptions{CreatedBy: "alice"})
+	results, _, err := s.Search(search.SearchOptions{CreatedBy: "alice"})
 	if err != nil {
 		t.Fatalf("Search: %v", err)
 	}
@@ -492,7 +502,7 @@ func TestStore_FilterByUpdatedBy(t *testing.T) {
 	}
 
 	// alice updated two documents (alice-doc and bob-doc)
-	results, err := s.Search(search.SearchOptions{UpdatedBy: "alice"})
+	results, _, err := s.Search(search.SearchOptions{UpdatedBy: "alice"})
 	if err != nil {
 		t.Fatalf("Search: %v", err)
 	}
@@ -513,7 +523,7 @@ func TestStore_FilterByCreatedAfterAndBefore(t *testing.T) {
 	}
 
 	// created_at between 2024-02-01 and 2024-10-01 => bob-doc (2024-03-20) and charlie-doc (2024-09-10)
-	results, err := s.Search(search.SearchOptions{
+	results, _, err := s.Search(search.SearchOptions{
 		CreatedAfter:  "2024-02-01T00:00:00Z",
 		CreatedBefore: "2024-10-01T23:59:59Z",
 	})
@@ -533,7 +543,7 @@ func TestStore_FilterByUpdatedAfter(t *testing.T) {
 	}
 
 	// updated_at after 2024-10-01 => bob-doc (2024-11-01) and charlie-doc (2024-12-01)
-	results, err := s.Search(search.SearchOptions{UpdatedAfter: "2024-10-01T00:00:00Z"})
+	results, _, err := s.Search(search.SearchOptions{UpdatedAfter: "2024-10-01T00:00:00Z"})
 	if err != nil {
 		t.Fatalf("Search: %v", err)
 	}
@@ -561,7 +571,7 @@ func TestStore_AuthorFieldsRoundTrip(t *testing.T) {
 		t.Fatalf("Index: %v", err)
 	}
 
-	results, err := s.Search(search.SearchOptions{SpaceKey: "TEST"})
+	results, _, err := s.Search(search.SearchOptions{SpaceKey: "TEST"})
 	if err != nil {
 		t.Fatalf("Search: %v", err)
 	}

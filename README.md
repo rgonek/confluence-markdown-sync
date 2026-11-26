@@ -77,7 +77,8 @@ conf push ENG --on-conflict=cancel
 - Non-interactive `push --on-conflict=pull-merge` requires `--merge-resolution=fail|keep-local|keep-remote|keep-both`
 - Push never silently converts a directory-backed folder into a page; interactive runs require explicit confirmation before any folder-to-page downgrade
 - Label rules: labels are trimmed, lowercased, deduplicated, and sorted; empty labels and labels containing whitespace are rejected
-- Search filters: `--space`, repeatable `--label`, `--heading`, `--created-by`, `--updated-by`, date bounds, and `--result-detail`
+- Search filters: `--space`, repeatable `--label`, `--heading`, `--created-by`, `--updated-by`, and date bounds.
+- Search output defaults to text on a terminal and TOON when redirected. Use `--format json` for JSON and `--result-detail full` to include raw content in structured output.
 - Git remote is optional (local Git is enough)
 
 ## Docs 📚

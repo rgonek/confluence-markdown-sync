@@ -12,7 +12,7 @@ import (
 type SearchConfig struct {
 	Engine       string // "sqlite" | "bleve" — default "sqlite"
 	Limit        int    // max results — default 20
-	ResultDetail string // "full" | "standard" | "minimal" — default "full"
+	ResultDetail string // "full" | "standard" | "minimal" — default "standard"
 }
 
 type confYAML struct {
@@ -29,7 +29,7 @@ func LoadSearchConfig(repoRoot string) (SearchConfig, error) {
 	defaults := SearchConfig{
 		Engine:       "sqlite",
 		Limit:        20,
-		ResultDetail: "full",
+		ResultDetail: "standard",
 	}
 
 	data, err := os.ReadFile(filepath.Join(repoRoot, ".conf.yaml")) //nolint:gosec // path is repo root + fixed filename

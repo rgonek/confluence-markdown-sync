@@ -212,8 +212,9 @@ Highlights:
 - deleted Markdown paths are removed from the index during incremental updates and post-pull space refreshes,
 - results grouped by file with heading context and snippets,
 - metadata filters support creator/updater and created/updated date windows,
-- `--result-detail` controls whether JSON/text results include full document payloads or a smaller projection,
-- `--format auto` defaults to text on TTY, JSON when piped.
+- `--result-detail standard` keeps metadata and snippets and omits raw content. Use `full` to include raw content in TOON or JSON,
+- `--format auto` uses text on a terminal and TOON when redirected or piped. Select `--format json` for JSON consumers,
+- text and TOON show the returned count, total filtered matches, and a rerun hint when the result limit is reached before all matches are shown.
 
 Key flags:
 
@@ -227,8 +228,8 @@ Key flags:
 | `--engine` | sqlite | Backend: `sqlite` or `bleve` |
 | `--list-labels` | false | List all indexed labels and exit |
 | `--list-spaces` | false | List all indexed spaces and exit |
-| `--format` | auto | Output format: `text`, `json`, or `auto` |
-| `--result-detail` | full | Result verbosity: `full`, `standard`, or `minimal` |
+| `--format` | auto | Output format: `auto`, `toon`, `text`, or `json` |
+| `--result-detail` | standard | Result verbosity: `full`, `standard`, or `minimal` |
 | `--created-by USER` | | Filter to pages created by this user |
 | `--updated-by USER` | | Filter to pages last updated by this user |
 | `--created-after DATE` | | Filter to pages created on or after a date (`YYYY-MM-DD` or RFC3339) |
@@ -252,7 +253,7 @@ conf search "token" --heading "Authentication"
 conf search --list-labels --format json
 conf search --list-spaces
 
-# Agent-friendly (piped → JSON automatically)
+# Request JSON explicitly for a JSON parser
 conf search "security review" --format json | ConvertFrom-Json
 
 # Use metadata filters and smaller result payloads

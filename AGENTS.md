@@ -108,14 +108,14 @@ Validation failures must stop `push` immediately.
   - `--label LABEL` — filter by label (repeatable).
   - `--heading TEXT` — restrict to sections under matching headings.
   - `--reindex` — force full rebuild.
-  - `--result-detail full|standard|minimal` — control payload size/detail.
+  - `--result-detail full|standard|minimal` — control payload size/detail (default: standard).
   - `--created-by USER` / `--updated-by USER` — filter by creator or last updater.
   - `--created-after DATE` / `--created-before DATE` — bound created timestamps.
   - `--updated-after DATE` / `--updated-before DATE` — bound updated timestamps.
   - `--list-labels` / `--list-spaces` — facet discovery.
-  - `--format text|json|auto` — output format (auto: TTY→text, pipe→json).
+  - `--format auto|toon|text|json` — output format (auto: text on a terminal, TOON otherwise).
   - `--limit N` (default 20) — max results.
-- Recommended agent workflow: `conf search "term" --format json | <process>` for token-efficient, structured reads.
+- Use `conf search "term" --format toon` for compact structured output, or `--format json` for JSON consumers.
 
 ## Developer Tooling Requirements
 - Keep a top-level `Makefile` in the repository.

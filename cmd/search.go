@@ -1,11 +1,10 @@
 package cmd
 
 import (
-	"encoding/json"
 	"fmt"
 	"io"
-	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -14,7 +13,6 @@ import (
 	"github.com/rgonek/confluence-markdown-sync/internal/search/blevestore"
 	"github.com/rgonek/confluence-markdown-sync/internal/search/sqlitestore"
 	"github.com/spf13/cobra"
-	"golang.org/x/term"
 )
 
 const searchIndexDir = ".confluence-search-index"
@@ -82,13 +80,13 @@ Examples:
 	cmd.Flags().StringVar(&flagSearchSpace, "space", "", "Filter results to a specific Confluence space key")
 	cmd.Flags().StringArrayVar(&flagSearchLabels, "label", nil, "Filter by label (repeatable)")
 	cmd.Flags().StringVar(&flagSearchHeading, "heading", "", "Restrict results to sections under headings matching this substring")
-	cmd.Flags().StringVar(&flagSearchFormat, "format", "auto", `Output format: "text", "json", or "auto" (TTY→text, pipe→json)`)
+	cmd.Flags().StringVar(&flagSearchFormat, "format", "auto", `Output format: "auto", "toon", "text", or "json" (auto: text on a terminal, TOON otherwise)`)
 	cmd.Flags().IntVar(&flagSearchLimit, "limit", 20, "Maximum number of results to return")
 	cmd.Flags().BoolVar(&flagSearchReindex, "reindex", false, "Force a full reindex before searching")
 	cmd.Flags().StringVar(&flagSearchEngine, "engine", "sqlite", `Search backend: "sqlite" or "bleve"`)
 	cmd.Flags().BoolVar(&flagSearchListLabels, "list-labels", false, "List all indexed labels and exit")
 	cmd.Flags().BoolVar(&flagSearchListSpaces, "list-spaces", false, "List all indexed spaces and exit")
-	cmd.Flags().StringVar(&flagSearchResultDetail, "result-detail", "", `Result verbosity: "full" (default), "standard", or "minimal"`)
+	cmd.Flags().StringVar(&flagSearchResultDetail, "result-detail", "", `Result detail: "full", "standard" (default), or "minimal"; overrides search.result_detail in .conf.yaml`)
 	cmd.Flags().StringVar(&flagSearchCreatedBy, "created-by", "", "Filter to pages created by this user (exact match)")
 	cmd.Flags().StringVar(&flagSearchUpdatedBy, "updated-by", "", "Filter to pages last updated by this user (exact match)")
 	cmd.Flags().StringVar(&flagSearchCreatedAfter, "created-after", "", "Filter to pages created on or after this date (YYYY-MM-DD or RFC3339)")
@@ -118,9 +116,35 @@ type searchRunOptions struct {
 	updatedBefore string
 }
 
+var searchDetails = [...]string{"full", "standard", "minimal"}
+
+// SearchOptionError reports an invalid search output option.
+type SearchOptionError struct {
+	source  string
+	value   string
+	allowed string
+}
+
+func (e *SearchOptionError) Error() string {
+	return fmt.Sprintf("search: invalid %s value %q (valid values: %s)", e.source, e.value, e.allowed)
+}
+
+func validateSearchOption(source, value string, choices ...string) error {
+	if slices.Contains(choices, value) {
+		return nil
+	}
+	return &SearchOptionError{source: source, value: value, allowed: strings.Join(choices, ", ")}
+}
+
 func runSearch(cmd *cobra.Command, query string, opts searchRunOptions) error {
-	out := cmd.OutOrStdout()
-	errOut := cmd.ErrOrStderr()
+	if err := validateSearchOption("--format", opts.format, "auto", "toon", "text", "json"); err != nil {
+		return err
+	}
+	if cmd.Flags().Changed("result-detail") {
+		if err := validateSearchOption("--result-detail", opts.resultDetail, searchDetails[:]...); err != nil {
+			return err
+		}
+	}
 
 	repoRoot, err := gitRepoRoot()
 	if err != nil {
@@ -132,22 +156,22 @@ func runSearch(cmd *cobra.Command, query string, opts searchRunOptions) error {
 		return fmt.Errorf("search: load config: %w", err)
 	}
 
-	engine := searchCfg.Engine
-	if cmd.Flags().Changed("engine") {
-		engine = opts.engine
+	if !cmd.Flags().Changed("engine") {
+		opts.engine = searchCfg.Engine
+	}
+	if !cmd.Flags().Changed("limit") {
+		opts.limit = searchCfg.Limit
+	}
+	if !cmd.Flags().Changed("result-detail") {
+		opts.resultDetail = searchCfg.ResultDetail
+		if err := validateSearchOption(".conf.yaml search.result_detail", opts.resultDetail, searchDetails[:]...); err != nil {
+			return err
+		}
 	}
 
-	limit := searchCfg.Limit
-	if cmd.Flags().Changed("limit") {
-		limit = opts.limit
-	}
-
-	detail := searchCfg.ResultDetail
-	if cmd.Flags().Changed("result-detail") {
-		detail = opts.resultDetail
-	}
-
-	store, err := openSearchStore(engine, repoRoot)
+	out := cmd.OutOrStdout()
+	opts.format = resolveSearchFormat(opts.format, out)
+	store, err := openSearchStore(opts.engine, repoRoot)
 	if err != nil {
 		return err
 	}
@@ -155,16 +179,14 @@ func runSearch(cmd *cobra.Command, query string, opts searchRunOptions) error {
 
 	indexer := search.NewIndexer(store, repoRoot)
 
-	format := resolveSearchFormat(opts.format, out)
-
 	if opts.reindex {
 		count, err := indexer.Reindex()
 		if err != nil {
 			return fmt.Errorf("search: reindex: %w", err)
 		}
 		progressOut := out
-		if format == "json" {
-			progressOut = errOut
+		if opts.format != "text" {
+			progressOut = cmd.ErrOrStderr()
 		}
 		_, _ = fmt.Fprintf(progressOut, "Reindexed %d document(s)\n", count)
 	} else {
@@ -179,7 +201,7 @@ func runSearch(cmd *cobra.Command, query string, opts searchRunOptions) error {
 		if err != nil {
 			return fmt.Errorf("search: list labels: %w", err)
 		}
-		return printSearchStringList(out, labels, format)
+		return printSearchStringList(out, "labels", labels, opts.format)
 	}
 
 	if opts.listSpaces {
@@ -187,23 +209,20 @@ func runSearch(cmd *cobra.Command, query string, opts searchRunOptions) error {
 		if err != nil {
 			return fmt.Errorf("search: list spaces: %w", err)
 		}
-		return printSearchStringList(out, spaces, format)
+		return printSearchStringList(out, "spaces", spaces, opts.format)
 	}
 
-	hasFilter := opts.createdBy != "" || opts.updatedBy != "" ||
-		opts.createdAfter != "" || opts.createdBefore != "" ||
-		opts.updatedAfter != "" || opts.updatedBefore != "" ||
-		opts.space != "" || len(opts.labels) > 0 || opts.heading != ""
-	if query == "" && !opts.listLabels && !opts.listSpaces && !hasFilter {
+	filterArgs := opts.filterArgs()
+	if query == "" && len(filterArgs) == 0 {
 		return fmt.Errorf("search: QUERY argument is required (or use --list-labels / --list-spaces)")
 	}
 
-	results, err := store.Search(search.SearchOptions{
+	results, total, err := store.Search(search.SearchOptions{
 		Query:         query,
 		SpaceKey:      opts.space,
 		Labels:        opts.labels,
 		HeadingFilter: opts.heading,
-		Limit:         limit,
+		Limit:         opts.limit,
 		CreatedBy:     opts.createdBy,
 		UpdatedBy:     opts.updatedBy,
 		CreatedAfter:  normalizeDateBound(opts.createdAfter, false),
@@ -217,9 +236,9 @@ func runSearch(cmd *cobra.Command, query string, opts searchRunOptions) error {
 
 	projected := make([]search.SearchResult, len(results))
 	for i, r := range results {
-		projected[i] = projectResult(r, detail)
+		projected[i] = projectResult(r, opts.resultDetail)
 	}
-	return printSearchResults(out, projected, format)
+	return printSearchResults(out, projected, opts.format, opts.resultDetail, opts.summary(query, filterArgs, len(projected), total))
 }
 
 // normalizeDateBound normalizes a user-supplied date string to RFC3339 for store queries.
@@ -265,87 +284,6 @@ func openSearchStore(engine, repoRoot string) (search.Store, error) {
 	}
 }
 
-// resolveSearchFormat resolves "auto" to "text" or "json" based on TTY detection.
-func resolveSearchFormat(format string, out io.Writer) string {
-	if format != "auto" {
-		return format
-	}
-	// If out is not os.Stdout fall back to json (pipe-like context).
-	if out == os.Stdout && term.IsTerminal(int(os.Stdout.Fd())) { //nolint:gosec // Fd is small and fits in int
-		return "text"
-	}
-	return "json"
-}
-
-// printSearchResults renders search results in the requested format.
-func printSearchResults(out io.Writer, results []search.SearchResult, format string) error {
-	if format == "json" {
-		enc := json.NewEncoder(out)
-		enc.SetIndent("", "  ")
-		return enc.Encode(results)
-	}
-
-	// Text format
-	if len(results) == 0 {
-		_, _ = fmt.Fprintln(out, "No results found.")
-		return nil
-	}
-
-	for _, r := range results {
-		doc := r.Document
-		// Header line: path + title + labels
-		labelsStr := ""
-		if len(doc.Labels) > 0 {
-			labelsStr = " [" + strings.Join(doc.Labels, ", ") + "]"
-		}
-		titleStr := ""
-		if doc.Title != "" {
-			titleStr = " - " + doc.Title
-		}
-		_, _ = fmt.Fprintf(out, "%s%s%s\n", doc.Path, titleStr, labelsStr)
-
-		// Metadata byline (only when any field is present)
-		var metaParts []string
-		if doc.CreatedBy != "" {
-			metaParts = append(metaParts, "Created by: "+doc.CreatedBy)
-		}
-		if doc.CreatedAt != "" {
-			metaParts = append(metaParts, "Created: "+shortDate(doc.CreatedAt))
-		}
-		if doc.UpdatedBy != "" {
-			metaParts = append(metaParts, "Updated by: "+doc.UpdatedBy)
-		}
-		if doc.UpdatedAt != "" {
-			metaParts = append(metaParts, "Updated: "+shortDate(doc.UpdatedAt))
-		}
-		if len(metaParts) > 0 {
-			_, _ = fmt.Fprintf(out, "  %s\n", strings.Join(metaParts, "  "))
-		}
-
-		// Section context
-		if doc.Type != search.DocTypePage && len(doc.HeadingPath) > 0 {
-			headings := make([]string, len(doc.HeadingPath))
-			for i, h := range doc.HeadingPath {
-				headings[i] = strings.TrimLeft(h, "# ")
-				headings[i] = "## " + headings[i]
-				// Re-use the original heading text (which already has #-prefix) as-is.
-				headings[i] = h
-			}
-			lineInfo := ""
-			if doc.Line > 0 {
-				lineInfo = fmt.Sprintf(" (line %d)", doc.Line)
-			}
-			_, _ = fmt.Fprintf(out, "  %s%s\n", strings.Join(doc.HeadingPath, " > "), lineInfo)
-		}
-
-		// Snippet
-		if r.Snippet != "" {
-			_, _ = fmt.Fprintf(out, "    ...%s...\n", strings.TrimSpace(r.Snippet))
-		}
-	}
-	return nil
-}
-
 // updateSearchIndexForSpace opens the configured search store and refreshes a
 // single pulled space. Errors are non-fatal from the caller's perspective —
 // the function itself returns the error so the caller can emit a warning.
@@ -375,25 +313,10 @@ func updateSearchIndexForSpace(repoRoot, spaceDir, spaceKey string, out io.Write
 	return nil
 }
 
-// printSearchStringList renders a list of strings (labels or spaces) in the requested format.
-func printSearchStringList(out io.Writer, items []string, format string) error {
-	if format == "json" {
-		enc := json.NewEncoder(out)
-		enc.SetIndent("", "  ")
-		return enc.Encode(items)
-	}
-
-	// Text format
-	for _, item := range items {
-		_, _ = fmt.Fprintln(out, item)
-	}
-	return nil
-}
-
 // projectResult returns a copy of r with fields zeroed out based on detail level.
 // "full" returns r unchanged. "standard" drops Content, ID, PageID, Type, Language,
 // HeadingLevel, ModTime. "minimal" keeps only Path, HeadingPath, HeadingText, Line,
-// Snippet. Unknown values fall back to "full".
+// Snippet. The command validates the detail before opening the index.
 func projectResult(r search.SearchResult, detail string) search.SearchResult {
 	switch detail {
 	case "standard":
@@ -420,7 +343,7 @@ func projectResult(r search.SearchResult, detail string) search.SearchResult {
 		}
 		r.Score = 0
 		return r
-	default: // "full" and unknown values
+	default: // "full"
 		return r
 	}
 }

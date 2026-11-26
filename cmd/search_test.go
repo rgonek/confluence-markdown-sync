@@ -85,6 +85,36 @@ func TestNewSearchCmd_FlagDefaults(t *testing.T) {
 	}
 }
 
+func TestRunSearch_RejectsInvalidOutputOptionsBeforeOpeningStore(t *testing.T) {
+	runParallelCommandTest(t)
+
+	repo := t.TempDir()
+	setupGitRepo(t, repo)
+	chdirRepo(t, repo)
+
+	for _, tc := range []struct {
+		flag, allowed string
+	}{
+		{"--format", "auto, toon, text, json"},
+		{"--result-detail", "full, standard, minimal"},
+	} {
+		t.Run(tc.flag, func(t *testing.T) {
+			cmd := newSearchCmd()
+			cmd.SetOut(new(bytes.Buffer))
+			cmd.SetErr(new(bytes.Buffer))
+			cmd.SetArgs([]string{"--list-labels", tc.flag, "invalid"})
+			err := cmd.Execute()
+			if err == nil || !strings.Contains(err.Error(), tc.flag) ||
+				!strings.Contains(err.Error(), "invalid") || !strings.Contains(err.Error(), tc.allowed) {
+				t.Errorf("expected an error with the flag, invalid value, and allowed values; got %v", err)
+			}
+			if _, err := os.Stat(filepath.Join(repo, searchIndexDir)); !os.IsNotExist(err) {
+				t.Errorf("search must not open the index for invalid options; stat error: %v", err)
+			}
+		})
+	}
+}
+
 // --- helper: build a minimal git repo with an indexed space ---
 
 func setupSearchTestRepo(t *testing.T) (repoRoot string, store search.Store) {
@@ -148,6 +178,7 @@ func TestResolveSearchFormat_Explicit(t *testing.T) {
 	}{
 		{"text", "text"},
 		{"json", "json"},
+		{"toon", "toon"},
 	}
 	for _, tc := range cases {
 		got := resolveSearchFormat(tc.input, new(bytes.Buffer))
@@ -158,10 +189,9 @@ func TestResolveSearchFormat_Explicit(t *testing.T) {
 }
 
 func TestResolveSearchFormat_AutoPipe(t *testing.T) {
-	// A bytes.Buffer is not a TTY — should resolve to "json".
 	got := resolveSearchFormat("auto", new(bytes.Buffer))
-	if got != "json" {
-		t.Errorf("resolveSearchFormat(auto, non-tty) = %q, want json", got)
+	if got != "toon" {
+		t.Errorf("resolveSearchFormat(auto, non-tty) = %q, want toon", got)
 	}
 }
 
@@ -169,7 +199,7 @@ func TestResolveSearchFormat_AutoPipe(t *testing.T) {
 
 func TestPrintSearchResults_TextEmpty(t *testing.T) {
 	out := new(bytes.Buffer)
-	if err := printSearchResults(out, nil, "text"); err != nil {
+	if err := printSearchResults(out, nil, "text", "standard", searchSummary{count: "0 of 0 total", message: "No results found."}); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if !strings.Contains(out.String(), "No results found") {
@@ -192,7 +222,7 @@ func TestPrintSearchResults_TextFormat(t *testing.T) {
 	}
 
 	out := new(bytes.Buffer)
-	if err := printSearchResults(out, results, "text"); err != nil {
+	if err := printSearchResults(out, results, "text", "standard", searchSummary{count: "1 of 1 total"}); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
@@ -225,7 +255,7 @@ func TestPrintSearchResults_JSONFormat(t *testing.T) {
 	}
 
 	out := new(bytes.Buffer)
-	if err := printSearchResults(out, results, "json"); err != nil {
+	if err := printSearchResults(out, results, "json", "standard", searchSummary{count: "1 of 5 total", hints: []string{"See all 5 results"}}); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
@@ -245,7 +275,7 @@ func TestPrintSearchResults_JSONFormat(t *testing.T) {
 
 func TestPrintSearchStringList_Text(t *testing.T) {
 	out := new(bytes.Buffer)
-	if err := printSearchStringList(out, []string{"alpha", "beta", "gamma"}, "text"); err != nil {
+	if err := printSearchStringList(out, "labels", []string{"alpha", "beta", "gamma"}, "text"); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	got := out.String()
@@ -258,7 +288,7 @@ func TestPrintSearchStringList_Text(t *testing.T) {
 
 func TestPrintSearchStringList_JSON(t *testing.T) {
 	out := new(bytes.Buffer)
-	if err := printSearchStringList(out, []string{"alpha", "beta"}, "json"); err != nil {
+	if err := printSearchStringList(out, "labels", []string{"alpha", "beta"}, "json"); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	var decoded []string
@@ -267,6 +297,27 @@ func TestPrintSearchStringList_JSON(t *testing.T) {
 	}
 	if len(decoded) != 2 || decoded[0] != "alpha" {
 		t.Errorf("unexpected decoded value: %v", decoded)
+	}
+}
+
+func TestPrintSearchStringList_TOON(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		items []string
+		want  string
+	}{
+		{"labels", []string{"12", "comma,label", "#ops", "a\b\f\tb"}, "count: 4 of 4 total\nlabels[4]: \"12\",\"comma,label\",\"#ops\",\"a\\u0008\\u000c\\tb\""},
+		{"spaces", []string{"DOCS"}, "count: 1 of 1 total\nspaces[1]: DOCS"},
+		{"labels", nil, "count: 0 of 0 total\nlabels: []\nmessage: No indexed labels."},
+		{"spaces", nil, "count: 0 of 0 total\nspaces: []\nmessage: No indexed spaces."},
+	} {
+		out := new(bytes.Buffer)
+		if err := printSearchStringList(out, tc.name, tc.items, "toon"); err != nil {
+			t.Fatal(err)
+		}
+		if out.String() != tc.want {
+			t.Errorf("%s %q: got %q, want %q", tc.name, tc.items, out.String(), tc.want)
+		}
 	}
 }
 
@@ -392,17 +443,81 @@ func TestRunSearch_NoResults(t *testing.T) {
 
 	chdirRepo(t, repo)
 
-	cmd := newSearchCmd()
-	out := new(bytes.Buffer)
-	cmd.SetOut(out)
-	cmd.SetErr(new(bytes.Buffer))
-	cmd.SetArgs([]string{"xyzzy_no_such_term", "--format", "text", "--engine", "sqlite"})
+	for _, format := range []string{"text", "toon"} {
+		t.Run(format, func(t *testing.T) {
+			cmd := newSearchCmd()
+			out := new(bytes.Buffer)
+			errOut := new(bytes.Buffer)
+			cmd.SetOut(out)
+			cmd.SetErr(errOut)
+			cmd.SetArgs([]string{"xyzzy_no_such_term", "--space", "MISSING", "--format", format, "--engine", "sqlite", "--reindex"})
 
-	if err := cmd.Execute(); err != nil {
-		t.Fatalf("unexpected error: %v", err)
+			if err := cmd.Execute(); err != nil {
+				t.Fatal(err)
+			}
+			want := []string{"count: 0 of 0 total", "No results found", "xyzzy_no_such_term",
+				"--space MISSING", "--list-spaces", "--list-labels", "--reindex"}
+			if format == "toon" {
+				want = append(want, "results: []", "help[3]:")
+				if !strings.Contains(errOut.String(), "Reindexed") || strings.Contains(out.String(), "Reindexed") {
+					t.Errorf("expected reindex progress on stderr only, stdout: %q, stderr: %q", out, errOut)
+				}
+			}
+			for _, part := range want {
+				if !strings.Contains(out.String(), part) {
+					t.Errorf("expected %q in output:\n%s", part, out.String())
+				}
+			}
+		})
 	}
-	if !strings.Contains(out.String(), "No results found") {
-		t.Errorf("expected 'No results found', got %q", out.String())
+}
+
+func TestRunSearch_TruncatedResults(t *testing.T) {
+	runParallelCommandTest(t)
+
+	repo := t.TempDir()
+	setupGitRepo(t, repo)
+	store, err := openSearchStore("sqlite", repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	docs := []search.Document{
+		{ID: "a", Path: "DOCS/a.md", SpaceKey: "DOCS", Labels: []string{"web", "api"}, Content: "matchword raw body", Title: "Review, \"draft\"\nready"},
+		{ID: "b", Path: "DOCS/b.md", SpaceKey: "DOCS", Labels: []string{"web", "api"}, Content: "matchword raw body", Title: "Review, \"draft\"\nready"},
+		{ID: "c", Path: "DOCS/c.md", SpaceKey: "DOCS", Labels: []string{"web"}, Content: "matchword"},
+	}
+	if err := store.Index(docs); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.UpdateMeta(); err != nil {
+		t.Fatal(err)
+	}
+	chdirRepo(t, repo)
+
+	for _, format := range []string{"auto", "text"} {
+		t.Run(format, func(t *testing.T) {
+			cmd := newSearchCmd()
+			out := new(bytes.Buffer)
+			cmd.SetOut(out)
+			cmd.SetErr(new(bytes.Buffer))
+			cmd.SetArgs([]string{"matchword", "--space", "DOCS", "--label", "web", "--label", "api", "--limit", "1", "--format", format})
+			if err := cmd.Execute(); err != nil {
+				t.Fatal(err)
+			}
+			want := []string{"count: 1 of 2 total", "--limit 2", "--space DOCS", "--label web", "--label api", "see all 2 results"}
+			if format == "auto" {
+				want = append(want, "results[1]{", "help[1]:", "\"Review, \\\"draft\\\"\\nready\"")
+				if strings.Contains(out.String(), ",content") {
+					t.Errorf("standard detail must omit the content column: %s", out.String())
+				}
+			}
+			for _, part := range want {
+				if !strings.Contains(out.String(), part) {
+					t.Errorf("expected %q in output:\n%s", part, out.String())
+				}
+			}
+		})
 	}
 }
 
@@ -618,20 +733,6 @@ func TestProjectResult_Minimal(t *testing.T) {
 	}
 }
 
-func TestProjectResult_UnknownDetailFallsBackToFull(t *testing.T) {
-	r := search.SearchResult{
-		Document: search.Document{
-			Path:    "DEV/foo.md",
-			Content: "body text",
-		},
-		Score: 9.9,
-	}
-	got := projectResult(r, "bogus")
-	if got.Document.Content != "body text" {
-		t.Errorf("unknown detail: should fall back to full, Content stripped")
-	}
-}
-
 func TestRunSearch_ConfigFileEngine(t *testing.T) {
 	runParallelCommandTest(t)
 
@@ -687,6 +788,47 @@ func TestRunSearch_ReindexJSONFormatWritesOnlyJSON(t *testing.T) {
 	if len(decoded) == 0 {
 		t.Fatal("expected reindex+search to return at least one result")
 	}
+	for _, result := range decoded {
+		if result.Document.Content != "" {
+			t.Errorf("default result detail must omit raw content, got %q", result.Document.Content)
+		}
+	}
+}
+
+func TestRunSearch_TOONResultDetailPrecedence(t *testing.T) {
+	runParallelCommandTest(t)
+
+	repo, _ := setupSearchTestRepo(t)
+	if err := os.WriteFile(filepath.Join(repo, ".conf.yaml"), []byte("search:\n  result_detail: full\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	chdirRepo(t, repo)
+
+	for _, tc := range []struct {
+		name        string
+		args        []string
+		wantContent bool
+	}{
+		{"configured full", nil, true},
+		{"explicit minimal", []string{"--result-detail", "minimal"}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cmd := newSearchCmd()
+			out := new(bytes.Buffer)
+			cmd.SetOut(out)
+			cmd.SetErr(new(bytes.Buffer))
+			cmd.SetArgs(append([]string{"PKCE", "--format", "toon"}, tc.args...))
+			if err := cmd.Execute(); err != nil {
+				t.Fatal(err)
+			}
+			if hasContent := strings.Contains(out.String(), ",content}:"); hasContent != tc.wantContent {
+				t.Errorf("want content column %t, got:\n%s", tc.wantContent, out)
+			}
+			if tc.wantContent && !strings.Contains(out.String(), "Token refresh happens") {
+				t.Errorf("expected full raw content, got:\n%s", out)
+			}
+		})
+	}
 }
 
 func TestUpdateSearchIndexForSpace_UsesConfiguredBleveBackend(t *testing.T) {
@@ -729,7 +871,7 @@ Bleve backend should index this content.
 	}
 	defer func() { _ = bleveStore.Close() }()
 
-	results, err := bleveStore.Search(search.SearchOptions{Query: "Bleve backend"})
+	results, _, err := bleveStore.Search(search.SearchOptions{Query: "Bleve backend"})
 	if err != nil {
 		t.Fatalf("search bleve index: %v", err)
 	}

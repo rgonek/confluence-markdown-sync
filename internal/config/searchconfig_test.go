@@ -20,8 +20,8 @@ func TestLoadSearchConfig_Defaults(t *testing.T) {
 	if cfg.Limit != 20 {
 		t.Errorf("Limit = %d; want 20", cfg.Limit)
 	}
-	if cfg.ResultDetail != "full" {
-		t.Errorf("ResultDetail = %q; want full", cfg.ResultDetail)
+	if cfg.ResultDetail != "standard" {
+		t.Errorf("ResultDetail = %q; want standard", cfg.ResultDetail)
 	}
 }
 
@@ -65,8 +65,8 @@ func TestLoadSearchConfig_PartialFile(t *testing.T) {
 	if cfg.Limit != 50 {
 		t.Errorf("Limit = %d; want 50", cfg.Limit)
 	}
-	if cfg.ResultDetail != "full" {
-		t.Errorf("ResultDetail = %q; want full (default)", cfg.ResultDetail)
+	if cfg.ResultDetail != "standard" {
+		t.Errorf("ResultDetail = %q; want standard (default)", cfg.ResultDetail)
 	}
 }
 

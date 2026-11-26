@@ -134,8 +134,8 @@ func (s *Store) DeleteByPath(relPath string) error {
 	return nil
 }
 
-// Search executes a full-text query and returns ranked results.
-func (s *Store) Search(opts search.SearchOptions) ([]search.SearchResult, error) {
+// Search executes a full-text query and returns ranked results and the total number of matches.
+func (s *Store) Search(opts search.SearchOptions) ([]search.SearchResult, uint64, error) {
 	limit := opts.Limit
 	if limit <= 0 {
 		limit = defaultSearchLimit
@@ -150,7 +150,7 @@ func (s *Store) Search(opts search.SearchOptions) ([]search.SearchResult, error)
 	if opts.Query != "" {
 		safeQuery, err := normalizeFTSQuery(opts.Query)
 		if err != nil {
-			return nil, fmt.Errorf("sqlitestore.Search query normalize: %w", err)
+			return nil, 0, fmt.Errorf("sqlitestore.Search query normalize: %w", err)
 		}
 		whereClauses = append(whereClauses, "documents_fts MATCH ?")
 		args = append(args, safeQuery)
@@ -207,48 +207,49 @@ func (s *Store) Search(opts search.SearchOptions) ([]search.SearchResult, error)
 		}
 	}
 
-	args = append(args, limit)
-
-	var baseQuery string
-	if opts.Query != "" {
-		whereExpr := strings.Join(whereClauses, " AND ")
-		baseQuery = fmt.Sprintf(`
-SELECT d.id, d.type, d.path, d.page_id, d.title, d.space_key,
-       d.labels, d.content, d.heading_path, d.heading_text,
-       d.heading_level, d.language, d.line, d.mod_time,
-       d.created_by, d.created_at, d.updated_by, d.updated_at,
-       fts.rank AS score,
-       snippet(documents_fts, 1, '[', ']', '...', 10) AS snippet
-FROM documents_fts fts
-JOIN documents d ON d.rowid = fts.rowid
-WHERE %s
-ORDER BY fts.rank
-LIMIT ?`, whereExpr)
-	} else {
-		whereExpr := ""
-		if len(whereClauses) > 0 {
-			whereExpr = "WHERE " + strings.Join(whereClauses, " AND ")
-		}
-		baseQuery = fmt.Sprintf(`
-SELECT d.id, d.type, d.path, d.page_id, d.title, d.space_key,
-       d.labels, d.content, d.heading_path, d.heading_text,
-       d.heading_level, d.language, d.line, d.mod_time,
-       d.created_by, d.created_at, d.updated_by, d.updated_at,
-       0.0 AS score,
-       '' AS snippet
-FROM documents d
-%s
-ORDER BY d.path, d.line
-LIMIT ?`, whereExpr)
+	where := ""
+	if len(whereClauses) > 0 {
+		where = " WHERE " + strings.Join(whereClauses, " AND ")
 	}
 
-	rows, err := s.db.Query(baseQuery, args...)
+	from := "FROM documents d"
+	score := "0.0"
+	snippetExpr := "''"
+	order := "d.path, d.line"
+	if opts.Query != "" {
+		from = "FROM documents_fts fts JOIN documents d ON d.rowid = fts.rowid"
+		score = "fts.rank"
+		snippetExpr = "snippet(documents_fts, 1, '[', ']', '...', 10)"
+		order = "fts.rank"
+	}
+
+	// The uncorrelated count uses the same predicates and snapshot as the limited query.
+	// Keep it separate from the ranked scan so only returned rows need snippets and content.
+	baseQuery := fmt.Sprintf(
+		`
+SELECT d.id, d.type, d.path, d.page_id, d.title, d.space_key,
+       d.labels, d.content, d.heading_path, d.heading_text,
+       d.heading_level, d.language, d.line, d.mod_time,
+       d.created_by, d.created_at, d.updated_by, d.updated_at,
+       %s AS score, %s AS snippet,
+       (SELECT COUNT(*) %s%s) AS total
+%s%s
+ORDER BY %s
+LIMIT ?`,
+		score, snippetExpr, from, where, from, where, order,
+	)
+	queryArgs := make([]any, 0, 2*len(args)+1)
+	queryArgs = append(queryArgs, args...)
+	queryArgs = append(queryArgs, args...)
+	queryArgs = append(queryArgs, limit)
+	rows, err := s.db.Query(baseQuery, queryArgs...)
 	if err != nil {
-		return nil, fmt.Errorf("sqlitestore.Search query: %w", err)
+		return nil, 0, fmt.Errorf("sqlitestore.Search query: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
 
 	var results []search.SearchResult
+	var total uint64
 	for rows.Next() {
 		var (
 			doc        search.Document
@@ -263,9 +264,9 @@ LIMIT ?`, whereExpr)
 			&doc.SpaceKey, &labelsJSON, &doc.Content, &hpathJSON,
 			&doc.HeadingText, &doc.HeadingLevel, &doc.Language, &doc.Line,
 			&modTimeStr, &doc.CreatedBy, &doc.CreatedAt, &doc.UpdatedBy, &doc.UpdatedAt,
-			&score, &snippet,
+			&score, &snippet, &total,
 		); err != nil {
-			return nil, fmt.Errorf("sqlitestore.Search scan: %w", err)
+			return nil, 0, fmt.Errorf("sqlitestore.Search scan: %w", err)
 		}
 
 		if err := json.Unmarshal([]byte(labelsJSON), &doc.Labels); err != nil {
@@ -287,9 +288,9 @@ LIMIT ?`, whereExpr)
 		})
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("sqlitestore.Search rows: %w", err)
+		return nil, 0, fmt.Errorf("sqlitestore.Search rows: %w", err)
 	}
-	return results, nil
+	return results, total, nil
 }
 
 // ListLabels returns all distinct label values present in the index, sorted.
